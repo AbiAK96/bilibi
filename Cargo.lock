@@ -390,7 +390,9 @@ name = "bilibi-ui"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-tenancy",
  "inventory",
 ]
 
@@ -417,6 +419,7 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "axum",
+ "bilibi-authz",
  "bilibi-base",
  "bilibi-company",
  "bilibi-core",
@@ -425,6 +428,7 @@ dependencies = [
  "bilibi-extensions",
  "bilibi-module-registry",
  "bilibi-security",
+ "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-user",
  "inventory",

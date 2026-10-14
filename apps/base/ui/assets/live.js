@@ -15,6 +15,7 @@
   function connect() {
     if (!document.querySelector('[data-live]')) return;
     const url = new URL('/live', location.href);
+    if (document.querySelector('[data-framed=true]')) url.searchParams.set('framed', 'true');
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
     socket.onopen = () => {

@@ -1,0 +1,5 @@
+<div id="app"{% if live %} data-live{% endif %}>
+<div id="app-shell" data-framed="true" data-display-mode="local" class="flex h-screen flex-col overflow-hidden bg-canvas">
+<main id="app-content" class="relative min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-2 sm:px-3">{{ body|safe }}</main>
+</div>
+</div>

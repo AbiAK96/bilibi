@@ -1,4 +1,5 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+mod routes;
 use askama::Template;
 use axum::{
     extract::{
@@ -25,6 +26,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub struct App {
+    routes: Arc<Vec<routes::BoundRoute>>,
     pub db: Db,
     pub notifications: Notifications,
     pub origin: Arc<str>,
@@ -54,7 +56,9 @@ impl App {
         for dropped in menu.dropped() {
             eprintln!("warning: {dropped}");
         }
+        let routes = Arc::new(routes::bind(&services)?);
         Ok(Self {
+            routes,
             db,
             notifications,
             origin: origin.into(),
@@ -86,12 +90,10 @@ pub async fn migrate(db: &Db) -> Result<()> {
 }
 
 pub fn router(app: App) -> Router {
-    Router::new()
+    routes::install(Router::new(), &app.routes)
         .route("/", get(|| async { Redirect::to("/companies") }))
         .route("/login", get(login_page).post(login))
         .route("/logout", post(logout))
-        .route("/companies", get(companies))
-        .route("/companies/{id}", get(company))
         .route("/live", get(upgrade))
         .route("/fonts/{name}", get(font_asset))
         .route(
@@ -154,7 +156,7 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
         ("cache-control","no-store"),
         ("x-content-type-options","nosniff"),
         ("referrer-policy","same-origin"),
-        ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"),
+        ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'none'"),
     ] { response.headers_mut().insert(axum::http::HeaderName::from_static(key),HeaderValue::from_static(value)); }
     response
 }
@@ -289,6 +291,19 @@ impl Route {
             .ok_or(Error::Invalid)?;
         Ok(Self::Detail(id))
     }
+    fn declaration<'a>(&self, app: &'a App) -> Result<&'a routes::BoundRoute> {
+        let pattern = match self {
+            Self::List => "/companies",
+            Self::Detail(_) => "/companies/{id}",
+        };
+        app.routes
+            .iter()
+            .find(|bound| {
+                bound.route.path == pattern
+                    && bound.route.method == bilibi_module_registry::contributions::Method::Get
+            })
+            .ok_or(Error::NotFound)
+    }
     fn path(&self) -> String {
         match self {
             Self::List => "/companies".into(),
@@ -297,20 +312,7 @@ impl Route {
     }
 }
 fn params(values: &HashMap<String, String>) -> Result<Params> {
-    let mut result = Params::default();
-    for (key, value) in values {
-        match key.as_str() {
-            "page" => result.page = value.parse().map_err(|_| Error::Invalid)?,
-            "size" => result.size = value.parse().map_err(|_| Error::Invalid)?,
-            "sort" => result.sort = value.clone(),
-            "dir" => result.dir = value.clone(),
-            "q" => result.q = value.clone(),
-            "status" => result.status = value.clone(),
-            _ => return Err(Error::Invalid),
-        }
-    }
-    result.validate()?;
-    Ok(result)
+    bilibi_company::web::params(values)
 }
 
 // Snapshot belongs to this socket, including loaded redacted records and current
@@ -332,7 +334,18 @@ impl Loaded {
         }
     }
 }
-async fn load(app: &App, token: &str, route: &Route, params: &Params) -> Result<Loaded> {
+async fn load(
+    app: &App,
+    token: &str,
+    route: &Route,
+    params: &Params,
+    framed: bool,
+) -> Result<Loaded> {
+    let declaration = route.declaration(app)?;
+    routes::check_access(app, declaration.route.access, Some(token)).await?;
+    if framed && !declaration.route.framed {
+        return Err(Error::Forbidden);
+    }
     let client = app.db.get().await?;
     let scope = guard(&**client, token, &app.security.sessions).await?;
     let (body, content) = match route {
@@ -366,55 +379,34 @@ async fn load(app: &App, token: &str, route: &Route, params: &Params) -> Result<
         }
     };
     let unread = bilibi_user::unread(&**client, &scope).await?;
-    let html = app
-        .renderer
-        .render(Shell {
-            user: &scope.user_name,
-            email: &scope.email,
-            tenant: &scope.tenant_name,
-            csrf: &scope.csrf,
-            unread,
+    let html = if framed {
+        render(bilibi_ui::Framed {
             body: &body,
-        })
-        .map_err(|_| Error::Internal)?;
+            live: true,
+        })?
+    } else {
+        app.renderer
+            .render(Shell {
+                user: &scope.user_name,
+                email: &scope.email,
+                tenant: &scope.tenant_name,
+                csrf: &scope.csrf,
+                unread,
+                live: true,
+                body: &body,
+            })
+            .map_err(|_| Error::Internal)?
+    };
     Ok(Loaded {
         html,
         scope,
         content,
     })
 }
-async fn http_page(
-    app: App,
-    headers: HeaderMap,
-    route: Route,
-    values: HashMap<String, String>,
-) -> std::result::Result<Response, HttpError> {
-    let token = match token(&headers) {
-        Ok(token) => token,
-        Err(_) => return Ok(Redirect::to("/login").into_response()),
-    };
-    let loaded = load(&app, &token, &route, &params(&values)?).await?;
-    let client = app.db.get().await.map_err(Error::from)?;
-    app.security.sessions.activity(&**client, &token).await?;
-    Ok(document(&loaded.html)?.into_response())
-}
-async fn companies(
-    State(app): State<App>,
-    headers: HeaderMap,
-    Query(values): Query<HashMap<String, String>>,
-) -> std::result::Result<Response, HttpError> {
-    http_page(app, headers, Route::List, values).await
-}
-async fn company(
-    State(app): State<App>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-) -> std::result::Result<Response, HttpError> {
-    http_page(app, headers, Route::Detail(id), HashMap::new()).await
-}
 async fn upgrade(
     State(app): State<App>,
     headers: HeaderMap,
+    Query(options): Query<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -425,7 +417,14 @@ async fn upgrade(
     Ok(ws
         .max_message_size(16 * 1024)
         .max_frame_size(16 * 1024)
-        .on_upgrade(move |socket| live(app, token, socket)))
+        .on_upgrade(move |socket| {
+            live(
+                app,
+                token,
+                socket,
+                options.get("framed").is_some_and(|v| v == "true"),
+            )
+        }))
 }
 
 #[derive(Deserialize)]
@@ -451,6 +450,7 @@ enum Event {
     Read,
 }
 struct LivePage {
+    framed: bool,
     route: Route,
     params: Params,
     loaded: Option<Loaded>,
@@ -458,6 +458,7 @@ struct LivePage {
 impl Default for LivePage {
     fn default() -> Self {
         Self {
+            framed: false,
             route: Route::List,
             params: Params::default(),
             loaded: None,
@@ -470,6 +471,15 @@ impl LivePage {
         let scope = guard(&**client, token, &app.security.sessions).await?;
         authorize(&**client, &scope, Capability::CompaniesView).await?;
         drop(client);
+        let target = match &event {
+            Event::Mount { path, .. } => Route::parse(path)?,
+            _ => self.route.clone(),
+        };
+        let declaration = target.declaration(app)?;
+        routes::check_access(app, declaration.route.access, Some(token)).await?;
+        if self.framed && !declaration.route.framed {
+            return Err(Error::Forbidden);
+        }
         let mut notice = "";
         match event {
             Event::Mount {
@@ -513,7 +523,7 @@ impl LivePage {
                 notice = "Notifications marked read";
             }
         }
-        self.loaded = Some(load(app, token, &self.route, &self.params).await?);
+        self.loaded = Some(load(app, token, &self.route, &self.params, self.framed).await?);
         let client = app.db.get().await?;
         app.security.sessions.activity(&**client, token).await?;
         Ok(notice)
@@ -550,8 +560,11 @@ fn encode(value: &str) -> String {
         .collect()
 }
 
-async fn live(app: App, token: String, mut socket: WebSocket) {
-    let mut page = LivePage::default();
+async fn live(app: App, token: String, mut socket: WebSocket, framed: bool) {
+    let mut page = LivePage {
+        framed,
+        ..LivePage::default()
+    };
     let mut events = app.notifications.subscribe();
     let mut refresh = tokio::time::interval(Duration::from_secs(15));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -572,12 +585,12 @@ async fn live(app: App, token: String, mut socket: WebSocket) {
                 }
                 if page.loaded.is_none() {continue;}
                 page.loaded=None;
-                match load(&app,&token,&page.route,&page.params).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
+                match load(&app,&token,&page.route,&page.params,page.framed).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
             },
             _=refresh.tick()=>{
                 if page.loaded.is_none(){continue;}
                 page.loaded=None;
-                match load(&app,&token,&page.route,&page.params).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
+                match load(&app,&token,&page.route,&page.params,page.framed).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
             },
         };
         let (message, clear) = match result {

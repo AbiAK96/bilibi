@@ -1,4 +1,4 @@
-<div id="app" data-live>
+<div id="app"{% if live %} data-live{% endif %}>
 <header><a class="brand" href="/companies">▥ Bilibi</a><span class="context">{{ tenant }}</span><button id="bell" type="button" data-event="read" aria-label="Mark notifications read"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg> <span class="badge">{{ unread }}</span></button></header>
 <div class="workspace"><aside><div class="menu-caption">WORKSPACE</div><nav aria-label="Main menu"><a class="active" href="/companies" aria-current="page">▤ Companies</a></nav><details id="user-menu"><summary>{{ user }}</summary><section><strong>{{ user }}</strong><p>{{ email }}</p><dl><dt>Tenant</dt><dd>{{ tenant }}</dd></dl><form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Sign out</button></form></section></details></aside><main>{{ body|safe }}</main></div>
 </div>

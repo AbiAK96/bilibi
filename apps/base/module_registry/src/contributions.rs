@@ -242,6 +242,8 @@ pub enum Access {
     SignedIn,
     Capability(&'static str),
     Operator,
+    /// Both requirements apply; an operator identity is not a capability grant.
+    OperatorCapability(&'static str),
 }
 /// Metadata consumed by the Web adapter; registration does not bypass guards.
 #[derive(Clone, Copy, Debug)]
@@ -288,7 +290,10 @@ pub struct Seed {
     pub action: SeedAction,
 }
 fn access_valid(access: Access) -> bool {
-    !matches!(access, Access::Capability(""))
+    !matches!(
+        access,
+        Access::Capability("") | Access::OperatorCapability("")
+    )
 }
 fn validate_routes(entries: &[Entry]) -> Result<()> {
     let mut paths = BTreeSet::new();

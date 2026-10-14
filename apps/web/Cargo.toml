@@ -23,6 +23,8 @@ bilibi-core.workspace = true
 bilibi-domains.workspace = true
 bilibi-extensions.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-authz = { path = "../base/authz" }
+bilibi-tenancy = { path = "../base/tenancy" }
 
 [dev-dependencies]
 inventory.workspace = true

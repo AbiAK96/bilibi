@@ -2,6 +2,14 @@
 //! `templates/components.html` with their typed models, the icon registry and
 //! the vendored asset allowlist. Only shared fragments may use `safe`.
 use askama::Template;
+pub mod page;
+
+#[derive(Template)]
+#[template(path = "framed.html")]
+pub struct Framed<'a> {
+    pub body: &'a str,
+    pub live: bool,
+}
 
 // Lets the shared macro file name this crate's items as `bilibi_ui::...` from
 // inside the crate and from every importing module alike.
@@ -29,6 +37,7 @@ pub struct Shell<'a> {
     pub tenant: &'a str,
     pub csrf: &'a str,
     pub unread: i64,
+    pub live: bool,
     pub body: &'a str,
 }
 
@@ -96,7 +105,7 @@ impl Renderer {
 }
 inventory::submit! {
     bilibi_module_registry::Module {
-        id:"base/ui",layer:bilibi_module_registry::Layer::Base,dependencies:&["base/module_registry"],migrations:&[],
+        id:"base/ui",layer:bilibi_module_registry::Layer::Base,dependencies:&["base/module_registry","base/database","base/tenancy"],migrations:&[],
         services:&[bilibi_module_registry::Service {id:"base/ui.renderer",factory:|_|Ok(std::sync::Arc::new(Renderer))}],
     }
 }

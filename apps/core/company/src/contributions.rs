@@ -7,12 +7,12 @@ use bilibi_module_registry::{
 
 inventory::submit! {
     Contribution::new(ROUTES, "core/company.list", Provenance { module: "core/company", source: file!(), line: line!() }, &Route {
-        method: Method::Get, path: "/companies", service: "core/company.companies", operation: "list", access: Access::Capability("companies.view"), framed: true,
+        method: Method::Get, path: "/companies", service: "core/company.pages", operation: "list", access: Access::Capability("companies.view"), framed: true,
     })
 }
 inventory::submit! {
     Contribution::new(ROUTES, "core/company.detail", Provenance { module: "core/company", source: file!(), line: line!() }, &Route {
-        method: Method::Get, path: "/companies/{id}", service: "core/company.companies", operation: "detail", access: Access::Capability("companies.view"), framed: true,
+        method: Method::Get, path: "/companies/{id}", service: "core/company.pages", operation: "detail", access: Access::Capability("companies.view"), framed: true,
     })
 }
 bilibi_menu::contribute!(
