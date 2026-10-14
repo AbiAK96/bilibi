@@ -136,6 +136,15 @@ pub fn router(app: App) -> Router {
             get(|| async { ([(header::CONTENT_TYPE, "text/css")], bilibi_ui::CSS) }),
         )
         .route(
+            "/assets/hooks.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    bilibi_ui::HOOKS_JS,
+                )
+            }),
+        )
+        .route(
             "/assets/live.js",
             get(|| async {
                 let script = bilibi_ui::JS.replace(

@@ -1,6 +1,7 @@
 {%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi component specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi component specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/ui.js" defer></script><script src="/assets/hooks.js" defer></script></head>
 <body class="bg-canvas text-ink"><main class="mx-auto max-w-5xl space-y-6 p-8">
 <header class="space-y-1"><h1 class="text-2xl font-semibold text-ink-strong">UI component specimen</h1><p class="text-sm text-ink-muted">Page, header, section heading, card, facts, stat strip, buttons, links, badges and icons</p></header>
 {% call ui::card(id="specimen-page", title="Page widths", inner_class="space-y-2 p-4") %}
@@ -107,5 +108,71 @@
 <div id="specimen-icon-variants" class="border-t border-line pt-4"><h3 class="mb-2 text-sm font-semibold text-ink">Icon treatments</h3><div class="flex flex-wrap items-end gap-6">
 <div class="text-center">{% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Outline — the default</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Solid</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Mini</p></div>
 </div></div>
+</div>
+<header id="specimen-forms" class="space-y-1 pt-4"><h2 class="text-xl font-semibold text-ink-strong">Form controls</h2><p class="text-sm text-ink-muted">Inputs, help, error and locked states, combobox, multi-select, radio group, code, secret and restricted controls</p></header>
+{% call ui::card(id="specimen-code-input", title="Code input", inner_class="p-4") %}
+{% call form::code_input(code=controls.code) %}{% endcall %}
+{% endcall %}
+<form id="specimen-fields" class="grid gap-3 lg:grid-cols-2">
+{% call ui::card(id="specimen-text-inputs", title="Text and long-form inputs", inner_class="p-4") %}
+{% call form::input(field=controls.text) %}{% endcall %}
+{% call form::input(field=controls.search) %}{% endcall %}
+{% call form::input(field=controls.email) %}{% endcall %}
+<div class="grid gap-x-3 sm:grid-cols-2">{% call form::input(field=controls.tel) %}{% endcall %}{% call form::input(field=controls.number) %}{% endcall %}</div>
+{% call form::input(field=controls.url) %}{% endcall %}
+{% call form::input(field=controls.textarea) %}{% endcall %}
+{% endcall %}
+{% call ui::card(id="specimen-choice-controls", title="Choice controls", inner_class="p-4") %}
+{% call form::input(field=controls.select) %}{% endcall %}
+{% call form::multi_select(control=controls.roles) %}{% endcall %}
+{% call form::input(field=controls.checkbox) %}{% endcall %}
+{% call form::radio_group(group=controls.radio) %}{% endcall %}
+{% endcall %}
+{% call ui::card(id="specimen-multi-select", title="Multi-select", inner_class="p-4") %}
+<p class="mb-2 text-xs text-ink-muted">Required, with helper text</p>
+{% call form::multi_select(control=controls.required_roles) %}{% endcall %}
+<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">With chips: each choice is shown and removed in place, and the trigger keeps its verb</p>
+{% call form::multi_select(control=controls.chip_roles) %}{% endcall %}
+</div>
+<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">Optional, on its own</p>
+{% call form::multi_select(control=controls.plain_roles) %}{% endcall %}
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-radio-locked", title="Data region", inner_class="p-4") %}
+{% call form::radio_group(group=controls.locked_region) %}{% endcall %}
+<p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">Locked, so every choice is inert. The card heading names the group on screen and an <code>aria-label</code> names it for assistive tech, so it passes no label of its own, and the hint says who decided.</p>
+{% endcall %}
+{% call ui::card(id="specimen-date-secret", title="Date, time, and secret inputs", inner_class="p-4") %}
+<div class="grid gap-x-3 sm:grid-cols-2">{% call form::input(field=controls.date) %}{% endcall %}{% call form::input(field=controls.time) %}{% endcall %}{% call form::input(field=controls.datetime) %}{% endcall %}{% call form::input(field=controls.month) %}{% endcall %}{% call form::input(field=controls.week) %}{% endcall %}</div>
+{% call form::secret_input(secret=controls.password) %}{% endcall %}
+{% call form::secret_input(secret=controls.api_key) %}{% endcall %}
+{% endcall %}
+{% call ui::card(id="specimen-stored-secret", title="Stored secret", inner_class="p-4") %}
+{% call form::secret_input(secret=controls.stored_key) %}{% endcall %}
+{% call form::secret_input(secret=controls.no_eye) %}{% endcall %}
+{% endcall %}
+{% call ui::card(id="specimen-input-states", title="Help, error, and locked states", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<div class="grid gap-x-3 sm:grid-cols-3">{{ field_states }}</div>
+{{ radio_disabled }}
+{% endcall %}
+{% call ui::card(id="specimen-input-variants", title="Select, multi-value, and search inputs", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{% call form::input(field=controls.example_role) %}{% endcall %}{% call form::input(field=controls.example_teams) %}{% endcall %}{% call form::multi_select(control=controls.example_interests) %}{% endcall %}{% call form::multi_select(control=controls.example_teams_chips) %}{% endcall %}{% call form::input(field=controls.quick_search) %}{% endcall %}</div>
+<p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">A prompt names the empty choice, the native multiple select shows what is chosen by highlighting its rows, the multi-select reports the count on its trigger, and the search box takes an <code>aria-label</code> rather than a visible one.</p>
+{% endcall %}
+{% call ui::card(id="specimen-combobox", title="Combobox", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<p class="mb-3 text-xs text-ink-muted">Type to filter, use the arrow keys to move, and press Enter to commit. Escape or leaving the field restores the last committed choice. The unlabelled inline editor also reports the cancel to its page, as an inline field editor does.</p>
+<div class="grid gap-x-3 sm:grid-cols-3">{% call form::combobox(combo=controls.combobox_country) %}{% endcall %}{% call form::combobox(combo=controls.combobox_selected) %}{% endcall %}{% call form::combobox(combo=controls.combobox_empty) %}{% endcall %}{% call form::combobox(combo=controls.combobox_inline) %}{% endcall %}</div>
+{% endcall %}
+</form>
+<div class="grid gap-3 lg:grid-cols-2">
+<div id="specimen-restricted" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">A field the viewer may not see, beside an empty one: restricted is not blank. The lock's tooltip says plainly that the viewer has no access; it names no role, because the field is restricted for a role the viewer holds.</p>
+<div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm"><span class="text-ink-muted">Bank account</span>{% call form::restricted(marker=controls.restricted) %}{% endcall %}<span class="text-ink-muted">Bonus</span>{% call form::restricted(marker=controls.restricted_reason) %}{% endcall %}<span class="text-ink-muted">Website</span><span class="text-ink-muted">—</span></div>
+</div>
+<div id="specimen-restricted-field" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">The same field in a create or edit form: a read-only row that keeps its label, never an omitted input, and submits nothing.</p>
+{% call form::restricted_field(field=controls.restricted_field) %}{% endcall %}
+{% call form::restricted_field(field=controls.restricted_field_reason) %}{% endcall %}
+</div>
 </div>
 </main></body></html>

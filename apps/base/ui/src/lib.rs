@@ -19,6 +19,7 @@ extern crate self as bilibi_ui;
 pub mod components;
 mod feedback;
 mod feedback_specimen;
+pub mod forms;
 mod html;
 pub mod icons;
 mod specimen;
@@ -34,6 +35,11 @@ pub use feedback::{
     NoticeKind, PanelNotice, Revealed, StatusKind, Tab, Tabs, AUTO_DISMISS_MS, NO_FLASH,
 };
 pub use feedback_specimen::FeedbackSpecimen;
+pub use forms::{
+    choices, described_by, field_base_class, field_class, field_state_class, translate_error,
+    Attrs, Choice, CodeInput, Combobox, Field, InputKind, MultiSelect, RadioGroup, Restricted,
+    RestrictedField, Reveal, SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
+};
 pub use html::Html;
 pub use specimen::ComponentsSpecimen;
 
@@ -65,6 +71,8 @@ pub const CSS: &str = include_str!("../assets/app.css");
 pub const JS: &str = include_str!("../assets/live.js");
 /// The hook controllers of the feedback, dialog and tab components.
 pub const UI_JS: &str = include_str!("../assets/ui.js");
+/// The `data-hook` browser behaviour of the shared form controls.
+pub const HOOKS_JS: &str = include_str!("../assets/hooks.js");
 
 /// Vendored public assets. Keep this allowlist bounded: never resolve a
 /// request path on disk, and never make font loading depend on authentication.

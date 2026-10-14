@@ -1,0 +1,102 @@
+{#- Shared form controls: the one markup source for input (text and every
+    native type, checkbox, select, textarea, hidden, password with reveal),
+    secret input, code input, combobox, multi-select, radio group, restricted
+    value and restricted field, with the field classes, described-by wiring
+    and error lines they share. Classes, data attributes, ARIA and anatomy
+    mirror Bilimbi apps/base/ui/lib/ui/components/forms.ex at the pinned
+    source; typed models and class decisions live in src/forms.rs. Browser
+    behaviour hangs off data-hook (assets/hooks.js) where Bilimbi used
+    phx-hook; a control that reports to the server carries data-event where
+    Bilimbi used phx-click. Import with {% import "forms.html" as forms %}
+    and pass a typed model: {% call forms::input(field=email) %}{% endcall %}.
+    Only these shared fragments use the safe filter. -#}
+{%- import "components.html" as ui -%}
+
+{#- The aria-invalid and aria-describedby of a control. -#}
+{% macro aria(invalid, described_by) %}
+{%- if invalid %} aria-invalid="true"{% endif %}{% if !described_by.is_empty() %} aria-describedby="{{ described_by }}"{% endif -%}
+{% endmacro %}
+
+{#- The label above a control; the star marks a required field. -#}
+{% macro label(id, text, class, required) %}
+<label for="{{ id }}" class="{{ class }}">{{ text }}{% if required %}<span aria-hidden="true">*</span>{% endif %}</label>
+{% endmacro %}
+
+{#- Helper text inside the field wrapper, below the control. -#}
+{% macro hint(id, text) %}
+{%- if !text.is_empty() %}<p id="{{ id }}-hint" class="mt-1.5 text-xs text-ink-subtle">{{ text }}</p>{% endif -%}
+{% endmacro %}
+
+{#- One error line; numbered=true gives it the id described-by points at. -#}
+{% macro error(id, index, numbered) %}
+<p{% if numbered %} id="{{ id }}-error-{{ index }}"{% endif %} class="mt-1.5 flex items-center gap-1.5 text-sm text-danger-ink">{% call ui::icon(name="error", class="size-4 shrink-0 text-danger") %}{% endcall %}{{ caller() }}</p>
+{% endmacro %}
+
+{#- The error lines of a control, each addressable from aria-describedby. -#}
+{% macro errors(id, errors, numbered=true) %}
+{%- for message in errors %}{% call error(id=id, index=loop.index0, numbered=numbered) %}{{ message }}{% endcall %}{% endfor -%}
+{% endmacro %}
+
+{#- An input with label, hint and error lines (Bilimbi `input`); field is a bilibi_ui::Field. -#}
+{% macro input(field) %}
+{%- if field.kind.is_hidden() -%}
+<input type="hidden" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{{ field.attrs.html() }} />
+{%- elif field.kind.is_checkbox() -%}
+<div class="{{ field.wrapper() }}"><label for="{{ field.id }}" class="{{ field.checkbox_label_classes() }}"><input type="hidden" name="{{ field.name }}" value="false"{{ field.attrs.companion_html() }} /><input type="checkbox" id="{{ field.id }}" name="{{ field.name }}" value="true"{% if field.checked %} checked{% endif %}{% call aria(invalid=field.invalid(), described_by=field.described_by()) %}{% endcall %} class="{{ field.control_class() }}"{{ field.attrs.html() }} />{{ field.label }}{% if field.attrs.required %}<span aria-hidden="true">*</span>{% endif %}</label>{% call hint(id=field.id, text=field.hint) %}{% endcall %}{% call errors(id=field.id, errors=field.errors) %}{% endcall %}</div>
+{%- elif field.kind.is_select() -%}
+<div class="{{ field.wrapper() }}">{% if !field.label.is_empty() %}{% call label(id=field.id, text=field.label, class=field.label_classes(), required=field.attrs.required) %}{% endcall %}{% endif %}<select id="{{ field.id }}" name="{{ field.name }}"{% call aria(invalid=field.invalid(), described_by=field.described_by()) %}{% endcall %} class="{{ field.control_class() }}"{% if field.multiple %} multiple size="5"{% endif %}{{ field.attrs.html() }}>{% if !field.prompt.is_empty() %}<option value=""{% if field.value.is_empty() %} selected{% endif %}>{{ field.prompt }}</option>{% endif %}{% for option in field.options %}<option value="{{ option.value }}"{% if field.selected(option.value) %} selected{% endif %}>{{ option.label }}</option>{% endfor %}</select>{% call hint(id=field.id, text=field.hint) %}{% endcall %}{% call errors(id=field.id, errors=field.errors) %}{% endcall %}</div>
+{%- elif field.kind.is_textarea() -%}
+<div class="{{ field.wrapper() }}">{% if !field.label.is_empty() %}{% call label(id=field.id, text=field.label, class=field.label_classes(), required=field.attrs.required) %}{% endcall %}{% endif %}<textarea id="{{ field.id }}" name="{{ field.name }}"{% call aria(invalid=field.invalid(), described_by=field.described_by()) %}{% endcall %} class="{{ field.control_class() }}"{{ field.attrs.html() }}>
+{{ field.value }}</textarea>{% call hint(id=field.id, text=field.hint) %}{% endcall %}{% call errors(id=field.id, errors=field.errors) %}{% endcall %}</div>
+{%- elif field.revealed() -%}
+{#- The input's own type is the only record of masked-or-shown; the SecretReveal
+    hook flips it on click and derives the button's name, title and glyph from
+    it, so no patch or double click can leave them disagreeing. -#}
+<div class="{{ field.wrapper() }}">{% if !field.label.is_empty() %}{% call label(id=field.id, text=field.label, class=field.label_classes(), required=false) %}{% endcall %}{% endif %}<div class="flex items-center"><input type="password" name="{{ field.name }}" id="{{ field.id }}" value="{{ field.value }}"{% call aria(invalid=field.invalid(), described_by=field.described_by()) %}{% endcall %} class="{{ field.control_class() }}"{{ field.attrs.html() }} /><button id="{{ field.id }}-reveal" type="button" data-hook="SecretReveal" aria-label="{{ field.show_label() }}" aria-controls="{{ field.id }}" title="{{ field.show_title() }}" data-show-label="{{ field.show_label() }}" data-hide-label="{{ field.hide_label() }}" data-show-title="{{ field.show_title() }}" data-hide-title="{{ field.hide_title() }}"{% if field.attrs.disabled %} disabled{% endif %} class="-ml-[1.875rem] grid size-6 shrink-0 place-items-center rounded-sm text-ink-muted transition hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:text-ink-faint"><span id="{{ field.id }}-reveal-show" class="grid">{% call ui::icon(name="reveal", class="size-4") %}{% endcall %}</span><span id="{{ field.id }}-reveal-hide" class="grid hidden">{% call ui::icon(name="conceal", class="size-4") %}{% endcall %}</span></button></div>{% call hint(id=field.id, text=field.hint) %}{% endcall %}{% call errors(id=field.id, errors=field.errors) %}{% endcall %}</div>
+{%- else -%}
+<div class="{{ field.wrapper() }}">{% if !field.label.is_empty() %}{% call label(id=field.id, text=field.label, class=field.label_classes(), required=field.attrs.required) %}{% endcall %}{% endif %}<input type="{{ field.kind.name() }}" name="{{ field.name }}" id="{{ field.id }}" value="{{ field.value }}"{% call aria(invalid=field.invalid(), described_by=field.described_by()) %}{% endcall %} class="{{ field.control_class() }}"{{ field.attrs.html() }} />{% call hint(id=field.id, text=field.hint) %}{% endcall %}{% call errors(id=field.id, errors=field.errors) %}{% endcall %}</div>
+{%- endif -%}
+{% endmacro %}
+
+{#- A masked secret with reveal, stored-value and clear controls (Bilimbi `secret_input`);
+    secret is a bilibi_ui::SecretInput. The buttons are inline siblings, so the
+    whitespace between them is part of the markup. -#}
+{% macro secret_input(secret) %}
+{%- let field = secret.field() -%}
+<div class="{{ secret.wrapper() }}">{% call input(field=field) %}{% endcall %}
+{% if secret.stored %}{% if let Some(reveal) = secret.stored_reveal.as_ref() %}<button id="{{ secret.id }}-show-stored" type="button" data-event="{{ reveal.event }}" data-key="{{ reveal.key }}" class="mr-3 text-xs font-medium text-ink hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40">Show stored value</button>
+{% endif %}<button id="{{ secret.id }}-clear" type="button" data-hook="SecretClear" data-input-id="{{ secret.id }}"{% if secret.clear_disabled() %} disabled{% endif %} class="text-xs font-medium text-danger-ink hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 disabled:opacity-50">Clear {{ secret.subject }}</button>
+{% endif %}</div>
+{% endmacro %}
+
+{#- A short code as one box per character over one real input (Bilimbi `code_input`); code is a bilibi_ui::CodeInput. -#}
+{% macro code_input(code) %}
+<div id="{{ code.id }}-code" data-hook="CodeInput" data-code-length="{{ code.length }}" class="mb-4"><label for="{{ code.id }}" class="mb-1.5 block text-sm font-medium text-ink">{{ code.label }}</label><div class="relative w-fit"><input id="{{ code.id }}" name="{{ code.name }}" value="{{ code.value }}" type="text" required autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" aria-describedby="{{ code.id }}-hint" class="rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30" /><div id="{{ code.id }}-boxes" data-code-boxes data-update="ignore" hidden aria-hidden="true" class="flex items-center gap-1">{% for index in code.boxes() %}{% if code.separator_before(index) %}<span class="text-muted">-</span>{% endif %}<span data-code-index="{{ index }}" class="flex h-9 w-7 items-center justify-center rounded-md border border-line bg-surface font-mono text-sm text-ink data-[active]:border-brand-strong data-[active]:ring-1 data-[active]:ring-brand-strong/30"></span>{% endfor %}</div></div><p id="{{ code.id }}-hint" class="mt-1 text-xs text-muted">Type or paste all {{ code.length }} characters. The separator is optional.</p></div>
+{% endmacro %}
+
+{#- A single-value combobox over a hidden form field (Bilimbi `combobox`); combo is a bilibi_ui::Combobox. -#}
+{% macro combobox(combo) %}
+<div id="{{ combo.id }}-wrapper" data-hook="Combobox" data-value-id="{{ combo.id }}-value"{% if !combo.cancel_event.is_empty() %} data-cancel-event="{{ combo.cancel_event }}"{% endif %} class="relative floating-scope {{ combo.wrapper() }}"><input type="text" hidden id="{{ combo.id }}-value"{% if !combo.name.is_empty() %} name="{{ combo.name }}"{% endif %} value="{{ combo.value }}" />{% if !combo.label.is_empty() %}<label for="{{ combo.id }}" class="mb-1.5 block text-sm font-medium text-ink">{{ combo.label }}</label>{% endif %}<div class="relative floating-anchor"><input id="{{ combo.id }}" type="text" role="combobox" aria-autocomplete="list" aria-controls="{{ combo.id }}-options" aria-expanded="false"{% call aria(invalid=combo.invalid(), described_by=combo.described_by()) %}{% endcall %} autocomplete="off" value="{{ combo.selected_label() }}" placeholder="{{ combo.placeholder }}" class="{{ combo.control_class() }}"{{ combo.attrs.html() }} />{% if !combo.value.is_empty() %}<button id="{{ combo.id }}-clear" type="button" aria-label="{{ combo.clear_label() }}" tabindex="-1" class="absolute inset-y-0 right-2 grid size-6 place-items-center rounded-sm text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40">{% call ui::icon(name="close", class="size-3.5") %}{% endcall %}</button>{% endif %}</div><div id="{{ combo.id }}-options" role="listbox" aria-label="{{ combo.listbox_label() }}" tabindex="-1" hidden class="floating-list z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg focus:outline-none">{% if combo.options.is_empty() %}<div id="{{ combo.id }}-empty" class="px-2.5 py-2 text-sm text-ink-muted">No options available.</div>{% endif %}<div id="{{ combo.id }}-no-matches" hidden class="px-2.5 py-2 text-sm text-ink-muted">No matches found.</div>{% for option in combo.options %}<div><div id="{{ combo.id }}-option-{{ option.value }}" role="option" data-value="{{ option.value }}" data-label="{{ option.label }}" aria-selected="{% if option.value == combo.value %}true{% else %}false{% endif %}" class="cursor-pointer rounded-lg px-2.5 py-1.5 text-sm text-ink hover:bg-surface-sunken">{{ option.label }}</div></div>{% endfor %}</div>{% call errors(id=combo.id, errors=combo.errors) %}{% endcall %}</div>
+{% endmacro %}
+
+{#- A multi-select dropdown with an optional chip row (Bilimbi `multi_select`); control is a bilibi_ui::MultiSelect.
+    The trigger's aria-expanded is the only record of open: the list and the
+    chevron derive from it in CSS, and the DisclosureDismiss hook writes it. -#}
+{% macro multi_select(control) %}
+<div id="{{ control.id }}-wrapper" data-hook="DisclosureDismiss" class="relative floating-scope {{ control.wrapper() }}"><input type="hidden" name="{{ control.name }}" value="" />{% if !control.label.is_empty() %}<label id="{{ control.id }}-label" for="{{ control.id }}" class="{{ control.label_classes() }}">{{ control.label }}{% if control.required %}<span aria-hidden="true">*</span>{% endif %}</label>{% endif %}{% if control.show_chips() %}<div id="{{ control.id }}-chips" class="mb-2 flex flex-wrap gap-2" role="list"{% if !control.label.is_empty() %} aria-labelledby="{{ control.id }}-label"{% endif %}>{% for option in control.selected_options() %}<span id="{{ control.id }}-chip-{{ option.value }}" role="listitem" class="inline-flex items-center gap-1 rounded-full bg-surface-muted px-2.5 py-0.5 text-xs font-medium text-ink"><span>{{ option.label }}</span><button type="button" id="{{ control.id }}-chip-{{ option.value }}-remove" aria-label="Remove {{ option.label }}" data-event="{{ control.remove_event }}" data-name="{{ control.name }}" data-option="{{ option.value }}" class="-mr-1 grid size-5 place-items-center rounded-full text-ink-muted transition hover:bg-surface-sunken hover:text-danger-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">{% call ui::icon(name="close", class="size-3.5") %}{% endcall %}</button></span>{% endfor %}</div>{% endif %}<button id="{{ control.id }}" type="button" aria-expanded="false" aria-controls="{{ control.id }}-options"{% if control.required %} aria-required="true"{% endif %}{% call aria(invalid=control.invalid(), described_by=control.described_by()) %}{% endcall %} class="{{ control.trigger_class() }}"{{ control.attrs.html() }}><span class="truncate font-normal">{{ control.summary_label() }}</span><span id="{{ control.id }}-chevron" class="inline-flex shrink-0 transition-transform duration-200 group-aria-expanded:rotate-180">{% call ui::icon(name="hero-chevron-down", class="size-4 text-ink-muted") %}{% endcall %}</span></button><div id="{{ control.id }}-options" tabindex="-1" class="hidden peer-aria-expanded:block floating-list z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg space-y-0.5 focus:outline-none">{% for option in control.options %}<label for="{{ control.id }}-option-{{ option.value }}" class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-ink hover:bg-surface-sunken select-none transition"><input type="checkbox" id="{{ control.id }}-option-{{ option.value }}" name="{{ control.name }}" value="{{ option.value }}"{% if control.is_selected(option.value) %} checked{% endif %} class="size-4 shrink-0 rounded border-line text-action accent-action focus:ring-2 focus:ring-brand-strong/30" /><span class="truncate font-normal">{{ option.label }}</span></label>{% endfor %}{% if control.options.is_empty() %}<div class="px-2.5 py-2 text-sm text-ink-muted">No options available.</div>{% endif %}</div>{% call hint(id=control.id, text=control.hint) %}{% endcall %}{% call errors(id=control.id, errors=control.errors) %}{% endcall %}</div>
+{% endmacro %}
+
+{#- A radio group for two to five exclusive choices (Bilimbi `radio_group`); group is a bilibi_ui::RadioGroup. -#}
+{% macro radio_group(group) %}
+<fieldset id="{{ group.id }}"{% if group.disabled %} disabled{% endif %} class="{{ group.wrapper() }}"{{ group.attrs.html() }}>{% if !group.label.is_empty() %}<legend class="mb-1.5 text-sm font-medium text-ink">{{ group.label }}</legend>{% endif %}<div class="space-y-2">{% for option in group.options %}<label for="{{ group.id }}-{{ option.value }}" class="{{ group.option_label_class() }}"><input type="radio" id="{{ group.id }}-{{ option.value }}" name="{{ group.name }}" value="{{ option.value }}"{% if option.value == group.value %} checked{% endif %}{% if group.disabled %} disabled{% endif %} class="size-4 shrink-0 accent-action focus:outline-none focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed" />{{ option.label }}</label>{% endfor %}</div>{% if !group.hint.is_empty() %}<p class="mt-1.5 text-xs text-ink-subtle">{{ group.hint }}</p>{% endif %}{% call errors(id=group.id, errors=group.errors, numbered=false) %}{% endcall %}</fieldset>
+{% endmacro %}
+
+{#- A value the viewer may not see (Bilimbi `restricted`); marker is a bilibi_ui::Restricted. -#}
+{% macro restricted(marker) %}
+<span id="{{ marker.id }}" data-restricted title="{{ marker.tooltip() }}" aria-description="{{ marker.tooltip() }}" class="{{ marker.classes() }}">{% call ui::icon(name="restricted", class="size-4") %}{% endcall %}<span>Restricted</span></span>
+{% endmacro %}
+
+{#- A form row for a field the viewer may not see (Bilimbi `restricted_field`); field is a bilibi_ui::RestrictedField. -#}
+{% macro restricted_field(field) %}
+<div id="{{ field.id }}" class="{{ field.wrapper() }}" data-restricted-field><span id="{{ field.id }}-label" class="mb-1.5 block text-sm font-medium text-ink">{{ field.label }}</span><div id="{{ field.id }}-value" role="group" aria-labelledby="{{ field.id }}-label" aria-readonly="true" aria-description="{{ field.tooltip() }}" title="{{ field.tooltip() }}" class="flex min-h-10 w-full items-center rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-muted">{% call restricted(marker=field.marker()) %}{% endcall %}</div></div>
+{% endmacro %}

@@ -4,8 +4,9 @@
 //! Library itself. Secondary slots are built through the typed models, so the
 //! page exercises both the macro and the Rust paths.
 use crate::{
-    ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, Html, IconButton, IconContext,
-    IconKind, PageVariant, StatItem,
+    choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, CodeInput, Combobox,
+    Field, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect, PageVariant,
+    RadioGroup, Restricted, RestrictedField, SecretInput, StatItem,
 };
 use askama::Template;
 
@@ -22,6 +23,259 @@ pub struct ComponentsSpecimen {
     stats_linked: Vec<StatItem>,
     stats_unlinked: Vec<StatItem>,
     stats_three: Vec<StatItem>,
+    controls: FormControls,
+    /// The help, error and locked fields, rendered through the typed models.
+    field_states: Html,
+    radio_disabled: Html,
+}
+
+/// The form controls of the specimen, mirroring Bilimbi's Design Library
+/// sample form (`sample[...]` fields) so one reference renders both.
+pub struct FormControls {
+    pub code: CodeInput,
+    pub text: Field,
+    pub search: Field,
+    pub email: Field,
+    pub tel: Field,
+    pub number: Field,
+    pub url: Field,
+    pub textarea: Field,
+    pub select: Field,
+    pub roles: MultiSelect,
+    pub checkbox: Field,
+    pub radio: RadioGroup,
+    pub required_roles: MultiSelect,
+    pub chip_roles: MultiSelect,
+    pub plain_roles: MultiSelect,
+    pub locked_region: RadioGroup,
+    pub date: Field,
+    pub time: Field,
+    pub datetime: Field,
+    pub month: Field,
+    pub week: Field,
+    pub password: SecretInput,
+    pub api_key: SecretInput,
+    pub stored_key: SecretInput,
+    pub no_eye: SecretInput,
+    pub example_role: Field,
+    pub example_teams: Field,
+    pub example_interests: MultiSelect,
+    pub example_teams_chips: MultiSelect,
+    pub quick_search: Field,
+    pub combobox_country: Combobox,
+    pub combobox_selected: Combobox,
+    pub combobox_empty: Combobox,
+    pub combobox_inline: Combobox,
+    pub restricted: Restricted,
+    pub restricted_reason: Restricted,
+    pub restricted_field: RestrictedField,
+    pub restricted_field_reason: RestrictedField,
+}
+
+const ROLES: [(&str, &str); 3] = [
+    ("Administrator", "admin"),
+    ("Operator", "operator"),
+    ("Reviewer", "reviewer"),
+];
+const TEAMS: [(&str, &str); 3] = [
+    ("Platform", "platform"),
+    ("Billing", "billing"),
+    ("Support", "support"),
+];
+const COUNTRIES: [(&str, &str); 3] = [
+    ("Malaysia (MY)", "MY"),
+    ("Singapore (SG)", "SG"),
+    ("Thailand (TH)", "TH"),
+];
+const APPEARANCE: [(&str, &str); 3] = [("System", "system"), ("Light", "light"), ("Dark", "dark")];
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+impl FormControls {
+    fn new() -> Self {
+        let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
+        Self {
+            code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
+                .value("ABCD-EF23")
+                .group_size(4),
+            text: sample("text_field", "Sample text value")
+                .label("Text")
+                .placeholder("Enter a value"),
+            search: sample("search_field", "Search query")
+                .kind(InputKind::Search)
+                .label("Search")
+                .placeholder("Search…"),
+            email: sample("email_field", "hello@example.com")
+                .kind(InputKind::Email)
+                .label("Email"),
+            tel: sample("tel_field", "+60 12-345 6789")
+                .kind(InputKind::Tel)
+                .label("Telephone"),
+            number: sample("number_field", "25")
+                .kind(InputKind::Number)
+                .label("Number"),
+            url: sample("url_field", "https://bilimbi.test")
+                .kind(InputKind::Url)
+                .label("URL"),
+            textarea: sample(
+                "textarea_field",
+                "Multi-line sample content demonstrating textarea rendering.",
+            )
+            .kind(InputKind::Textarea)
+            .label("Textarea")
+            .wrapper_class("mb-0"),
+            select: sample("select_field", "standard")
+                .kind(InputKind::Select)
+                .label("Select")
+                .options(choices(&[
+                    ("Standard", "standard"),
+                    ("Advanced", "advanced"),
+                ])),
+            roles: MultiSelect::in_form("sample", "roles")
+                .id("specimen-multi-select")
+                .label("Multi-select")
+                .options(choices(&ROLES))
+                .values(strings(&["admin", "reviewer"]))
+                .selection_label(":count role selected|:count roles selected"),
+            checkbox: Field::in_form("sample", "checkbox_field")
+                .kind(InputKind::Checkbox)
+                .label("Enable synchronization")
+                .checked(true),
+            radio: RadioGroup::in_form("sample", "radio_field", choices(&APPEARANCE))
+                .id("specimen-radio-group")
+                .label("Appearance")
+                .value("system")
+                .wrapper_class("mb-0"),
+            required_roles: MultiSelect::in_form("sample", "required_roles")
+                .id("specimen-multi-select-required")
+                .label("Roles")
+                .hint("Everyone needs at least one role.")
+                .required()
+                .options(choices(&ROLES))
+                .values(strings(&["admin"]))
+                .selection_label(":count role selected|:count roles selected"),
+            chip_roles: MultiSelect::in_form("sample", "chip_roles")
+                .id("specimen-multi-select-chips")
+                .aria_label("Roles with chips")
+                .placeholder("Add roles")
+                .chips("sample_chip_remove")
+                .options(choices(&ROLES))
+                .values(strings(&["admin", "reviewer"])),
+            plain_roles: MultiSelect::in_form("sample", "plain_roles")
+                .id("specimen-multi-select-plain")
+                .aria_label("Optional roles")
+                .options(choices(&ROLES))
+                .wrapper_class("mb-0"),
+            locked_region: RadioGroup::new(
+                "specimen-radio-locked",
+                "locked_region",
+                choices(&[("Singapore", "sg"), ("Malaysia", "my")]),
+            )
+            .aria_label("Data region")
+            .value("sg")
+            .disabled()
+            .hint("Your organization set this for everyone.")
+            .wrapper_class("mb-0"),
+            date: sample("date_field", "2026-08-17")
+                .kind(InputKind::Date)
+                .label("Date"),
+            time: sample("time_field", "14:30")
+                .kind(InputKind::Time)
+                .label("Time"),
+            datetime: sample("datetime_field", "2026-08-17T14:30")
+                .kind(InputKind::DatetimeLocal)
+                .label("Date and time"),
+            month: sample("month_field", "2026-08")
+                .kind(InputKind::Month)
+                .label("Month"),
+            week: sample("week_field", "2026-W34")
+                .kind(InputKind::Week)
+                .label("Week"),
+            password: SecretInput::in_form("sample", "password_field", "password")
+                .value("secret-value")
+                .label("Password")
+                .autocomplete("new-password"),
+            api_key: SecretInput::in_form("sample", "api_key_field", "API key")
+                .value("sk-sample-0000")
+                .label("API key")
+                .autocomplete("off")
+                .wrapper_class("mb-0")
+                .hint("The eye shows a newly entered value for confirmation."),
+            stored_key: SecretInput::new("specimen-stored-key", "stored_key", "API key")
+                .label("Stored API key")
+                .stored()
+                .stored_reveal("reveal-stored", "stored_key")
+                .value("never-render-this-plaintext")
+                .autocomplete("off")
+                .hint("Leave the mask to keep the saved value, or clear it explicitly."),
+            no_eye: SecretInput::new("specimen-no-eye", "sample[password_field]", "password")
+                .value("secret-value")
+                .aria_label("Password without reveal")
+                .no_reveal(),
+            example_role: Field::named("example_role")
+                .kind(InputKind::Select)
+                .label("Role")
+                .prompt("Select a role")
+                .options(choices(&[
+                    ("Administrator", "admin"),
+                    ("Operator", "operator"),
+                ])),
+            example_teams: Field::named("example_teams[]")
+                .id("example_teams")
+                .kind(InputKind::Select)
+                .label("Teams")
+                .multiple()
+                .options(choices(&TEAMS)),
+            example_interests: MultiSelect::in_form("sample", "example_interests")
+                .id("example_interests")
+                .label("Interests")
+                .selection_label(":count interest selected|:count interests selected")
+                .options(choices(&[("Platform", "platform"), ("Billing", "billing")]))
+                .values(strings(&["platform"])),
+            example_teams_chips: MultiSelect::in_form("sample", "example_teams_chips")
+                .id("example_teams_chips")
+                .label("Teams, as chips")
+                .placeholder("Add teams")
+                .chips("sample_chip_remove")
+                .options(choices(&TEAMS))
+                .values(strings(&["platform"])),
+            quick_search: Field::named("quick_search")
+                .kind(InputKind::Search)
+                .aria_label("Quick search")
+                .placeholder("Quick search…"),
+            combobox_country: Combobox::new("specimen-combobox-country", "example_country")
+                .label("Country")
+                .placeholder("Search countries…")
+                .options(choices(&COUNTRIES)),
+            combobox_selected: Combobox::new(
+                "specimen-combobox-selected",
+                "example_selected_country",
+            )
+            .label("Selected country")
+            .value("SG")
+            .options(choices(&COUNTRIES)),
+            combobox_empty: Combobox::new("specimen-combobox-empty", "example_empty_country")
+                .label("Unavailable country list")
+                .placeholder("No countries")
+                .errors(strings(&["Choose a country before continuing."])),
+            combobox_inline: Combobox::new("specimen-combobox-inline", "")
+                .aria_label("Inline country editor")
+                .value("MY")
+                .cancel_event("preview-combobox-cancel")
+                .options(choices(&COUNTRIES)),
+            restricted: Restricted::new("specimen-restricted"),
+            restricted_reason: Restricted::new("specimen-restricted-reason")
+                .reason("Bonuses are shown to payroll only."),
+            restricted_field: RestrictedField::new("specimen-restricted-field", "Bank account"),
+            restricted_field_reason: RestrictedField::new(
+                "specimen-restricted-field-reason",
+                "Bonus",
+            )
+            .reason("Bonuses are shown to payroll only."),
+        }
+    }
 }
 
 impl ComponentsSpecimen {
@@ -69,6 +323,46 @@ impl ComponentsSpecimen {
             ),
             ..Card::default()
         })?;
+        let field_states = [
+            Field::named("field-with-help")
+                .label("Company code")
+                .value("acme")
+                .hint("Used in URLs and exports."),
+            Field::in_form("error_sample", "invalid_text")
+                .label("Required value")
+                .placeholder("Enter a value")
+                .error("can't be blank"),
+            Field::named("disabled-field")
+                .label("System value")
+                .value("Managed by Bilimbi")
+                .disabled(),
+            Field::named("required-field")
+                .label("Company name")
+                .placeholder("Enter a value")
+                .required(),
+            Field::named("readonly-field")
+                .label("System identifier")
+                .value("acme-0042")
+                .readonly(),
+            Field::named("field-with-help-and-error")
+                .label("Tax ID")
+                .hint("As printed on the certificate.")
+                .error("can't be blank"),
+        ]
+        .iter()
+        .map(Html::render)
+        .collect::<askama::Result<Html>>()?;
+        let radio_disabled = Html::render(
+            &RadioGroup::new(
+                "specimen-radio-disabled",
+                "radio_disabled",
+                choices(&APPEARANCE),
+            )
+            .label("Locked appearance")
+            .value("system")
+            .disabled()
+            .wrapper_class("mb-0 mt-4"),
+        )?;
         Ok(Self {
             header_actions,
             card_titled,
@@ -87,6 +381,9 @@ impl ComponentsSpecimen {
                 StatItem::number("Active", 58),
                 StatItem::text("Current", "MY"),
             ],
+            controls: FormControls::new(),
+            field_states,
+            radio_disabled,
         })
     }
 }
