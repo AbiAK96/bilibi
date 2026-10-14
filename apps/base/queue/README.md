@@ -1,4 +1,4 @@
-# Queue insertion (Q1)
+# Durable Queue
 
 Queue stores every job in PostgreSQL. Owners contribute a `Worker` through the
 `base/queue.workers` typed catalog, using `Contribution::new` and source provenance.
@@ -22,12 +22,48 @@ sessions and passwords are never copied. These are historical references, not
 proofs of current authority. There are no foreign keys to Core identities: a job
 survives deletion so execution can record an explicit refusal.
 
-Q2 owns worker handlers, PostgreSQL claims, lease fencing, retries, cancellation,
-lookup and current actor rehydration. The schema provides state, attempts,
-availability, terminal timestamps, bounded failure codes and lease fields for
-that work. Every execution must reprove current actor eligibility and authorize
-business effects; at-least-once delivery requires owner idempotency. Q1 has no
-executor, anonymous job path, uniqueness policy or named system-principal path.
+Owners also contribute a `HandlerBinding` through `execution::HANDLERS`, using
+exactly the same worker ID and module provenance. Its `service` must belong to
+that module and resolve to `HandlerService(Arc<dyn Handler>)`; its `capability`
+must be declared in Authz. `Executor::from_services` runs after all services are
+installed, so Queue never depends upward on owner modules. Missing, foreign or
+unknown bindings refuse executor startup. The Web host starts the executor with
+10 slots, one-second polling, 30-second leases and a 15-minute attempt timeout.
+Other private hosts can configure bounded `execution::Config` and use `run`
+with a Tokio watch shutdown receiver.
+
+PostgreSQL `FOR UPDATE SKIP LOCKED` claims serialize across app processes.
+Claims increment the durable attempt before invoking owner code. An expired
+lease is recovered as retryable, or discarded at the attempt limit. Retry delay
+is `min(3600, 2^attempt)` seconds for both owner failure and expired leases.
+Heartbeats renew only a still-live matching token; completion, retry and cancel
+are likewise fenced. A stale executor cannot overwrite a newer claim or a
+cancellation. Shutdown drops in-flight futures and leaves their leases for
+recovery. Handler/validator panics, timeouts and invalid results retry within
+the captured attempt budget; infrastructure errors preserve durable recovery.
+Only bounded safe failure codes are stored, never error payloads or arguments.
+
+Each attempt reconstructs a current `Scope` through Tenancy Authentication and
+requires the same captured Person/Organisation/Affiliation facets. Inactive,
+deleted, changed or denied actors cancel with `actor_refused`; transient DB
+failures retry. Arguments are validated again. The binding's capability is
+checked before invoking the handler. Use `Execution::begin` for owner database
+writes: it opens the audited boundary, preserves the enqueue trace ID, locks the
+job's live matching lease and rechecks actor eligibility and capability in that
+transaction. Owners must also reauthorize each target-specific command. Keep
+transactions short and do external IO outside them. Cancellation waits for any
+already locked business transaction; it cannot undo a committed effect.
+At-least-once delivery requires an owner idempotency key, including for external
+IO and when a business commit succeeds before queue completion is recorded.
+
+`store::lookup` and bounded `store::states` return redacted state/attempt/failure
+facts including terminal states. Trusted owner/scheduler adapters supply a
+proven tenant; UI/API adapters must authorize their own reads. `cancel_for` and
+`retry_for` join an owner-authorized audited transaction and require matching
+scope/context. Cancel is idempotent for terminal jobs. Explicit retry resets the
+attempt budget of cancelled/discarded/retryable/scheduled jobs; completed and
+executing jobs refuse replay. User-delegated jobs are supported; anonymous work,
+named system-principal enqueue and uniqueness policy remain separate extensions.
 Impersonation is refused until Tenancy supplies a sealed impersonator facet;
 caller-supplied audit attribution cannot create execution authority.
 
@@ -49,3 +85,36 @@ rollback and commit, argument refusals, and mismatched scope/context refusal.
 `inspect` runs in another process and prints persisted redacted job summaries.
 The two contributed workers are linked only into the example; production has no
 specimen worker. An empty production worker catalog is valid.
+
+
+## Private executor walkthrough
+
+The private executable links Queue and its actual Base prerequisites, with a
+bounded account verifier contributed only by this specimen host. It needs no
+Core or UI. On a fresh disposable database:
+
+```sh
+export BILIBI_DISPOSABLE_QUEUE_DEMO=yes
+cargo run -p bilibi-queue --example execution-walkthrough -- prepare
+cargo run -p bilibi-queue --example execution-walkthrough -- enqueue restart
+cargo run -p bilibi-queue --example execution-walkthrough -- worker
+```
+
+In another terminal, `inspect` prints durable facts. Kill only the PID printed
+by that private worker while the restart job is executing, then launch `worker`
+again. With the specimen's three-second lease, the job expires, backs off and
+finishes on attempt two with one effect in `queue_execution_effects`. Ctrl-C
+stops the private executable gracefully. It never drives Herdr or shared app
+processes. The contributed worker/handler is absent from production.
+
+Other enqueue modes: `retry`, `discard`, `cancel`, `panic`, `invalid`,
+`heartbeat`, `timeout`, `late-write`, `complete`. `cancel JOB_ID` and
+`retry JOB_ID` use the production audited owner commands. `QUEUE_DEMO_RUNTIME`
+sets the private attempt timeout (seconds). The heartbeat mode takes eight
+seconds, exceeding the three-second lease without a second attempt. The effect
+uses job ID as an owner idempotency key. To demonstrate current actor refusal,
+set `queue_execution_accounts.active=false` after enqueue and before starting
+the private worker. To demonstrate reauthorization before a delayed write,
+change the specimen's `principal_capabilities` row for `companies.update` to
+false while `late-write` is executing. Both refuse the owner effect. All such
+manual database changes belong exclusively in the disposable specimen DB.

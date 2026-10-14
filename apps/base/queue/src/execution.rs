@@ -323,7 +323,11 @@ impl Executor {
                 result = child.join_next() => break match result {Some(Ok(outcome))=>outcome,_=>Outcome::Retry("worker_panicked")},
                 _ = &mut deadline => break Outcome::Retry("worker_timed_out"),
                 _ = heartbeat.tick() => {
-                    if !store::heartbeat(&self.db,id,&token,self.config.lease_seconds).await? { return Ok(()); }
+                    let renewed = tokio::time::timeout(
+                        Duration::from_secs(self.config.lease_seconds as u64 / 3),
+                        store::heartbeat(&self.db,id,&token,self.config.lease_seconds),
+                    ).await.map_err(|_|Error::Internal)??;
+                    if !renewed { return Ok(()); }
                 }
             }
         };
