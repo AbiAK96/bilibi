@@ -5,8 +5,8 @@ use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
-use bilibi_database::{Change, Context, Db, Error, MutationBoundary, MutationTransaction, Result};
-use bilibi_security::{authorize, guard, Capability, Scope};
+use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction, Result};
+use bilibi_security::{authorize, guard, Capability, Scope, Sessions};
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio_postgres::GenericClient;
@@ -132,16 +132,17 @@ pub async fn mark_read(
     token: &str,
     notifications: &Notifications,
     mutations: &MutationBoundary,
+    sessions: &Sessions,
 ) -> Result<()> {
     let mut client = db.get().await?;
-    let scope = guard(&**client, token).await?;
+    let scope = guard(&**client, token, sessions).await?;
     let mut tx = mutations
         .begin(
             &mut client,
-            Context::user(scope.tenant(), scope.user(), "notifications.mark_read"),
+            scope.mutation_context("notifications.mark_read"),
         )
         .await?;
-    let scope = guard(tx.sql(), token).await?;
+    let scope = guard(tx.sql(), token, sessions).await?;
     authorize(tx.sql(), &scope, Capability::NotificationsUpdate).await?;
     let rows = tx.sql().query("SELECT id FROM notifications WHERE tenant_id=$1 AND user_id=$2 AND read_at IS NULL FOR UPDATE", &[&scope.tenant(),&scope.user()]).await?;
     for row in rows {
@@ -158,9 +159,9 @@ pub async fn mark_read(
     tx.commit().await
 }
 
-pub async fn logout(db: &Db, token: &str, csrf: &str) -> Result<()> {
+pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Result<()> {
     let client = db.get().await?;
-    let scope = guard(&**client, token).await?;
+    let scope = guard(&**client, token, sessions).await?;
     if scope.csrf != csrf {
         return Err(Error::Forbidden);
     }
@@ -175,6 +176,7 @@ pub async fn logout(db: &Db, token: &str, csrf: &str) -> Result<()> {
 }
 
 pub struct UserService {
+    pub sessions: std::sync::Arc<Sessions>,
     pub db: Db,
     pub notifications: Notifications,
     pub mutations: std::sync::Arc<MutationBoundary>,
@@ -182,11 +184,12 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications"],migrations:&[MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session"],migrations:&[MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
+            services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
-            Ok(std::sync::Arc::new(UserService {mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
+            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
         }}],
     }
 }
@@ -196,10 +199,17 @@ impl UserService {
         login(&self.db, tenant, email, password).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
-        logout(&self.db, token, csrf).await
+        logout(&self.db, token, csrf, &self.sessions).await
     }
     pub async fn mark_read(&self, token: &str) -> Result<()> {
-        mark_read(&self.db, token, &self.notifications, &self.mutations).await
+        mark_read(
+            &self.db,
+            token,
+            &self.notifications,
+            &self.mutations,
+            &self.sessions,
+        )
+        .await
     }
 }
 
@@ -214,5 +224,28 @@ impl bilibi_notifications::NotificationSink for Notifications {
     }
     fn committed(&self, scope: &Scope) {
         self.changed(scope);
+    }
+}
+
+/// The current account adapter deliberately supplies no invented party links.
+/// K9 binds Person/Organisation/Affiliation through their owner APIs.
+pub struct AccountVerifier;
+impl bilibi_security::ActorVerifier for AccountVerifier {
+    fn verify<'a>(
+        &'a self,
+        client: &'a dyn bilibi_security::ProofClient,
+        tenant: i64,
+        user: i64,
+    ) -> bilibi_security::ProofFuture<'a, bilibi_security::AccountIdentity> {
+        Box::pin(async move {
+            let row = client.query_opt("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.ok_or(Error::Unauthorized)?;
+            Ok(bilibi_security::AccountIdentity {
+                name: row.get(0),
+                email: row.get(1),
+                person: None,
+                organisation: None,
+                affiliation: None,
+            })
+        })
     }
 }

@@ -161,14 +161,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-authz"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-base"
 version = "0.1.0"
 dependencies = [
+ "bilibi-authz",
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-security",
+ "bilibi-session",
+ "bilibi-tenancy",
  "bilibi-ui",
 ]
 
@@ -262,8 +276,33 @@ dependencies = [
 name = "bilibi-security"
 version = "0.1.0"
 dependencies = [
+ "bilibi-authz",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-session",
+ "bilibi-tenancy",
+ "inventory",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-session"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-tenancy"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
  "inventory",
  "tokio-postgres",
 ]

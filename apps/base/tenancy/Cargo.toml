@@ -1,0 +1,13 @@
+[package]
+name = "bilibi-tenancy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+tokio-postgres.workspace = true
+bilibi-module-registry.workspace = true
+inventory.workspace = true
+bilibi-party-ids = { path = "../party_ids" }

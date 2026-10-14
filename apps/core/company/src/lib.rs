@@ -1,9 +1,9 @@
 //! Tenant-scoped company reads and atomic, audited inline edits.
 mod contributions;
 
-use bilibi_database::{Change, Context, Db, Error, MutationBoundary, Result};
+use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_notifications::NotificationBoundary;
-use bilibi_security::{authorize, guard, restrictions, Capability, Scope};
+use bilibi_security::{authorize, guard, restrictions, Capability, Scope, Sessions};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
@@ -187,17 +187,15 @@ pub async fn save(
     edit: &Edit,
     notifications: &NotificationBoundary,
     mutations: &MutationBoundary,
+    sessions: &Sessions,
 ) -> Result<()> {
     edit.validate()?;
     let mut client = db.get().await?;
-    let scope = guard(&**client, token).await?;
+    let scope = guard(&**client, token, sessions).await?;
     let mut tx = mutations
-        .begin(
-            &mut client,
-            Context::user(scope.tenant(), scope.user(), "company.update"),
-        )
+        .begin(&mut client, scope.mutation_context("company.update"))
         .await?;
-    let scope = guard(tx.sql(), token).await?;
+    let scope = guard(tx.sql(), token, sessions).await?;
     authorize(tx.sql(), &scope, Capability::CompaniesUpdate).await?;
     if restrictions(tx.sql(), &scope).await?.contains(&edit.field) {
         return Err(Error::Forbidden);
@@ -230,19 +228,28 @@ pub async fn save(
 pub mod web;
 
 pub struct CompanyService {
+    sessions: std::sync::Arc<Sessions>,
     db: Db,
     notifications: std::sync::Arc<NotificationBoundary>,
     mutations: std::sync::Arc<MutationBoundary>,
 }
 impl CompanyService {
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
-        save(&self.db, token, edit, &self.notifications, &self.mutations).await
+        save(
+            &self.db,
+            token,
+            edit,
+            &self.notifications,
+            &self.mutations,
+            &self.sessions,
+        )
+        .await
     }
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids"],migrations:&[MIGRATION],
-        services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session"],migrations:&[MIGRATION],
+        services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
     }
 }

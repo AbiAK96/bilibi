@@ -320,7 +320,7 @@ impl Loaded {
 }
 async fn load(app: &App, token: &str, route: &Route, params: &Params) -> Result<Loaded> {
     let client = app.db.get().await?;
-    let scope = guard(&**client, token).await?;
+    let scope = guard(&**client, token, &app.security.sessions).await?;
     let (body, content) = match route {
         Route::List => {
             let page = bilibi_company::list(&**client, &scope, params).await?;
@@ -380,6 +380,8 @@ async fn http_page(
         Err(_) => return Ok(Redirect::to("/login").into_response()),
     };
     let loaded = load(&app, &token, &route, &params(&values)?).await?;
+    let client = app.db.get().await.map_err(Error::from)?;
+    app.security.sessions.activity(&**client, &token).await?;
     Ok(document(&loaded.html)?.into_response())
 }
 async fn companies(
@@ -451,7 +453,7 @@ impl Default for LivePage {
 impl LivePage {
     async fn event(&mut self, app: &App, token: &str, event: Event) -> Result<&'static str> {
         let client = app.db.get().await?;
-        let scope = guard(&**client, token).await?;
+        let scope = guard(&**client, token, &app.security.sessions).await?;
         authorize(&**client, &scope, Capability::CompaniesView).await?;
         drop(client);
         let mut notice = "";
@@ -498,6 +500,8 @@ impl LivePage {
             }
         }
         self.loaded = Some(load(app, token, &self.route, &self.params).await?);
+        let client = app.db.get().await?;
+        app.security.sessions.activity(&**client, token).await?;
         Ok(notice)
     }
     fn message(&self, notice: &str) -> serde_json::Value {

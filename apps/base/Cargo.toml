@@ -7,9 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-authz = { path = "authz" }
 bilibi-database = { path = "database" }
 bilibi-module-registry = { path = "module_registry" }
 bilibi-notifications = { path = "notifications" }
 bilibi-party-ids = { path = "party_ids" }
 bilibi-security = { path = "security" }
+bilibi-session = { path = "session" }
+bilibi-tenancy = { path = "tenancy" }
 bilibi-ui = { path = "ui" }
