@@ -22,8 +22,15 @@ discovers deep modules, compiles, migrates, seeds, configures local HTTPS and
 watches for changes. The first login is `ai@agent.my` with password `bilibi-dev`.
 Cargo diagnostics and wall-clock build times stay visible;
 `target/cargo-timings/cargo-timing.html` shows the compile breakdown.
-Rust/templates/assets rebuild and the server restarts on change. Ctrl-C stops
-this app; the shared Caddy service continues running.
+Changes under `apps/` (Rust, templates, CSS/JS, migrations and discovered module
+crates), workspace manifests/lockfile, and `scripts/` trigger a rebuild and app
+restart. In development, an open page shows “Rebuilding…” while the server is
+restarting, reconnects with backoff, then reloads the same URL automatically.
+Release builds keep the “Live connection closed. Reload to reconnect.” message.
+Restart `./scripts/start-app.sh` after changing startup environment variables
+such as `DATABASE_URL`, `APP_ORIGIN`, `BIND_ADDR`, `PG18_BIN`, or
+`BILIBI_DEV_PORT`; watched file changes do not reload the launcher's environment.
+Ctrl-C stops this app; the shared Caddy service continues running.
 
 HTTPS uses a mkcert leaf certificate loaded into the running shared Caddy through
 its admin API. The launcher updates only its tagged route, TLS policy and
@@ -120,7 +127,8 @@ refresh also catches account suspension, session expiry, logout, changed roles,
 and missed bell events. Denied access clears the displayed page and closes the
 socket. The browser preserves unfinished inline drafts across bell patches,
 retaining their version so concurrent changes still conflict. Reload to reconnect
-after a lost connection.
+after a lost connection in production; development reconnects and reloads after
+the watcher restarts the server.
 
 ```text
 apps/base/            Base composition root

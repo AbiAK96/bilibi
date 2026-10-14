@@ -8,12 +8,20 @@
   let pending = false;
   let submittedField = null;
   let lastHTML = null;
+  let reconnecting = false;
+  let retryDelay = 500;
+  let retryTimer;
+  const devReload = __BILIBI_DEV_RELOAD__;
   function connect() {
     if (!document.querySelector('[data-live]')) return;
     const url = new URL('/live', location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
-    socket.onopen = () => send({type:'mount', path: location.pathname, params: Object.fromEntries(new URLSearchParams(location.search))});
+    socket.onopen = () => {
+      if (reconnecting) { location.reload(); return; }
+      retryDelay = 500;
+      send({type:'mount', path: location.pathname, params: Object.fromEntries(new URLSearchParams(location.search))});
+    };
     socket.onmessage = ({data}) => {
       const message = JSON.parse(data);
       if (message.type === 'page') {
@@ -60,7 +68,19 @@
         }
       }
     };
-    socket.onclose = () => { pending = false; if (document.getElementById('app')) feedback.textContent = 'Live connection closed. Reload to reconnect.'; };
+    socket.onclose = () => {
+      pending = false;
+      if (!document.getElementById('app')) return;
+      if (!devReload) { feedback.textContent = 'Live connection closed. Reload to reconnect.'; return; }
+      reconnecting = true;
+      feedback.textContent = 'Rebuilding…';
+      feedback.classList.add('rebuilding');
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        retryDelay = Math.min(retryDelay * 2, 5000);
+        connect();
+      }, retryDelay);
+    };
   }
   function send(event) {
     if (socket?.readyState !== WebSocket.OPEN || pending) return;

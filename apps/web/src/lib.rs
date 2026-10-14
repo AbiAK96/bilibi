@@ -93,7 +93,17 @@ pub fn router(app: App) -> Router {
         )
         .route(
             "/assets/live.js",
-            get(|| async { ([(header::CONTENT_TYPE, "text/javascript")], bilibi_ui::JS) }),
+            get(|| async {
+                let script = bilibi_ui::JS.replace(
+                    "__BILIBI_DEV_RELOAD__",
+                    if cfg!(debug_assertions) {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                );
+                ([(header::CONTENT_TYPE, "text/javascript")], script)
+            }),
         )
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn(response_headers))
