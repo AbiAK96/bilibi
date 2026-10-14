@@ -6,11 +6,7 @@ async fn main() -> Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("migrate") => bilibi_web::migrate(&db).await?,
         Some("seed") => {
-            let password = std::env::var("SEED_PASSWORD").map_err(|_| Error::Invalid)?;
-            if password.len() < 12 {
-                return Err(Error::Invalid);
-            }
-            bilibi_web::seed::seed(&db, &password).await?;
+            bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;
         }
         None | Some("run") => {
             let origin =

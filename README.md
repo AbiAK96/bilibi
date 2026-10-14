@@ -6,59 +6,51 @@ not a replacement for the full platform or a bake-off benchmark implementation.
 
 ## Run locally
 
-Install stable Rust (1.91 or newer), Docker with Compose, PostgreSQL client tools,
-Caddy, mkcert and Python 3.11+. On Ubuntu/WSL2:
+Install stable Rust 1.99, PostgreSQL 18 server and client tools, Caddy, mkcert
+and Python 3.11+. Caddy must already be running with its admin API at
+`http://localhost:2019`. On Ubuntu/WSL2:
 
 ```sh
-sudo apt install caddy mkcert libnss3-tools postgresql-client python3
-cargo install cargo-watch --locked
-# Enable systemd on WSL2, then start the existing shared Caddy service once.
-sudo systemctl start caddy
+sudo apt install caddy mkcert libnss3-tools postgresql-18 postgresql-client-18 python3
+cargo install cargo-watch --version 8.5.3 --locked
 ./scripts/start-app.sh
 ```
 
 Open <https://bilibi.localhost>. This one command checks prerequisites, starts
-local PostgreSQL with Compose (or uses your `DATABASE_URL`), discovers deep
-modules, compiles, migrates, seeds, configures local HTTPS and watches for changes.
-It generates an owner-readable demo password in `.local/seed-password`, or accepts
-`SEED_PASSWORD` in your environment. Cargo diagnostics and wall-clock build times
-stay visible; `target/cargo-timings/cargo-timing.html` shows the compile breakdown.
+the private PostgreSQL 18 instance in `.local/` (or uses your `DATABASE_URL`),
+discovers deep modules, compiles, migrates, seeds, configures local HTTPS and
+watches for changes. The first login is `ai@agent.my` with password `bilibi-dev`.
+Cargo diagnostics and wall-clock build times stay visible;
+`target/cargo-timings/cargo-timing.html` shows the compile breakdown.
 Rust/templates/assets rebuild and the server restarts on change. Ctrl-C stops
 this app; the shared Caddy service continues running.
 
-HTTPS follows Bilimbi's mkcert/shared-Caddy approach. The leaf certificate and
-key are installed under `/etc/caddy/bilibi/certs`; each site has its checkout
-owner line. An advisory lock shared with Bilimbi protects port allocation.
-Existing Caddy imports and sites are preserved; reserved/listening ports are
-skipped. Deleted Bilibi checkouts' sites are pruned. Changes are backed up,
-validated as the Caddy user and rolled back on validation or reload failure.
-`BILIBI_DEV_HOST` and `BILIBI_DEV_PORT` pin an explicit host/port; otherwise a
-second checkout gets a distinct hostname and free port. The default backend port
-is 4300. HTTPS trusts the developer's mkcert CA, including the Windows CurrentUser
-root store on WSL2; only the public CA certificate crosses into Windows. WSL NAT
-allows the Windows gateway as well as loopback, while refusing remote LAN clients.
-Caddy installation is the only privileged step, invoked via sudo by the launcher.
+HTTPS uses a mkcert leaf certificate loaded into the running shared Caddy through
+its admin API. The launcher updates only its tagged route, TLS policy and
+certificate, then reapplies them on each start. It keeps certificate files in
+`.local/https`, makes no shared Caddy file changes and uses the default backend
+port 4300 (or the next free port).
 
+The launcher initializes and reuses its private PostgreSQL 18 data directory in
+`.local/postgres18` on port 5438. Its development role and database are both
+`bilibi` with password `bilibi`. Set `DATABASE_URL` to use another database.
 For manual HTTP development, use:
 
 ```sh
-docker compose up -d --wait
-export DATABASE_URL='postgres://bilibi:bilibi@localhost:5433/bilibi'
+export DATABASE_URL='postgres://bilibi:bilibi@127.0.0.1:5438/bilibi'
 export APP_ORIGIN='http://localhost:3000'
 python3 scripts/discover-modules.py
 cargo run -p bilibi-web -- migrate
-read -rs -p 'Demo password: ' SEED_PASSWORD; echo
-export SEED_PASSWORD
 cargo run -p bilibi-web -- seed
-unset SEED_PASSWORD
-cargo server
+cargo run -p bilibi-web -- run
 ```
 
-Open <http://localhost:3000>. Use tenant `1` and one of these accounts with the
-password you seeded:
+Open <http://localhost:3000>. Use tenant `1` and one of these accounts with
+password `bilibi-dev`:
 
 | Email | Role | Access |
 |---|---|---|
+| ai@agent.my | manager | View and edit all company fields |
 | manager@example.test | manager | View and edit all company fields |
 | staff@example.test | staff | View and edit, with tax ID and revenue restricted |
 | viewer@example.test | viewer | Read only; email, phone, tax ID and revenue masked |
@@ -75,8 +67,8 @@ demo roles and assignments exist.
 browser's origin, without a trailing slash. POST requests and WebSocket upgrades
 require that Origin. HTTPS origins set Secure session cookies; terminate TLS at
 a reverse proxy when using HTTPS. PostgreSQL connections use `NoTls`, intended
-for this local slice or a trusted private connection. Supply database credentials
-through the environment. No migrations or seeding run automatically on boot.
+for this local slice or a trusted private connection. No migrations or seeding
+run automatically on app boot.
 
 ## What is ported
 
@@ -183,10 +175,8 @@ tenant isolation, direct-deny precedence, multi-role redaction, revoked live
 permissions/sessions, pagination/search/sort, escaped HTML, CSRF/Origin checks,
 concurrent saves, audit-failure rollback and user-scoped bell pushes. Registry
 tests prove discovery/service initialization, dependency ordering and invalid-graph
-refusal. Launcher tests redirect every privileged path to `/tmp`, use no sudo,
-and verify allocation, pruning, rollback, build/watch orchestration and generated
-Caddy syntax with the real consumer when installed. GitHub
-Actions runs the same checks with a PostgreSQL 16 service.
+refusal. The launcher checks exercise module discovery and build/watch
+orchestration. GitHub Actions runs the same checks with a PostgreSQL 18 service.
 
 ## Left out
 

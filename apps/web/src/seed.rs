@@ -1,12 +1,15 @@
 //! Explicit, idempotent demo seed. Never runs at application boot.
 use bilibi_database::{Db, Result};
 
+pub const DEMO_PASSWORD: &str = "bilibi-dev";
+
 pub async fn seed(db: &Db, password: &str) -> Result<()> {
     let hash = bilibi_user::hash_password(password)?;
     let mut client = db.get().await?;
     let tx = client.transaction().await?;
     tx.batch_execute(include_str!("seed.sql")).await?;
     for (id, tenant, name, email) in [
+        (6_i64, 1_i64, "AI Agent", "ai@agent.my"),
         (1_i64, 1_i64, "Ada Manager", "manager@example.test"),
         (2, 1, "Lee Viewer", "viewer@example.test"),
         (3, 1, "Sam Staff", "staff@example.test"),
