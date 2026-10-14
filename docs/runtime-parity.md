@@ -1,0 +1,57 @@
+# Runtime smoke and parity evidence
+
+Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](../fixtures/parity/companies-v1.json) for the current runnable slice and this checklist to record real app evidence. The fixture currently relies on the explicit, idempotent Bilibi demo seed. Future fixtures should be versioned when their records or expected behavior change; do not turn these cases into unit tests.
+
+## Isolated setup
+
+1. Create a fresh disposable database for Bilibi and a separate fresh disposable database for the pinned Bilimbi reference. Never point either app at a developer, shared, or production database. Record how each disposable database is isolated and removed.
+2. Record the Bilibi commit, Bilimbi commit, fixture version, database identifiers (not credentials), runtime versions, and exact origins. Do not record passwords, cookies, session IDs, or tokens in evidence.
+3. For Bilibi, run `python3 scripts/discover-modules.py`, `cargo run -p bilibi-web -- migrate`, `cargo run -p bilibi-web -- seed`, then launch with the manifest's isolated database URL and a free local origin/port. Keep each app on a distinct port.
+4. Confirm both apps are reachable and log in using only the manifest accounts. If the Bilimbi seed differs, create equivalent records in its isolated database and note every mapping; do not silently compare unlike data.
+
+The current Bilibi seed creates tenants 1 and 2, five permission roles, six demo accounts, 62 tenant 1 companies and one tenant 2 company. Re-running `seed` is idempotent. The manifest's password is the local demo credential and must only be used against disposable local databases.
+
+## Smoke and visual comparison
+
+Use `chrome-devtools-axi` for both apps. Match viewport size, device scale factor, browser zoom, locale, timezone, color scheme, account/tenant, and browser version. Wait for fonts and loading indicators before capture. Run the manifest cases in both apps where the behavior exists; mark unsupported or not-yet-ported behavior as a gap instead of skipping it silently.
+
+For every case, capture the initial state and the listed interactions, including browser Back and reload when applicable. Compare screenshots side by side and with a pixel overlay/diff. Keep masks limited to documented volatile timestamps or cursors. Also check focus, scroll position, draft preservation, URL state, browser console, network responses, and relevant server output. Screenshots alone do not establish authorization, persistence, or audit behavior.
+
+## Run evidence record
+
+Copy this section into a dated evidence file outside the source tree for each run. Keep screenshots, overlays, browser/network captures, and bounded database evidence beside that record.
+
+```text
+Fixture: bilibi-companies-v1
+Run date/time (UTC):
+Bilibi commit / Bilimbi commit:
+Browser and versions:
+Viewport / scale / zoom / locale / timezone / theme:
+Bilibi origin / Bilimbi origin:
+Isolated database setup and cleanup:
+Accounts and permission states exercised:
+
+Case and interaction step:
+  Result (pass / fail / gap / not run):
+  Screenshot paths (both apps, source state, equal dimensions):
+  Overlay/diff path:
+  URL and browser Back/reload result:
+  Focus/draft/scroll/frame observations:
+  Console/network/server evidence:
+  Authorization/persistence/audit evidence:
+  Difference or follow-up slice:
+```
+
+## Required checks for each implementation slice
+
+Run the repository checks without invoking any unit-test runner:
+
+```sh
+python3 scripts/discover-modules.py --check
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+Then run the affected route or interaction in the app and attach the relevant evidence record. `cargo check`/Clippy and screenshots complement each other; neither replaces the live behavior check. Do not run `cargo test` or add Rust, browser-hook, or Python unit tests.
+
+For two-session or stateful behavior, record both actors and sequence: conflicting saves, permission/session revocation, archived writes, cross-tenant reads, audit rollback, job retry/restart, duplicate schedule claim, workflow replay, and token replay. Capture only bounded, redacted database evidence that demonstrates the claimed result.
