@@ -110,7 +110,10 @@ impl Handler for Specimen {
                 Err(Error::Unauthorized | Error::Forbidden) => {
                     Outcome::Cancel("owner_actor_refused")
                 }
-                Err(Error::Conflict) => Outcome::Cancel("owner_lease_refused"),
+                Err(Error::Conflict) => {
+                    println!("fenced owner write refused job={}", execution.job_id);
+                    Outcome::Cancel("owner_lease_refused")
+                }
                 Err(_) => Outcome::Retry("owner_unavailable"),
             }
         })

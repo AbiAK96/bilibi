@@ -108,7 +108,7 @@ stops the private executable gracefully. It never drives Herdr or shared app
 processes. The contributed worker/handler is absent from production.
 
 Other enqueue modes: `retry`, `discard`, `cancel`, `panic`, `invalid`,
-`heartbeat`, `timeout`, `late-write`, `complete`. `cancel JOB_ID` and
+`heartbeat`, `timeout`, `late-write`, `fenced-write`, `complete`. `cancel JOB_ID` and
 `retry JOB_ID` use the production audited owner commands. `QUEUE_DEMO_RUNTIME`
 sets the private attempt timeout (seconds). The heartbeat mode takes eight
 seconds, exceeding the three-second lease without a second attempt. The effect
