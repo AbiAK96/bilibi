@@ -1,0 +1,699 @@
+/* Keep `source(none)` and every `@source` below. `source(none)` turns off
+ * Tailwind v4's automatic detection, so these lines are the whole list of
+ * places a class name is read from. A class used only in an unlisted path is
+ * never generated and the markup renders unstyled, without an error.
+ * Module colocated hooks are scanned through their `.ex` sources under the
+ * package trees below, so do not add an env-pinned `_build` glob for them. */
+@import "tailwindcss" source(none);
+/* Scan every module's Rust, Askama, CSS and browser adapter sources.
+ * Keep the pinned Bilimbi candidates until all parity components are ported. */
+@source "../css";
+@source "../reference-candidates.txt";
+@source "../vendor/icon-candidates.txt";
+@source "../../../..";
+/* Menu contributions provide bare icon names at runtime. Keep the generated
+ * Heroicon utilities available for their icon rendering. */
+@source inline("hero-{building-library,building-office-2,chart-bar,circle-stack,clipboard-document-list,cog-6-tooth,flag,globe-alt,information-circle,lock-closed,map,map-pin,magnifying-glass,paint-brush,puzzle-piece,shield-check,squares-2x2,user-group,users}");
+
+@plugin "../vendor/heroicons.cjs";
+@import "./demo-compat.css";
+
+/* Instrument Sans is vendored under SIL OFL 1.1 in priv/static/fonts/OFL.txt
+ * from Instrument/instrument-sans at 7fa22308a3d0c94ee2b3cd537a1196b65db34a3e.
+ * Keep these font files local so production shells do not make third-party
+ * stylesheet requests. */
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/instrument-sans-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: italic;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/instrument-sans-variable-italic.woff2") format("woff2");
+}
+
+/* Semantic color roles — the shared theme rules required by DESIGN.md.
+ *
+ * Components and templates use these roles (`bg-surface`, `text-ink-muted`,
+ * `border-line`, `text-danger`) and never a raw Tailwind palette color. A
+ * `stone-*` or `emerald-*` class outside this file is a defect: it puts a
+ * color decision somewhere it can only be changed one occurrence at a time.
+ *
+ * A module may add a role here when its workflow genuinely needs one. Adding a
+ * shade because a single screen wanted it is how a palette stops meaning
+ * anything.
+ */
+@theme {
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+  /* Surfaces — a warm operational base. */
+  --color-canvas: var(--color-stone-50);
+  --color-surface: var(--color-white);
+  --color-surface-sunken: var(--color-stone-200);
+  --color-surface-muted: var(--color-stone-100);
+  --color-surface-sidebar: var(--color-stone-100);
+
+  /* Structure. */
+  --color-high-contrast-line: color-mix(in srgb, var(--color-ink) 20%, transparent);
+  --color-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+  --color-low-contrast-line: color-mix(in srgb, var(--color-ink) 6%, transparent);
+
+  /* Text, strongest first. */
+  --color-ink-strong: var(--color-stone-950);
+  --color-ink: var(--color-stone-900);
+  --color-ink-muted: var(--color-stone-600);
+  --color-ink-subtle: color-mix(in srgb, var(--color-stone-600) 50%, var(--color-stone-500));
+  --color-ink-faint: var(--color-stone-400);
+  --color-ink-inverse: var(--color-white);
+  --color-link: var(--color-stone-700);
+  --color-muted: var(--color-stone-600);
+
+  /* Primary action — confident and quiet. Operational software, not a CTA. */
+  --color-action: var(--color-lime-950);
+  --color-primary-line: var(--color-action);
+  --color-action-hover: var(--color-brand-strong);
+  --color-action-ink: var(--color-lime-50);
+
+  /* Product identity. Never used for status: a color that also means "good"
+   * cannot report anything. */
+  --color-brand: var(--color-lime-300);
+  --color-brand-surface: var(--color-lime-50);
+  --color-brand-line: var(--color-brand);
+  --color-brand-strong: var(--color-lime-600);
+  --color-brand-ink: var(--color-lime-950);
+
+  /* Selection — current place or choice. */
+  --color-selection-line: var(--color-lime-300);
+
+  /* Status — honest feedback only. `info` is a statement that informs without
+   * confirming a write; it is blue, as in Belimbing, so it never reads as a
+   * success. */
+  --color-success: var(--color-emerald-600);
+  --color-success-surface: var(--color-emerald-50);
+  --color-success-line: var(--color-emerald-200);
+  --color-success-ink: var(--color-emerald-900);
+
+  --color-info: var(--color-blue-600);
+  --color-info-surface: var(--color-blue-50);
+  --color-info-line: var(--color-blue-200);
+  --color-info-ink: var(--color-blue-900);
+
+  --color-warning: var(--color-amber-500);
+  --color-warning-surface: var(--color-amber-50);
+  --color-warning-line: var(--color-amber-300);
+  --color-warning-ink: var(--color-amber-900);
+
+  --color-danger: var(--color-red-600);
+  --color-danger-hover: var(--color-red-700);
+  --color-danger-surface: var(--color-red-50);
+  --color-danger-line: var(--color-red-200);
+  --color-danger-ink: var(--color-red-900);
+
+  /* Data colour for the grid's lenses. A sequential scale for values that
+     order on a number line (small to large), a categorical palette for
+     values that only differ. Neither uses brand, success, warning or danger,
+     so a coloured cell never reads as status. */
+  --color-scale-1: var(--color-sky-100);
+  --color-scale-2: var(--color-sky-200);
+  --color-scale-3: var(--color-sky-400);
+  --color-scale-4: var(--color-sky-600);
+  --color-scale-5: var(--color-sky-800);
+  --color-cat-1: var(--color-teal-500);
+  --color-cat-2: var(--color-orange-400);
+  --color-cat-3: var(--color-violet-500);
+  --color-cat-4: var(--color-cyan-500);
+  --color-cat-5: var(--color-fuchsia-500);
+  --color-cat-6: var(--color-lime-500);
+  --color-cat-7: var(--color-indigo-500);
+  --color-cat-8: var(--color-rose-400);
+}
+
+/*
+ * Dark theme (#657). The palette is the steward-approved draft: the same
+ * product at night — warm stone base, lime orientation-only, every light
+ * relationship keeping its direction with inverted values. Tri-state:
+ * bare `:root` above is light; the media block covers the "system" state
+ * (no data-theme stamped) on dark devices without overriding an explicit
+ * light choice; the attribute block makes an explicit dark choice win on
+ * light devices. THE TWO BLOCKS MUST STAY IDENTICAL — plain CSS cannot
+ * share them. Keep both copies identical when updating theme roles.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-canvas: var(--color-stone-950);
+    --color-surface: var(--color-stone-900);
+    --color-surface-sunken: color-mix(in srgb, var(--color-stone-800) 70%, var(--color-stone-900));
+    --color-surface-muted: var(--color-stone-800);
+    --color-surface-sidebar: color-mix(in srgb, var(--color-stone-900) 70%, var(--color-stone-950));
+    --color-high-contrast-line: color-mix(in srgb, var(--color-ink) 20%, transparent);
+    --color-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+    --color-low-contrast-line: color-mix(in srgb, var(--color-ink) 6%, transparent);
+    --color-ink-strong: var(--color-stone-50);
+    --color-ink: var(--color-stone-100);
+    --color-ink-muted: var(--color-stone-400);
+    --color-ink-subtle: color-mix(in srgb, var(--color-stone-400) 60%, var(--color-stone-500));
+    --color-ink-faint: var(--color-stone-600);
+    --color-ink-inverse: var(--color-stone-950);
+    --color-link: var(--color-stone-300);
+    --color-muted: var(--color-stone-400);
+    --color-action: var(--color-lime-600);
+    --color-primary-line: var(--color-action);
+    --color-action-hover: var(--color-lime-500);
+    --color-action-ink: var(--color-lime-950);
+    --color-brand: var(--color-lime-400);
+    --color-brand-surface: var(--color-lime-950);
+    --color-brand-line: var(--color-brand);
+    --color-brand-strong: var(--color-lime-500);
+    --color-brand-ink: var(--color-lime-100);
+    --color-selection-line: var(--color-lime-800);
+    --color-success: var(--color-emerald-500);
+    --color-success-surface: var(--color-emerald-950);
+    --color-success-line: var(--color-emerald-800);
+    --color-success-ink: var(--color-emerald-200);
+    --color-info: var(--color-blue-500);
+    --color-info-surface: var(--color-blue-950);
+    --color-info-line: var(--color-blue-800);
+    --color-info-ink: var(--color-blue-200);
+    --color-warning: var(--color-amber-400);
+    --color-warning-surface: var(--color-amber-950);
+    --color-warning-line: var(--color-amber-700);
+    --color-warning-ink: var(--color-amber-200);
+    --color-danger: var(--color-red-500);
+    --color-danger-hover: var(--color-red-400);
+    --color-danger-surface: var(--color-red-950);
+    --color-danger-line: var(--color-red-800);
+    --color-danger-ink: var(--color-red-200);
+    --color-scale-1: var(--color-sky-950);
+    --color-scale-2: var(--color-sky-900);
+    --color-scale-3: var(--color-sky-700);
+    --color-scale-4: var(--color-sky-500);
+    --color-scale-5: var(--color-sky-300);
+    --color-cat-1: var(--color-teal-400);
+    --color-cat-2: var(--color-orange-400);
+    --color-cat-3: var(--color-violet-400);
+    --color-cat-4: var(--color-cyan-400);
+    --color-cat-5: var(--color-fuchsia-400);
+    --color-cat-6: var(--color-lime-400);
+    --color-cat-7: var(--color-indigo-400);
+    --color-cat-8: var(--color-rose-400);
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-canvas: var(--color-stone-950);
+  --color-surface: var(--color-stone-900);
+  --color-surface-sunken: color-mix(in srgb, var(--color-stone-800) 70%, var(--color-stone-900));
+  --color-surface-muted: var(--color-stone-800);
+  --color-surface-sidebar: color-mix(in srgb, var(--color-stone-900) 70%, var(--color-stone-950));
+  --color-high-contrast-line: color-mix(in srgb, var(--color-ink) 20%, transparent);
+  --color-line: color-mix(in srgb, var(--color-ink) 12%, transparent);
+  --color-low-contrast-line: color-mix(in srgb, var(--color-ink) 6%, transparent);
+  --color-ink-strong: var(--color-stone-50);
+  --color-ink: var(--color-stone-100);
+  --color-ink-muted: var(--color-stone-400);
+  --color-ink-subtle: color-mix(in srgb, var(--color-stone-400) 60%, var(--color-stone-500));
+  --color-ink-faint: var(--color-stone-600);
+  --color-ink-inverse: var(--color-stone-950);
+  --color-link: var(--color-stone-300);
+  --color-muted: var(--color-stone-400);
+  --color-action: var(--color-lime-600);
+  --color-primary-line: var(--color-action);
+  --color-action-hover: var(--color-lime-500);
+  --color-action-ink: var(--color-lime-950);
+  --color-brand: var(--color-lime-400);
+  --color-brand-surface: var(--color-lime-950);
+  --color-brand-line: var(--color-brand);
+  --color-brand-strong: var(--color-lime-500);
+  --color-brand-ink: var(--color-lime-100);
+  --color-selection-line: var(--color-lime-800);
+  --color-success: var(--color-emerald-500);
+  --color-success-surface: var(--color-emerald-950);
+  --color-success-line: var(--color-emerald-800);
+  --color-success-ink: var(--color-emerald-200);
+  --color-info: var(--color-blue-500);
+  --color-info-surface: var(--color-blue-950);
+  --color-info-line: var(--color-blue-800);
+  --color-info-ink: var(--color-blue-200);
+  --color-warning: var(--color-amber-400);
+  --color-warning-surface: var(--color-amber-950);
+  --color-warning-line: var(--color-amber-700);
+  --color-warning-ink: var(--color-amber-200);
+  --color-danger: var(--color-red-500);
+  --color-danger-hover: var(--color-red-400);
+  --color-danger-surface: var(--color-red-950);
+  --color-danger-line: var(--color-red-800);
+  --color-danger-ink: var(--color-red-200);
+  --color-scale-1: var(--color-sky-950);
+  --color-scale-2: var(--color-sky-900);
+  --color-scale-3: var(--color-sky-700);
+  --color-scale-4: var(--color-sky-500);
+  --color-scale-5: var(--color-sky-300);
+  --color-cat-1: var(--color-teal-400);
+  --color-cat-2: var(--color-orange-400);
+  --color-cat-3: var(--color-violet-400);
+  --color-cat-4: var(--color-cyan-400);
+  --color-cat-5: var(--color-fuchsia-400);
+  --color-cat-6: var(--color-lime-400);
+  --color-cat-7: var(--color-indigo-400);
+  --color-cat-8: var(--color-rose-400);
+}
+
+[data-phx-session],
+[data-phx-teleported-src] {
+  display: contents;
+}
+
+::selection {
+  background: var(--color-brand);
+  color: var(--color-brand-ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  min-width: 20rem;
+}
+
+/* An open modal dialog is promoted to the top layer and makes the rest of the
+ * page inert, so anything left in the layout's flash group paints under the
+ * dimmer and can be neither announced nor dismissed while one is open. Every
+ * dialog renders its own connection banners, and a dialog given `flash` also
+ * renders its own `:info` and `:error` copy and marks itself
+ * `data-owns-flash`. Hide the layout copy of whatever the open dialog carries,
+ * so the same message never appears twice. A dialog without that marker — the
+ * Design Library specimen's, say — leaves the layout flash in the DOM, dimmed
+ * behind the backdrop until the dialog closes. */
+body:has(dialog:modal[data-owns-flash]) #flash-group > #flash-info,
+body:has(dialog:modal[data-owns-flash]) #flash-group > #flash-error,
+body:has(dialog:modal) #flash-group > #connection-client-error,
+body:has(dialog:modal) #flash-group > #connection-server-error {
+  visibility: hidden;
+}
+
+/* Reduced motion (parity finding M1). One global rule, not a per-component
+ * opt-out: a person who asked their operating system to reduce motion gets no
+ * transition or animation anywhere in the product. Durations collapse to a
+ * single frame rather than `none` so `transitionend` and `animationend`
+ * listeners still fire and state still settles. `!important` is deliberate:
+ * the drawer and any id-specific rule would otherwise outrank the universal
+ * selector. The page-loading bar is a canvas, so this block cannot reach it;
+ * apps/web/assets/vendor/topbar.js checks the same query and paints a static
+ * bar instead of trickling. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The tiled workspace below the `lg` breakpoint shows one tile at a time: the
+ * focused tile fills the area and the strip of tabs above it switches. The
+ * tree is kept, not flattened, so widening the window restores the tiling.
+ * `!important` because the server positions each tile by inline style. */
+@media (max-width: 1023px) {
+  #workspace-tiles .workspace-tile:not([data-focused="true"]),
+  #workspace-tiles [data-split] {
+    display: none;
+  }
+
+  #workspace-tiles .workspace-tile[data-focused="true"] {
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+}
+
+/* List fill. A page shown in a workspace tile (`Layouts.app/1`, the
+ * `data-framed` shell) has one vertical scrollbar, and on a list page it is
+ * the table's: the page takes the tile's height, the table's scroll box
+ * (`data-table-region`, `table/1` and `flex_table/1`) takes the room left
+ * under the heading and filters, its heading row sticks, and the pager stays
+ * at the foot of the tile below it.
+ *
+ * The chain from the page to the scroll box has to be flex columns that may
+ * shrink, so the rules name the shapes a list page (`page/1`,
+ * `data-page="list"`) has: the table in a card (`data-card`), or in a plain
+ * wrapper. In either, the scroll box may sit one level further in, inside a
+ * `data-table-frame`: that is `flex_table/1`, whose frame also holds the notch
+ * and the customization bar above the table, and they keep their height
+ * while the table takes the rest. Only the last such block on the page
+ * takes the room; a smaller table above it keeps its height. A table nested
+ * any other way, a record or form page, and every page with no table are
+ * left alone and scroll in `#app-content` as before. So does every page in
+ * a tile under 24rem tall, where a heading and filters leave no useful room
+ * for rows.
+ *
+ * The scroll box has a floor, because a page with a great deal above its
+ * table would otherwise squeeze the table to a slit: a heading and one row
+ * in the shortest tile, and all but 24rem of a taller one. When the floor
+ * does not fit, the page overflows the tile height and `#app-content`
+ * scrolls it, so nothing becomes unreachable.
+ *
+ * Nothing here applies outside a tile: a page of its own keeps scrolling as
+ * a whole. */
+@media (min-height: 24rem) {
+  #app-shell[data-framed="true"] #app-content > [data-page="list"] {
+    &:has(
+      > * > [data-table-region],
+      > * > [data-table-frame] > [data-table-region],
+      > [data-card] > * > [data-table-region],
+      > [data-card] > * > [data-table-frame] > [data-table-region]
+    ) {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    & > :nth-last-child(
+      1 of :has(> [data-table-region]),
+      :has(> [data-table-frame] > [data-table-region]),
+      [data-card]:has(> * > [data-table-region]),
+      [data-card]:has(> * > [data-table-frame] > [data-table-region])
+    ) {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+
+      &[data-card] > :has(> [data-table-region]),
+      &[data-card] > :has(> [data-table-frame] > [data-table-region]),
+      & > [data-table-frame]:has(> [data-table-region]),
+      &[data-card] > * > [data-table-frame]:has(> [data-table-region]) {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      & > [data-table-region],
+      & > [data-table-frame] > [data-table-region],
+      &[data-card] > * > [data-table-region],
+      &[data-card] > * > [data-table-frame] > [data-table-region] {
+        flex: 1 1 auto;
+        min-height: max(4.5rem, 100vh - 24rem);
+        overflow: auto;
+
+        & thead {
+          position: sticky;
+          top: 0;
+          z-index: 1;
+          /* A collapsed border scrolls away with the rows; a shadow stays. */
+          box-shadow: 0 1px 0 var(--color-line);
+        }
+      }
+    }
+  }
+}
+
+/* The notch of an unframed `flex_table/1` rises its own height (`h-3.5`) out
+ * of the card it sits in, so that it stands on the page body rather than on
+ * a strip of the card. The card leaves it that height plus a gap above
+ * itself; the toolbar's `mb-2` collapses into this margin, so without it the
+ * notch touched the search box. The component marks its frame
+ * `data-unframed`; no page carries the notch's height. */
+[data-card]:has(> * > [data-table-frame][data-unframed]) {
+  margin-top: calc(--spacing(3.5) + --spacing(3));
+}
+
+/* A compact row of `flex_table/1` is as short as eighteen pixels, so a badge
+ * in one gives up its vertical padding: a twenty-pixel badge made every row
+ * that held one twenty-one. The badge is `badge/1`, marked `data-badge`. */
+.flex-table[data-mode="compact"] [data-badge] {
+  padding-block: 0;
+}
+
+/* The top right corner of a tile belongs to its floating controls
+ * (`tile_controls/1`), so a framed page header keeps its actions clear of
+ * them. */
+#app-shell[data-framed="true"] [data-page-header] {
+  padding-inline-end: 3rem;
+}
+
+/* Until the Tiling hook has placed them (it writes `data-placed`), tiles and
+ * handles have no position, so they stay out of sight rather than stacking
+ * at the origin during the dead render. */
+#workspace:not([data-placed]) .workspace-tile,
+#workspace:not([data-placed]) [data-split] {
+  visibility: hidden;
+}
+
+/* Sidebar pin and tile buttons. One utility, not the same 342-byte utility
+ * list on every destination: that list was most of the sidebar's bytes.
+ * `icon_button` with `chrome={:nav}` is the only caller. Properties match the
+ * utilities it replaced, including the hover-media query and the disabled
+ * opacity winning over focus. Do not paste the list back onto the button. */
+@utility nav-icon-button {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: calc(var(--spacing) * 4);
+  height: calc(var(--spacing) * 4);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-muted);
+  opacity: 0%;
+  transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+
+  &:hover {
+    @media (hover: hover) {
+      background-color: var(--color-surface-sunken);
+      color: var(--color-ink);
+    }
+  }
+
+  &:is(:where(.group):hover *) {
+    @media (hover: hover) {
+      opacity: 100%;
+    }
+  }
+
+  &:focus-visible {
+    opacity: 100%;
+    --tw-outline-style: none;
+    outline-style: none;
+    --tw-ring-color: color-mix(in oklab, var(--color-brand-strong) 40%, transparent);
+    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(1px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    color: var(--color-ink-faint);
+    opacity: 50%;
+  }
+}
+
+/* The list a form field opens beneath itself: `multi_select` and `combobox`.
+ * The field wrapper is the `floating-scope`, the control the list hangs from
+ * is the `floating-anchor`, and the list is the `floating-list`.
+ *
+ * The list is fixed to the viewport and placed by its anchor, so no ancestor
+ * that scrolls or clips (a modal dialog, a card, a tile) can cut it off or
+ * grow a scrollbar to hold it. It still follows the control when something
+ * scrolls, flips above the control when there is no room below, lines up
+ * with the control's other edge when it would run past the side of the
+ * screen, and hides when the control itself scrolls out of view. The scope keeps one field's
+ * anchor from answering for another's list, which is what lets every field
+ * use the same name.
+ *
+ * A browser without anchor positioning keeps the list absolute inside the
+ * wrapper: it opens in the same place and a clipping ancestor scrolls to
+ * show it. Do not give a field list `absolute` of its own; that is the
+ * clipped list this replaced. */
+@utility floating-scope {
+  anchor-scope: --floating-list;
+}
+
+@utility floating-anchor {
+  anchor-name: --floating-list;
+}
+
+@utility floating-list {
+  position: absolute;
+  left: 0;
+  width: 100%;
+
+  @supports (anchor-scope: --floating-list) {
+    position: fixed;
+    position-anchor: --floating-list;
+    top: anchor(bottom);
+    left: anchor(left);
+    width: anchor-size(width);
+    position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+    position-visibility: anchors-visible;
+  }
+}
+
+/* Menu typography & font colors matching Belimbing */
+.app-nav-menu {
+  font-family: var(--font-sans);
+  font-weight: 350;
+  letter-spacing: -0.01em;
+  color: var(--color-link);
+}
+
+.app-nav-menu .app-nav-item,
+.app-nav-menu .app-nav-parent,
+.app-nav-menu .app-nav-container,
+.app-nav-menu .app-nav-parent-link,
+#app-pinned .app-pinned-link {
+  font-weight: 350;
+  font-size: 0.75rem;
+  line-height: 0.875rem;
+  color: var(--color-link);
+}
+
+.app-nav-menu .app-nav-item:hover,
+.app-nav-menu .app-nav-parent:hover,
+.app-nav-menu .app-nav-container:hover,
+.app-nav-menu .app-nav-parent-link:hover,
+#app-pinned .app-pinned-link:hover {
+  color: var(--color-ink);
+}
+
+/* Active menu item styling */
+.app-nav-menu .app-nav-item[aria-current="page"],
+.app-nav-menu .app-nav-parent-link[aria-current="page"] {
+  font-weight: 350;
+  color: var(--color-brand-strong);
+  background-color: var(--color-surface);
+}
+
+/* Parent branch ascent when it contains the active menu item */
+.app-nav-menu .app-nav-parent.text-brand-strong,
+.app-nav-menu .app-nav-parent.text-brand-strong .app-nav-container,
+.app-nav-menu .app-nav-parent.text-brand-strong .app-nav-parent-link,
+.app-nav-menu .app-nav-parent.text-brand-strong .app-nav-label,
+.app-nav-menu .app-nav-parent.text-brand-strong .app-nav-caret,
+.app-nav-menu .app-nav-branch:has([aria-current="page"]) > .app-nav-parent,
+.app-nav-menu .app-nav-branch:has([aria-current="page"]) > .app-nav-parent .app-nav-container,
+.app-nav-menu .app-nav-branch:has([aria-current="page"]) > .app-nav-parent .app-nav-parent-link,
+.app-nav-menu .app-nav-branch:has([aria-current="page"]) > .app-nav-parent .app-nav-label,
+.app-nav-menu .app-nav-branch:has([aria-current="page"]) > .app-nav-parent .app-nav-caret {
+  color: var(--color-brand-strong);
+}
+
+.app-nav-menu .app-nav-icon {
+  display: none;
+}
+
+.app-nav-menu .app-nav-caret-open {
+  display: none;
+}
+
+.app-nav-menu .app-nav-caret-closed {
+  display: inline;
+}
+
+.app-nav-menu [data-nav-expanded="true"] > .app-nav-parent .app-nav-caret-open {
+  display: inline;
+}
+
+.app-nav-menu [data-nav-expanded="true"] > .app-nav-parent .app-nav-caret-closed {
+  display: none;
+}
+
+#app-pinned .app-pinned-row[draggable="true"] {
+  cursor: grab;
+}
+
+#app-pinned .app-pinned-row[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+#app-pinned .app-pinned-row[data-pinned-dragging="true"] {
+  opacity: 0.4;
+}
+
+#app-pinned .app-pinned-row[data-pinned-drop-target="true"] {
+  box-shadow: inset 0 2px 0 var(--color-brand-strong);
+}
+
+@media (min-width: 1024px) {
+  #app-pinned .app-pinned-row[data-pinned-drop-target="true"] {
+    box-shadow: inset 2px 0 0 var(--color-brand-strong);
+  }
+}
+
+/* Authenticated shell chrome. Geometry matches Belimbing: full-width top
+ * bar, persistent menu on wide screens, off-canvas drawer below `lg`.
+ * The AppShell hook writes data attributes; the global reduced-motion
+ * rule above collapses the drawer transition. On `lg+` the toggle hides
+ * the whole menu and its resize handle; below `lg` it opens the drawer.
+ * The toggle shows one of two glyphs, keyed on its `aria-expanded`. */
+@media (min-width: 1024px) {
+  #app-shell[data-sidebar-hidden="true"] #app-sidebar,
+  #app-shell[data-sidebar-hidden="true"] #app-sidebar-drag {
+    display: none;
+  }
+}
+
+#app-sidebar-toggle[aria-expanded="true"] .app-toggle-show,
+#app-sidebar-toggle[aria-expanded="false"] .app-toggle-hide {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  #app-sidebar {
+    transform: translateX(-100%);
+  }
+
+  #app-shell[data-sidebar-open="false"] #app-sidebar {
+    transform: translateX(-100%);
+    pointer-events: none;
+  }
+
+  #app-shell[data-sidebar-open="true"] #app-sidebar {
+    transform: translateX(0);
+  }
+
+  #app-shell[data-sidebar-open="false"] #app-sidebar-backdrop {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  #app-shell[data-sidebar-open="true"] #app-sidebar-backdrop {
+    opacity: 1;
+  }
+
+  #app-sidebar,
+  #app-sidebar-backdrop {
+    transition-property: transform, opacity;
+    transition-duration: 200ms;
+    transition-timing-function: ease-out;
+  }
+}
+
+/* Grid lenses. A band is painted by a data attribute the server renders,
+   because the CSP refuses inline style; the bar's width is the one value
+   the FlexTable hook writes through CSSOM. Sequential bands run light to
+   strong; categorical bands take the palette in order. */
+.flex-table [data-band='0'][data-scale='sequential'] { background-color: var(--color-scale-1); }
+.flex-table [data-band='1'][data-scale='sequential'] { background-color: var(--color-scale-2); }
+.flex-table [data-band='2'][data-scale='sequential'] { background-color: var(--color-scale-3); }
+.flex-table [data-band='3'][data-scale='sequential'] { background-color: var(--color-scale-4); color: var(--color-ink-inverse); }
+.flex-table [data-band='4'][data-scale='sequential'] { background-color: var(--color-scale-5); color: var(--color-ink-inverse); }
+.flex-table [data-band='0'][data-scale='binary'] { background-color: var(--color-surface-sunken); }
+.flex-table [data-band='4'][data-scale='binary'] { background-color: var(--color-scale-4); color: var(--color-ink-inverse); }
+.flex-table [data-band='0'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-1); }
+.flex-table [data-band='1'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-2); }
+.flex-table [data-band='2'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-3); }
+.flex-table [data-band='3'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-4); }
+.flex-table [data-band='4'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-5); }
+.flex-table [data-band='5'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-6); }
+.flex-table [data-band='6'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-7); }
+.flex-table [data-band='7'][data-scale='categorical'] { box-shadow: inset 3px 0 0 var(--color-cat-8); }
+.flex-table [data-bar] { background-color: var(--color-scale-4); }
+.flex-table [data-dragging='true'] { opacity: 0.5; }
+.flex-table [data-drop='before'] { box-shadow: inset 2px 0 0 var(--color-brand-strong); }
+.flex-table [data-drop='after'] { box-shadow: inset -2px 0 0 var(--color-brand-strong); }
