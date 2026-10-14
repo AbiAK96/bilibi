@@ -42,15 +42,24 @@ async fn main() -> Result<()> {
                 .await
                 .map_err(|_| Error::Internal)?;
             println!("Bilibi listening at {origin}");
-            axum::serve(
-                listener,
-                bilibi_web::router(bilibi_web::App::new(db, &origin)?),
-            )
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await
-            .map_err(|_| Error::Internal)?;
+            let app = bilibi_web::App::new(db, &origin)?;
+            let executor = bilibi_base::queue::execution::Executor::from_services(
+                &app.services,
+                bilibi_base::queue::execution::Config::default(),
+            )?;
+            let (stop, stopped) = tokio::sync::watch::channel(false);
+            let worker = tokio::spawn(executor.run(stopped));
+            let shutdown = stop.clone();
+            let result = axum::serve(listener, bilibi_web::router(app))
+                .with_graceful_shutdown(async move {
+                    let _ = tokio::signal::ctrl_c().await;
+                    let _ = shutdown.send(true);
+                })
+                .await
+                .map_err(|_| Error::Internal);
+            let _ = stop.send(true);
+            worker.await.map_err(|_| Error::Internal)??;
+            result?;
         }
         _ => return Err(Error::Invalid),
     }

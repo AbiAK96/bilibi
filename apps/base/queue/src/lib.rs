@@ -1,7 +1,8 @@
-//! Durable queue insertion joins the owner's audited transaction. Q2 owns claims
-//! and execution; no callback, spawned task or process-local list is a job.
+//! Durable insertion and lease-fenced execution. Owners must make effects idempotent.
 pub mod arguments;
+pub mod execution;
 mod registry;
+pub mod store;
 pub use registry::{RegisteredWorker, Worker, Workers, WORKERS};
 
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -71,7 +72,7 @@ impl Queue {
 }
 inventory::submit! {
     Module {id:"base/queue",layer:bilibi_module_registry::Layer::Base,
-        dependencies:&["base/module_registry","base/database","base/audit","base/tenancy"],
+        dependencies:&["base/module_registry","base/database","base/audit","base/tenancy","base/authz"],
         migrations:&[("base-queue-001",include_str!("../migrations/001-queue.sql"))],
         services:&[Service {id:"base/queue.store",factory:|_| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;

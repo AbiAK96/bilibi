@@ -450,6 +450,7 @@ name = "bilibi-queue"
 version = "0.1.0"
 dependencies = [
  "bilibi-audit",
+ "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
  "bilibi-database",
@@ -459,6 +460,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]
