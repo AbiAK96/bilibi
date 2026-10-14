@@ -27,6 +27,8 @@ classes rather than extending it.
 The bounded Rust `static_asset` allowlist owns font/favicon/specimen serving.
 The host serves fonts at `/fonts/`, the favicon at `/favicon.svg` and
 `/favicon.ico`, and the standalone specimen at `/assets/ui-specimen.html`.
+The rendered component specimen at `/assets/ui-components.html` comes from
+`src/specimen.rs` and the shared macros, not from this directory.
 Stylesheets reference local fonts only. Heroicon masks are embedded data URLs;
 the host CSP allows `img-src 'self' data:` for them and local fonts only.
 
