@@ -1,7 +1,7 @@
 //! Explicit business-write boundary. Nested owners share this transaction;
 //! never commit an inner transaction or publish before the outer commit.
 use crate::{Error, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::{
     future::Future,
     pin::Pin,
@@ -59,10 +59,6 @@ impl Context {
         }
         Ok(())
     }
-    fn value(&self) -> Value {
-        let principal = |p: &Principal| json!({"kind":p.kind,"id":p.id});
-        json!({"actor":principal(&self.actor),"impersonator":self.impersonator.as_ref().map(principal),"action":self.action,"trace_id":self.trace_id})
-    }
 }
 #[derive(Debug)]
 pub struct Change {
@@ -81,39 +77,26 @@ pub trait Capture: Send + Sync {
         context: &'a Context,
         change: &'a Change,
     ) -> CaptureFuture<'a>;
-    fn action<'a>(&'a self, tx: &'a Transaction<'_>, context: &'a Context) -> CaptureFuture<'a>;
-}
-
-/// Bridge for the original demo ledger. P5 can replace this via `begin_with`;
-/// historical rows and migration IDs remain intact.
-pub struct DemoCapture;
-impl Capture for DemoCapture {
-    fn mutation<'a>(
+    /// Bulk writes arrive as one slice so capture can batch its own SQL.
+    /// The default records one change at a time.
+    fn mutations<'a>(
         &'a self,
         tx: &'a Transaction<'_>,
         context: &'a Context,
-        change: &'a Change,
+        changes: &'a [Change],
     ) -> CaptureFuture<'a> {
         Box::pin(async move {
-            let actor = if context.actor.kind == "user" {
-                context.actor.id.parse::<i64>().ok()
-            } else {
-                None
-            };
-            tx.execute("INSERT INTO audit_mutations(tenant_id,actor_id,auditable_type,auditable_id,old_values,new_values,trace_id,context) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", &[&context.tenant,&actor,&change.kind,&change.id,&change.old,&change.new,&context.trace_id,&context.value()]).await?;
+            for change in changes {
+                self.mutation(tx, context, change).await?;
+            }
             Ok(())
         })
     }
-    fn action<'a>(&'a self, tx: &'a Transaction<'_>, context: &'a Context) -> CaptureFuture<'a> {
-        Box::pin(async move {
-            tx.execute("INSERT INTO bilibi_action_commits(tenant_id,action,trace_id,context) VALUES($1,$2,$3,$4)", &[&context.tenant,&context.action,&context.trace_id,&context.value()]).await?;
-            Ok(())
-        })
-    }
+    fn action<'a>(&'a self, tx: &'a Transaction<'_>, context: &'a Context) -> CaptureFuture<'a>;
 }
 
-/// Shared registry service. Audit binds its capture once during installation;
-/// the historical demo adapter keeps the current increment runnable beforehand.
+/// Shared registry service. Audit binds its capture once during installation.
+/// Without a binding no business transaction can begin and boot is refused.
 #[derive(Default)]
 pub struct MutationBoundary {
     capture: OnceLock<Arc<dyn Capture>>,
@@ -126,20 +109,18 @@ impl MutationBoundary {
             )
         })
     }
+    pub fn ready(&self) -> bilibi_module_registry::Result<()> {
+        self.capture.get().map(|_| ()).ok_or_else(|| {
+            bilibi_module_registry::RegistryError::Service("missing mutation capture".into())
+        })
+    }
     pub async fn begin<'a>(
         &self,
         client: &'a mut Client,
         context: Context,
     ) -> Result<MutationTransaction<'a>> {
-        MutationTransaction::begin_with(
-            client,
-            context,
-            self.capture
-                .get()
-                .cloned()
-                .unwrap_or_else(|| Arc::new(DemoCapture)),
-        )
-        .await
+        let capture = self.capture.get().cloned().ok_or(Error::Internal)?;
+        MutationTransaction::begin_with(client, context, capture).await
     }
 }
 
@@ -152,9 +133,6 @@ pub struct MutationTransaction<'a> {
     poisoned: bool,
 }
 impl<'a> MutationTransaction<'a> {
-    pub async fn begin(client: &'a mut Client, context: Context) -> Result<Self> {
-        Self::begin_with(client, context, Arc::new(DemoCapture)).await
-    }
     pub async fn begin_with(
         client: &'a mut Client,
         context: Context,
@@ -212,15 +190,21 @@ impl<'a> MutationTransaction<'a> {
         let result = write(&self.tx).await;
         match result {
             Ok((value, changes)) => {
-                if changes.is_empty() {
+                if changes.is_empty()
+                    || changes
+                        .iter()
+                        .any(|change| change.kind.is_empty() || change.id <= 0)
+                {
                     self.poisoned = true;
                     return Err(Error::Invalid);
                 }
-                self.poisoned = false;
-                for change in changes {
-                    self.record(change).await?;
-                }
-                Ok(value)
+                // Stay poisoned while capture runs; cancellation forbids commit.
+                let result = self
+                    .capture
+                    .mutations(&self.tx, &self.context, &changes)
+                    .await;
+                self.poisoned = result.is_err();
+                result.map(|()| value)
             }
             Err(error) => {
                 self.poisoned = true;

@@ -20,6 +20,7 @@ thiserror = "2"
 argon2 = "0.6"
 askama = "0.16"
 bilibi-database = { path = "apps/base/database" }
+bilibi-audit = { path = "apps/base/audit" }
 bilibi-security = { path = "apps/base/security" }
 bilibi-ui = { path = "apps/base/ui" }
 bilibi-user = { path = "apps/core/user" }

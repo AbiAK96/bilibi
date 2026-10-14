@@ -198,6 +198,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-audit"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
+]
+
+[[package]]
 name = "bilibi-authz"
 version = "0.1.0"
 dependencies = [
@@ -212,6 +226,7 @@ dependencies = [
 name = "bilibi-base"
 version = "0.1.0"
 dependencies = [
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-datetime",

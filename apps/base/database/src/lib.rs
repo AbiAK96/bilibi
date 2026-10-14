@@ -2,8 +2,7 @@
 pub mod seeds;
 mod transaction;
 pub use transaction::{
-    Capture, CaptureFuture, Change, Context, DemoCapture, MutationBoundary, MutationTransaction,
-    Principal,
+    Capture, CaptureFuture, Change, Context, MutationBoundary, MutationTransaction, Principal,
 };
 
 use deadpool_postgres::{Manager, Pool};
@@ -83,4 +82,7 @@ inventory::submit! {
         dependencies: &["base/module_registry"], migrations: &[MIGRATION, ("004-database-boundary", include_str!("../migrations/004-boundary.sql"))],
         services: &[bilibi_module_registry::Service {id:"base/database.mutations", factory: |_| Ok(std::sync::Arc::new(MutationBoundary::default()))}, bilibi_module_registry::Service {id:"base/database.pool", factory: |services| services.get::<Db>("bootstrap.database").map(|value|value as bilibi_module_registry::Value) }],
     }
+}
+inventory::submit! {
+    bilibi_module_registry::Ready { module: "base/database", check: |services| services.get::<MutationBoundary>("base/database.mutations")?.ready() }
 }

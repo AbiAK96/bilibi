@@ -42,6 +42,15 @@ pub struct Contribution {
     payload: &'static (dyn Any + Send + Sync),
 }
 impl Contribution {
+    /// Typed payload read after discovery validated the catalog at boot.
+    pub fn get<T: Any>(&self) -> Result<&'static T> {
+        self.payload.downcast_ref().ok_or_else(|| {
+            RegistryError::Contribution(format!(
+                "wrong payload type for {} at {}:{}",
+                self.id, self.provenance.source, self.provenance.line
+            ))
+        })
+    }
     pub const fn new<T: Any + Send + Sync>(
         consumer: &'static str,
         id: &'static str,
