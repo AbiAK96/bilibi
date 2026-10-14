@@ -390,9 +390,7 @@ name = "bilibi-ui"
 version = "0.1.0"
 dependencies = [
  "askama",
- "bilibi-database",
  "bilibi-module-registry",
- "bilibi-tenancy",
  "inventory",
 ]
 

@@ -9,5 +9,3 @@ license.workspace = true
 askama.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
-bilibi-database.workspace = true
-bilibi-tenancy = { path = "../tenancy" }

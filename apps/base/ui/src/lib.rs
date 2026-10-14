@@ -105,7 +105,7 @@ impl Renderer {
 }
 inventory::submit! {
     bilibi_module_registry::Module {
-        id:"base/ui",layer:bilibi_module_registry::Layer::Base,dependencies:&["base/module_registry","base/database","base/tenancy"],migrations:&[],
+        id:"base/ui",layer:bilibi_module_registry::Layer::Base,dependencies:&["base/module_registry"],migrations:&[],
         services:&[bilibi_module_registry::Service {id:"base/ui.renderer",factory:|_|Ok(std::sync::Arc::new(Renderer))}],
     }
 }

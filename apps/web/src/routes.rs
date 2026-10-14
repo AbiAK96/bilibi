@@ -14,11 +14,10 @@ use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
     RegistryError, Services,
 };
-use bilibi_ui::{
-    page::{PageRequest, PageService},
-    Framed, Shell,
-};
+use bilibi_ui::{page::PageRequest, Framed, Shell};
 use std::{collections::HashMap, sync::Arc};
+
+type PageService = bilibi_ui::page::PageService<bilibi_security::Scope, Error>;
 
 #[derive(Clone)]
 pub struct BoundRoute {

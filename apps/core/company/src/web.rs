@@ -55,11 +55,11 @@ impl<'a> Detail<'a> {
 pub struct Pages {
     pub db: bilibi_database::Db,
 }
-impl bilibi_ui::page::Page for Pages {
+impl bilibi_ui::page::Page<bilibi_security::Scope, bilibi_database::Error> for Pages {
     fn render<'a>(
         &'a self,
-        request: bilibi_ui::page::PageRequest<'a>,
-    ) -> bilibi_ui::page::PageFuture<'a> {
+        request: bilibi_ui::page::PageRequest<'a, bilibi_security::Scope>,
+    ) -> bilibi_ui::page::PageFuture<'a, bilibi_database::Error> {
         Box::pin(async move {
             use bilibi_database::Error;
             use bilibi_security::{authorize, Capability};
