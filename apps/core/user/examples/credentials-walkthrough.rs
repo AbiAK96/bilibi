@@ -134,7 +134,6 @@ async fn main() -> Result<()> {
         async move {
             db.get()
                 .await
-                .map(|c| c)
                 .ok()?
                 .query_one("SELECT count(*) FROM sessions WHERE id=$1", &[&token])
                 .await
