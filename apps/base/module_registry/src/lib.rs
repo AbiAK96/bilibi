@@ -5,6 +5,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
+pub mod contributions;
+pub use contributions::{Catalog, Consumer, Contribution, Entry, Provenance};
+
 pub type Value = Arc<dyn Any + Send + Sync>;
 pub type Result<T> = std::result::Result<T, RegistryError>;
 pub type Factory = fn(&Services) -> Result<Value>;
@@ -14,6 +17,8 @@ pub type Migration = (&'static str, &'static str);
 pub enum RegistryError {
     #[error("Invalid module graph: {0}")]
     Graph(String),
+    #[error("Invalid contribution: {0}")]
+    Contribution(String),
     #[error("Missing or wrong service type: {0}")]
     Service(String),
 }
@@ -48,7 +53,9 @@ pub struct Module {
 inventory::collect!(Module);
 
 pub fn discover() -> Result<Vec<&'static Module>> {
-    order(inventory::iter::<Module>.into_iter().collect())
+    let modules = order(inventory::iter::<Module>.into_iter().collect())?;
+    Catalog::discover(&modules)?;
+    Ok(modules)
 }
 
 pub fn order(modules: Vec<&'static Module>) -> Result<Vec<&'static Module>> {
@@ -112,6 +119,8 @@ pub fn order(modules: Vec<&'static Module>) -> Result<Vec<&'static Module>> {
 #[derive(Default)]
 pub struct Services {
     values: BTreeMap<&'static str, Value>,
+    resolving: Option<BTreeSet<&'static str>>,
+    catalog: Option<Catalog>,
 }
 impl Services {
     pub fn provide(&mut self, id: &'static str, value: Value) -> Result<()> {
@@ -122,21 +131,66 @@ impl Services {
         Ok(())
     }
     pub fn get<T: Any + Send + Sync>(&self, id: &str) -> Result<Arc<T>> {
+        if let Some(allowed) = &self.resolving {
+            let owner = id.rsplit_once('.').map(|(owner, _)| owner);
+            if !id.starts_with("bootstrap.") && !owner.is_some_and(|owner| allowed.contains(owner))
+            {
+                return Err(RegistryError::Service(format!(
+                    "undeclared dependency {id}"
+                )));
+            }
+        }
         self.values
             .get(id)
             .cloned()
             .and_then(|value| value.downcast().ok())
             .ok_or_else(|| RegistryError::Service(id.into()))
     }
-    pub fn install(&mut self, modules: &[&Module]) -> Result<()> {
-        for module in modules {
+    pub fn catalog(&self) -> Result<&Catalog> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| RegistryError::Contribution("catalog not installed".into()))
+    }
+    pub fn install(&mut self, modules: &[&'static Module]) -> Result<()> {
+        let modules = order(modules.to_vec())?;
+        let catalog = Catalog::discover(&modules)?;
+        for module in &modules {
+            let mut allowed: BTreeSet<_> = module.dependencies.iter().copied().collect();
+            allowed.insert(module.id);
+            self.resolving = Some(allowed);
             for service in module.services {
-                self.provide(service.id, (service.factory)(self)?)?;
+                let value = (service.factory)(self);
+                match value {
+                    Ok(value) => self.provide(service.id, value)?,
+                    Err(error) => {
+                        self.resolving = None;
+                        return Err(error);
+                    }
+                }
             }
         }
+        self.resolving = None;
+        for ready in inventory::iter::<Ready> {
+            if !modules.iter().any(|module| module.id == ready.module) {
+                return Err(RegistryError::Graph(format!(
+                    "unknown readiness owner {}",
+                    ready.module
+                )));
+            }
+            (ready.check)(self)?;
+        }
+        self.catalog = Some(catalog);
         Ok(())
     }
 }
+
+/// A Base-owned boundary may be bound by an upstream adapter during installation.
+/// Readiness checks run after all factories and must refuse missing adapters.
+pub struct Ready {
+    pub module: &'static str,
+    pub check: fn(&Services) -> Result<()>,
+}
+inventory::collect!(Ready);
 
 inventory::submit! {
     Module {

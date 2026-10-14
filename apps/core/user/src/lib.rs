@@ -91,8 +91,17 @@ pub async fn unread(client: &impl GenericClient, scope: &Scope) -> Result<i64> {
 }
 
 /// Used by a business transaction; the bell is published only after commit.
-pub async fn saved_notification(tx: &impl GenericClient, scope: &Scope) -> Result<()> {
-    let row = tx.query_one("INSERT INTO notifications(tenant_id,user_id,message) VALUES($1,$2,'Company updated') RETURNING id", &[&scope.tenant(),&scope.user()]).await?;
+pub async fn saved_notification(
+    tx: &impl GenericClient,
+    scope: &Scope,
+    message: &str,
+) -> Result<()> {
+    let row = tx
+        .query_one(
+            "INSERT INTO notifications(tenant_id,user_id,message) VALUES($1,$2,$3) RETURNING id",
+            &[&scope.tenant(), &scope.user(), &message],
+        )
+        .await?;
     audit(
         tx,
         Mutation {
@@ -101,7 +110,7 @@ pub async fn saved_notification(tx: &impl GenericClient, scope: &Scope) -> Resul
             kind: "notification",
             id: row.get(0),
             old: json!({}),
-            new: json!({"message":"Company updated"}),
+            new: json!({"message":message}),
         },
     )
     .await
@@ -161,8 +170,12 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security"],migrations:&[MIGRATION],
-        services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services|Ok(std::sync::Arc::new(UserService {db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:Notifications::default()}))}],
+        dependencies:&["base/database","base/security","base/notifications"],migrations:&[MIGRATION],
+        services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
+            let notifications = Notifications::default();
+            services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
+            Ok(std::sync::Arc::new(UserService {db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
+        }}],
     }
 }
 
@@ -175,5 +188,19 @@ impl UserService {
     }
     pub async fn mark_read(&self, token: &str) -> Result<()> {
         mark_read(&self.db, token, &self.notifications).await
+    }
+}
+
+impl bilibi_notifications::NotificationSink for Notifications {
+    fn record<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+        scope: &'a Scope,
+        message: &'a str,
+    ) -> bilibi_notifications::RecordFuture<'a> {
+        Box::pin(async move { saved_notification(tx, scope, message).await })
+    }
+    fn committed(&self, scope: &Scope) {
+        self.changed(scope);
     }
 }

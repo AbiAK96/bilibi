@@ -1,0 +1,338 @@
+//! Immutable, eagerly validated catalogs. Consumers own their payload type and
+//! validation; contributors carry source provenance and never run boot-time IO.
+use crate::{Module, RegistryError, Result};
+use std::{
+    any::{Any, TypeId},
+    collections::{BTreeMap, BTreeSet},
+};
+
+#[derive(Clone, Copy, Debug)]
+pub struct Provenance {
+    pub module: &'static str,
+    pub source: &'static str,
+    pub line: u32,
+}
+
+pub struct Consumer {
+    pub id: &'static str,
+    pub module: &'static str,
+    payload_type: fn() -> TypeId,
+    pub validate: fn(&[Entry]) -> Result<()>,
+}
+impl Consumer {
+    pub const fn new<T: Any>(
+        id: &'static str,
+        module: &'static str,
+        validate: fn(&[Entry]) -> Result<()>,
+    ) -> Self {
+        Self {
+            id,
+            module,
+            payload_type: TypeId::of::<T>,
+            validate,
+        }
+    }
+}
+inventory::collect!(Consumer);
+
+pub struct Contribution {
+    pub consumer: &'static str,
+    pub id: &'static str,
+    pub provenance: Provenance,
+    payload: &'static (dyn Any + Send + Sync),
+}
+impl Contribution {
+    pub const fn new<T: Any + Send + Sync>(
+        consumer: &'static str,
+        id: &'static str,
+        provenance: Provenance,
+        payload: &'static T,
+    ) -> Self {
+        Self {
+            consumer,
+            id,
+            provenance,
+            payload,
+        }
+    }
+}
+inventory::collect!(Contribution);
+
+#[derive(Clone, Copy)]
+pub struct Entry {
+    pub id: &'static str,
+    pub provenance: Provenance,
+    payload: &'static (dyn Any + Send + Sync),
+}
+impl Entry {
+    pub fn get<T: Any>(&self) -> Result<&'static T> {
+        self.payload.downcast_ref().ok_or_else(|| {
+            RegistryError::Contribution(format!(
+                "wrong payload type for {} at {}:{}",
+                self.id, self.provenance.source, self.provenance.line
+            ))
+        })
+    }
+}
+
+pub struct Catalog {
+    entries: BTreeMap<&'static str, Vec<Entry>>,
+    types: BTreeMap<&'static str, TypeId>,
+}
+impl Catalog {
+    pub fn discover(modules: &[&Module]) -> Result<Self> {
+        Self::build(
+            modules,
+            inventory::iter::<Consumer>.into_iter().collect(),
+            inventory::iter::<Contribution>.into_iter().collect(),
+        )
+    }
+    /// Also supports explicit deployment catalogs without changing inventory.
+    pub fn build(
+        modules: &[&Module],
+        consumers: Vec<&Consumer>,
+        contributions: Vec<&Contribution>,
+    ) -> Result<Self> {
+        let owners: BTreeMap<_, _> = modules.iter().map(|m| (m.id, *m)).collect();
+        let mut entries = BTreeMap::new();
+        let mut types = BTreeMap::new();
+        let mut validators = BTreeMap::new();
+        for consumer in consumers {
+            if !owners.contains_key(consumer.module)
+                || !consumer.id.starts_with(&format!("{}.", consumer.module))
+                || entries.insert(consumer.id, Vec::new()).is_some()
+            {
+                return Err(invalid(format!(
+                    "unknown owner or duplicate/invalid consumer {}",
+                    consumer.id
+                )));
+            }
+            types.insert(consumer.id, (consumer.payload_type)());
+            validators.insert(consumer.id, consumer.validate);
+        }
+        let mut keys = BTreeSet::new();
+        for contribution in contributions {
+            let owner = owners.get(contribution.provenance.module).ok_or_else(|| {
+                invalid(format!(
+                    "unknown contributor {}",
+                    contribution.provenance.module
+                ))
+            })?;
+            if contribution.id.is_empty()
+                || contribution.provenance.source.is_empty()
+                || contribution.provenance.line == 0
+                || !keys.insert((contribution.consumer, contribution.id))
+            {
+                return Err(invalid(format!(
+                    "invalid/duplicate {} in {} at {}:{}",
+                    contribution.id,
+                    contribution.consumer,
+                    contribution.provenance.source,
+                    contribution.provenance.line
+                )));
+            }
+            let expected = types.get(contribution.consumer).ok_or_else(|| {
+                invalid(format!(
+                    "unknown consumer {} from {}",
+                    contribution.consumer, owner.id
+                ))
+            })?;
+            if *expected != contribution.payload.type_id() {
+                return Err(invalid(format!(
+                    "wrong payload type for {} in {}",
+                    contribution.id, contribution.consumer
+                )));
+            }
+            // Catalogs are data flowing down into Base, never Base importing Core.
+            entries
+                .get_mut(contribution.consumer)
+                .expect("known consumer")
+                .push(Entry {
+                    id: contribution.id,
+                    provenance: contribution.provenance,
+                    payload: contribution.payload,
+                });
+        }
+        for (consumer, items) in &mut entries {
+            items.sort_by_key(|entry| (entry.provenance.module, entry.id));
+            validators[consumer](items)?;
+        }
+        let catalog = Self { entries, types };
+        catalog.validate_references(modules)?;
+        Ok(catalog)
+    }
+    pub fn entries<T: Any>(&self, consumer: &str) -> Result<&[Entry]> {
+        if self.types.get(consumer) != Some(&TypeId::of::<T>()) {
+            return Err(invalid(format!(
+                "unknown consumer or wrong catalog type {consumer}"
+            )));
+        }
+        Ok(&self.entries[consumer])
+    }
+    fn validate_references(&self, modules: &[&Module]) -> Result<()> {
+        let services: BTreeMap<_, _> = modules
+            .iter()
+            .flat_map(|m| m.services.iter().map(move |s| (s.id, m.id)))
+            .collect();
+        let check = |entry: &Entry, service: &str| -> Result<()> {
+            let owner = services.get(service).ok_or_else(|| {
+                invalid(format!("{} references unknown service {service}", entry.id))
+            })?;
+            let module = modules
+                .iter()
+                .find(|m| m.id == entry.provenance.module)
+                .expect("validated owner");
+            if *owner != module.id && !module.dependencies.contains(owner) {
+                return Err(invalid(format!(
+                    "{} references undeclared service dependency {service}",
+                    entry.id
+                )));
+            }
+            Ok(())
+        };
+        for entry in self.entries::<Route>(ROUTES)? {
+            check(entry, entry.get::<Route>()?.service)?;
+        }
+        for entry in self.entries::<Embed>(EMBEDS)? {
+            check(entry, entry.get::<Embed>()?.service)?;
+        }
+        let mut versions = BTreeSet::new();
+        for entry in self.entries::<Seed>(SEEDS)? {
+            let seed = entry.get::<Seed>()?;
+            if seed.version.is_empty() || !versions.insert(seed.version) {
+                return Err(invalid(format!(
+                    "duplicate/empty seed version {}",
+                    seed.version
+                )));
+            }
+            match seed.action {
+                SeedAction::Service { service, operation } => {
+                    check(entry, service)?;
+                    if operation.is_empty() {
+                        return Err(invalid("empty seed operation".into()));
+                    }
+                }
+                SeedAction::Sql(sql) if sql.trim().is_empty() => {
+                    return Err(invalid("empty seed SQL".into()))
+                }
+                SeedAction::Sql(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+fn invalid(message: String) -> RegistryError {
+    RegistryError::Contribution(message)
+}
+
+pub const ROUTES: &str = "base/module_registry.routes";
+pub const EMBEDS: &str = "base/module_registry.embeds";
+pub const SEEDS: &str = "base/module_registry.seeds";
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum Access {
+    Public,
+    SignedIn,
+    Capability(&'static str),
+    Operator,
+}
+/// Metadata consumed by the Web adapter; registration does not bypass guards.
+#[derive(Clone, Copy, Debug)]
+pub struct Route {
+    pub method: Method,
+    pub path: &'static str,
+    pub service: &'static str,
+    pub operation: &'static str,
+    pub access: Access,
+    pub framed: bool,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum EmbedContext {
+    Shell,
+    Dashboard,
+    Record { kind: &'static str },
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Embed {
+    pub slot: &'static str,
+    pub context: EmbedContext,
+    pub service: &'static str,
+    pub operation: &'static str,
+    pub access: Access,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum SeedMode {
+    Production,
+    Demo,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum SeedAction {
+    Sql(&'static str),
+    Service {
+        service: &'static str,
+        operation: &'static str,
+    },
+}
+/// Execution and the durable seed ledger belong to Database, not the registry.
+#[derive(Clone, Copy, Debug)]
+pub struct Seed {
+    pub version: &'static str,
+    pub mode: SeedMode,
+    pub action: SeedAction,
+}
+fn access_valid(access: Access) -> bool {
+    !matches!(access, Access::Capability(""))
+}
+fn validate_routes(entries: &[Entry]) -> Result<()> {
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        let route = entry.get::<Route>()?;
+        if !route.path.starts_with('/')
+            || route.path.contains(['?', '#'])
+            || route.operation.is_empty()
+            || !access_valid(route.access)
+        {
+            return Err(invalid(format!("invalid route {}", entry.id)));
+        }
+        // Parameter names do not distinguish route patterns.
+        let normalized = route
+            .path
+            .split('/')
+            .map(|part| {
+                if part.starts_with('{') && part.ends_with('}') {
+                    "{}"
+                } else {
+                    part
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        if !paths.insert((route.method, normalized)) {
+            return Err(invalid(format!("duplicate route {}", route.path)));
+        }
+    }
+    Ok(())
+}
+fn validate_embeds(entries: &[Entry]) -> Result<()> {
+    for entry in entries {
+        let embed = entry.get::<Embed>()?;
+        if embed.slot.is_empty()
+            || embed.operation.is_empty()
+            || !access_valid(embed.access)
+            || matches!(embed.context, EmbedContext::Record { kind: "" })
+        {
+            return Err(invalid(format!("invalid embed {}", entry.id)));
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<Route>(ROUTES, "base/module_registry", validate_routes) }
+inventory::submit! { Consumer::new::<Embed>(EMBEDS, "base/module_registry", validate_embeds) }
+inventory::submit! { Consumer::new::<Seed>(SEEDS, "base/module_registry", |_| Ok(())) }

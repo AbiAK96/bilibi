@@ -166,6 +166,7 @@ version = "0.1.0"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-notifications",
  "bilibi-security",
  "bilibi-ui",
 ]
@@ -177,9 +178,9 @@ dependencies = [
  "askama",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-notifications",
  "bilibi-security",
  "bilibi-ui",
- "bilibi-user",
  "inventory",
  "serde",
  "serde_json",
@@ -224,6 +225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-notifications"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-security",
+ "inventory",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-security"
 version = "0.1.0"
 dependencies = [
@@ -249,6 +261,7 @@ dependencies = [
  "argon2",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-notifications",
  "bilibi-security",
  "inventory",
  "serde_json",

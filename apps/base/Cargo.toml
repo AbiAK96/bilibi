@@ -9,5 +9,6 @@ license.workspace = true
 [dependencies]
 bilibi-database = { path = "database" }
 bilibi-module-registry = { path = "module_registry" }
+bilibi-notifications = { path = "notifications" }
 bilibi-security = { path = "security" }
 bilibi-ui = { path = "ui" }
