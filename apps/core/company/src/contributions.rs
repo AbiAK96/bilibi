@@ -1,4 +1,5 @@
 //! Reuse the registry's route contract; Web owns dispatch and scope guards.
+use bilibi_menu::{MenuItem, Requirement};
 use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
     Contribution, Provenance,
@@ -14,3 +15,11 @@ inventory::submit! {
         method: Method::Get, path: "/companies/{id}", service: "core/company.companies", operation: "detail", access: Access::Capability("companies.view"), framed: true,
     })
 }
+bilibi_menu::contribute!(
+    "core/company",
+    MenuItem::page("admin.company", "Companies", "/companies")
+        .icon("building-office-2")
+        .under("admin")
+        .requires(Requirement::Capability("companies.view"))
+        .order(10)
+);

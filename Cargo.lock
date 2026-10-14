@@ -177,9 +177,11 @@ version = "0.1.0"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
+ "bilibi-principal-directory",
  "bilibi-security",
  "bilibi-session",
  "bilibi-tenancy",
@@ -192,6 +194,7 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "bilibi-database",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
@@ -234,6 +237,14 @@ name = "bilibi-extensions"
 version = "0.1.0"
 
 [[package]]
+name = "bilibi-menu"
+version = "0.1.0"
+dependencies = [
+ "bilibi-module-registry",
+ "inventory",
+]
+
+[[package]]
 name = "bilibi-module-registry"
 version = "0.1.0"
 dependencies = [
@@ -270,6 +281,18 @@ dependencies = [
  "bilibi-module-registry",
  "inventory",
  "serde",
+]
+
+[[package]]
+name = "bilibi-principal-directory"
+version = "0.1.0"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "thiserror",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -324,6 +347,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-notifications",
+ "bilibi-principal-directory",
  "bilibi-security",
  "inventory",
  "serde_json",
@@ -348,9 +372,11 @@ dependencies = [
  "bilibi-security",
  "bilibi-ui",
  "bilibi-user",
+ "inventory",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-postgres",
  "uuid",
 ]
 

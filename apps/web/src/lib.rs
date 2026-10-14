@@ -33,6 +33,7 @@ pub struct App {
     pub user: Arc<bilibi_user::UserService>,
     pub security: Arc<bilibi_security::Security>,
     pub renderer: Arc<bilibi_ui::Renderer>,
+    pub menu: Arc<bilibi_base::menu::Menu>,
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
@@ -49,6 +50,10 @@ impl App {
         let user = services.get("core/user.accounts")?;
         let security = services.get("base/security.guard")?;
         let renderer = services.get("base/ui.renderer")?;
+        let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
+        for dropped in menu.dropped() {
+            eprintln!("warning: {dropped}");
+        }
         Ok(Self {
             db,
             notifications,
@@ -57,6 +62,7 @@ impl App {
             user,
             security,
             renderer,
+            menu: Arc::new(menu),
             services: Arc::new(services),
         })
     }

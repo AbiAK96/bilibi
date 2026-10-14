@@ -16,3 +16,4 @@ serde_json.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-notifications.workspace = true
+bilibi-principal-directory.workspace = true

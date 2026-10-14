@@ -33,3 +33,5 @@ bilibi-domains = { path = "apps/domains" }
 bilibi-extensions = { path = "apps/extensions" }
 
 bilibi-notifications = { path = "apps/base/notifications" }
+bilibi-menu = { path = "apps/base/menu" }
+bilibi-principal-directory = { path = "apps/base/principal_directory" }

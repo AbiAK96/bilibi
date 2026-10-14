@@ -249,7 +249,7 @@ impl CompanyService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session"],migrations:&[MIGRATION],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu"],migrations:&[MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
     }
 }

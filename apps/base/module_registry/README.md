@@ -38,3 +38,7 @@ the bell after commit. Do not import User from Company or import Core from Base.
 This slice registers existing Company routes and User's shell bell. It does not
 replace host dispatch or add a production seed runner; those consume these
 contracts in the following foundation slices. No unit tests are used.
+
+Menu is the first consumer: `base/menu.items` carries `MenuItem` payloads (see
+`apps/base/menu/README.md`). PrincipalDirectory is bound through a service
+factory instead, because its providers need live database access.

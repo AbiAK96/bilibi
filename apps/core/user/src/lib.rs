@@ -1,5 +1,6 @@
 //! Credentials, server sessions, and the user's notification bell.
 mod contributions;
+mod directory;
 
 use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
@@ -184,11 +185,12 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session"],migrations:&[MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory"],migrations:&[MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
+            services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
             Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
         }}],
     }
