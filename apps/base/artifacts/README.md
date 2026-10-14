@@ -65,11 +65,27 @@ It reconciles pending tombstones and unpublished reservations older than one
 hour. Rechecking under the row lock protects a writer that published after
 candidate selection. Filesystem operations are synchronous and bounded while
 that lock is held: cancellation cannot leave a background writer creating bytes
-after recovery releases the reservation. Invoke from a dedicated worker/runtime
-thread for large documents. Recovery reports individual errors and keeps failed
+after recovery releases the reservation. Tokio multithread runtimes use `block_in_place` to let other tasks run; use
+a dedicated worker/runtime thread when using a single-thread runtime. Recovery reports individual errors and keeps failed
 rows eligible; callers own retry pacing and operational alerts. A2 will add
 records-grade retention, expiry purge, hold/retry evidence and scheduling policy.
 
 No unit tests. `examples/artifacts-walkthrough.rs` is an explicit disposable-DB
 walkthrough of real facade calls and injected DB/filesystem outages, with output
 for manual inspection. It does not run assertions or use a test harness.
+
+Run the walkthrough after migrating and seeding an isolated database:
+
+```sh
+export DATABASE_URL=postgres://bilibi@127.0.0.1:55481/bilibi_a1
+export BILIBI_DISPOSABLE_ARTIFACTS_DEMO=yes
+export BILIBI_ARTIFACTS_DEMO_ROOT=/absolute/private/task-directory
+cargo run -p bilibi-artifacts --example artifacts-walkthrough
+cargo run -p bilibi-artifacts --example artifacts-walkthrough -- recover
+```
+
+The first command leaves durable failed reservations/tombstones and a ready
+control document. The second starts a fresh process, reconciles the failures
+(including a successful unlink whose audit commit failed), and preserves the
+control. Repeat `recover` to see an empty successful batch. Fixture clock and
+failure triggers are confined to the explicitly opted-in disposable database.

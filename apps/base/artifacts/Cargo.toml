@@ -14,6 +14,7 @@ bilibi-tenancy = { path = "../tenancy" }
 bilibi-authz = { path = "../authz" }
 bilibi-party-ids = { path = "../party_ids" }
 tokio-postgres.workspace = true
+tokio.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
@@ -25,4 +26,3 @@ libc = "0.2.190"
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }
 bilibi-web = { path = "../../web" }
-tokio.workspace = true

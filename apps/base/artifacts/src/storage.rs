@@ -9,6 +9,19 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+/// `block_in_place` yields the worker to Tokio while retaining synchronous
+/// completion/cancellation semantics. Single-thread runtimes perform bounded IO
+/// inline; callers of those runtimes should dedicate them to document work.
+pub(crate) fn io<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    if tokio::runtime::Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+    {
+        tokio::task::block_in_place(work)
+    } else {
+        work()
+    }
+}
+
 pub(crate) const MAX_BYTES: usize = 536_870_912;
 pub(crate) fn validate_root(root: &str) -> Result<()> {
     let path = Path::new(root);

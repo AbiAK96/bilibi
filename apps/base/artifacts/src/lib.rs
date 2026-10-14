@@ -280,7 +280,7 @@ impl<O: Owner> Owned<'_, O> {
         if bytes.len() as u64 > max {
             return Err(Error::Invalid);
         }
-        storage::validate_root(&root)?;
+        storage::io(|| storage::validate_root(&root))?;
         let id = uuid::Uuid::new_v4().to_string();
         let size = bytes.len() as i64;
         let sha256 = digest(bytes);
@@ -304,7 +304,7 @@ impl<O: Owner> Owned<'_, O> {
         }
         // Keep this IO synchronous: cancellation must not leave an in-flight
         // writer running after the DB lock is dropped and recovery purges it.
-        storage::write(&row.root, &id, bytes)?;
+        storage::io(|| storage::write(&row.root, &id, bytes))?;
         self.authorize(tx.sql(), Operation::Create, Some(&row.metadata.reference))
             .await?;
         let row = self.transition(&mut tx, &row, "ready").await?;
@@ -322,7 +322,7 @@ impl<O: Owner> Owned<'_, O> {
         if !row.ready || row.deleted || row.expired {
             return Err(Error::NotFound);
         }
-        let bytes = storage::read(&row.root, id, row.metadata.byte_size as usize)?;
+        let bytes = storage::io(|| storage::read(&row.root, id, row.metadata.byte_size as usize))?;
         if digest(&bytes) != row.metadata.sha256 {
             return Err(Error::Integrity);
         }
@@ -356,7 +356,7 @@ impl<O: Owner> Owned<'_, O> {
             return Err(Error::Invalid);
         }
         if !row.purged {
-            storage::delete(&row.root, id)?;
+            storage::io(|| storage::delete(&row.root, id))?;
             let row = self.transition(&mut tx, &row, "purged").await?;
             self.audit(&tx, &row, "artifacts.purge").await?;
         }
