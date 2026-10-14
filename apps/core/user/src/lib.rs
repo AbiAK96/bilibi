@@ -1,6 +1,6 @@
 //! Credentials, server sessions, and the user's notification bell.
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use bilibi_database::{audit, Db, Error, Mutation, Result};
@@ -13,7 +13,7 @@ pub const MIGRATION: (&str, &str) = ("002-user", include_str!("../migrations/002
 
 pub fn hash_password(password: &str) -> Result<String> {
     Argon2::default()
-        .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
         .map_err(|_| Error::Internal)
 }

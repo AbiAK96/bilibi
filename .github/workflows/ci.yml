@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: bilibi
           POSTGRES_PASSWORD: bilibi
@@ -24,11 +24,11 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
       - run: python3 scripts/discover-modules.py --check
       - run: python3 scripts/test-dev.py
       - run: cargo fmt --all -- --check

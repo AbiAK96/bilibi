@@ -13,6 +13,5 @@ tokio.workspace = true
 argon2.workspace = true
 uuid.workspace = true
 serde_json.workspace = true
-rand_core = { version = "0.6", features = ["getrandom"] }
 bilibi-module-registry.workspace = true
 inventory.workspace = true

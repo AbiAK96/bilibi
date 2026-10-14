@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.99"
 license = "MIT"
 
 [workspace.dependencies]
@@ -17,8 +17,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
-argon2 = "0.5"
-askama = "0.14"
+argon2 = "0.6"
+askama = "0.16"
 bilibi-database = { path = "apps/base/database" }
 bilibi-security = { path = "apps/base/security" }
 bilibi-ui = { path = "apps/base/ui" }
