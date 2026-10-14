@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 bilibi-agent-api = { path = "agent_api" }
+bilibi-artifacts = { path = "artifacts" }
 bilibi-audit = { path = "audit" }
 bilibi-authz = { path = "authz" }
 bilibi-database = { path = "database" }
