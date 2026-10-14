@@ -85,9 +85,13 @@ run automatically on app boot.
 - Roles, role capabilities and direct grants; direct denies override every
   allow, including admin `grant_all`. Each capability check writes a tenant-scoped
   decision-log row, whether allowed or denied. Unknown capabilities cannot be
-  requested through the typed API.
+  granted by persisted data unless declared in the contributed vocabulary.
+  Platform capabilities additionally require explicit operator identity. Named
+  system principals need a declared capability and a durable tenant grant;
+  anonymous system identities always deny. See [Authz](apps/base/authz/README.md).
 - Any held restricting role masks the field, even alongside an unrestricted
   or admin role. Masked values are removed before rendering and cannot be edited.
+  The shared masking API supports other tables, JSON projections and audit values.
 - Tenant-scoped, soft-delete-aware Companies list with search, status filter,
   sorting and 25/50/100-row pages; detail with inline edits and archived read-only
   behavior. A row lock plus version check rejects stale edits.
@@ -143,7 +147,8 @@ apps/extensions/      empty Extension composition root
 apps/base/module_registry  discovered module graph and typed service registry
 apps/base/database    pool, migrations ledger, errors, mutation boundary
 apps/base/audit       audit evidence schema, capture, redaction, SQL console engine
-apps/base/security    session/scope guard, capabilities, restrictions
+apps/base/security    compatibility facade for Session, Tenancy and Authz
+apps/base/authz       contributed vocabulary, live grants, decisions, masking
 apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/ui          shared shell, styles, small live browser adapter
 apps/core/user        credentials, session actions, notifications, owned SQL

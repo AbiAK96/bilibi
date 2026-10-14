@@ -146,6 +146,16 @@ impl SystemScope {
     pub fn principal(&self) -> Option<&str> {
         self.principal.as_deref()
     }
+    /// Attribution for an already authorized worker write. Context is evidence,
+    /// never a capability grant; the worker must authorize before beginning it.
+    pub fn mutation_context(&self, action: impl Into<String>) -> bilibi_database::Context {
+        let mut context = bilibi_database::Context::user(self.tenant, 0, action);
+        context.actor = bilibi_database::Principal {
+            kind: "system".into(),
+            id: self.principal.clone().unwrap_or_else(|| "0".into()),
+        };
+        context
+    }
     /// Rehydrate persisted worker metadata at the trusted execution edge. Every
     /// decision still checks the live tenant, declaration and durable grant.
     pub async fn rehydrate(
