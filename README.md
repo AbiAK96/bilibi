@@ -138,6 +138,7 @@ apps/extensions/      empty Extension composition root
 apps/base/module_registry  discovered module graph and typed service registry
 apps/base/database    pool, migrations ledger, errors, mutation audit primitive
 apps/base/security    session/scope guard, capabilities, restrictions
+apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/ui          shared shell, styles, small live browser adapter
 apps/core/user        credentials, session actions, notifications, owned SQL
 apps/core/company     Companies API, owned SQL, page templates
@@ -145,7 +146,7 @@ apps/web              executable host, route/socket transport, explicit seed
 ```
 
 Base does not depend on Core. Core depends on Base and declared public Core APIs
-(Company calls User's transactional notification API). Each deep module is a Cargo
+(Company uses the Base notification sink; User binds its adapter at boot). Each deep module is a Cargo
 crate below one of the four roots, preserving Bilimbi's composition topology.
 `python3 scripts/discover-modules.py` discovers its Cargo manifest and generates
 composition dependencies/linkage before Cargo resolves packages. The launcher
@@ -157,8 +158,13 @@ service factories. Runtime discovery rejects missing/duplicate modules, upward
 dependencies, cycles, duplicate migrations and conflicting service names. It
 orders Base → Core → Domains → Extensions and dependencies before consumers,
 then initializes typed services. The host resolves named services and runs
-module-contributed SQL; it keeps no module or migration list. Company resolves
-User's notifications through this registry, so both use the same bell bus.
+module-contributed SQL; it keeps no module or migration list. Company resolves the Base notification boundary; User installs its persistence
+and bell adapter. Boot refuses missing or duplicate bindings. The same bus serves
+both notification writes and Web subscribers. Typed route/embed/seed contributions
+carry module/file/line provenance and are validated into an immutable catalog
+(see `apps/base/module_registry/README.md`). Unknown consumers, wrong payload
+types, duplicate contribution IDs and missing service references fail discovery.
+Service factories can resolve only their own module and declared direct dependencies.
 Domains and Extensions are empty composition roots, ready for later modules.
 All application SQL binds data and includes tenant predicates; session-token
 bootstrap and the explicit demo seed/migration commands are the exceptions.

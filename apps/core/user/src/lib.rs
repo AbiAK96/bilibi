@@ -1,4 +1,6 @@
 //! Credentials, server sessions, and the user's notification bell.
+mod contributions;
+
 use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,

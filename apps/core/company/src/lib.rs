@@ -1,4 +1,6 @@
 //! Tenant-scoped company reads and atomic, audited inline edits.
+mod contributions;
+
 use bilibi_database::{audit, Db, Error, Mutation, Result};
 use bilibi_notifications::NotificationBoundary;
 use bilibi_security::{authorize, guard, restrictions, Capability, Scope};
