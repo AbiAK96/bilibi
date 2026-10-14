@@ -1,24 +1,53 @@
 //! Credentials, server sessions, and the user's notification bell.
 mod contributions;
 mod directory;
+pub mod password;
+mod reset;
+mod verification;
 
-use argon2::{
-    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
-    Argon2,
-};
 use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_security::{authorize, guard, Capability, Scope, Sessions};
+pub use password::PolicyViolation;
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio_postgres::GenericClient;
+pub use verification::{Signer, Verification};
 
 pub const MIGRATION: (&str, &str) = ("002-user", include_str!("../migrations/002.sql"));
+pub const CREDENTIALS_MIGRATION: (&str, &str) = (
+    "core-user-003-credentials",
+    include_str!("../migrations/003-credentials.sql"),
+);
 
+/// Blocking Argon2id hash for seeds and tools; services use `password::hash`.
 pub fn hash_password(password: &str) -> Result<String> {
-    Argon2::default()
-        .hash_password(password.as_bytes())
-        .map(|h| h.to_string())
-        .map_err(|_| Error::Internal)
+    password::hash_blocking(password)
+}
+
+/// What a credential flow can refuse with, beyond infrastructure failures.
+/// Pages map each variant to a field or flash message; none reveals whether
+/// an account exists.
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialError {
+    #[error("is incorrect")]
+    IncorrectPassword,
+    #[error("{0}")]
+    Policy(PolicyViolation),
+    #[error("This link is invalid or has expired")]
+    InvalidOrExpiredToken,
+    #[error("Email is already verified")]
+    AlreadyVerified,
+    #[error("Email verification is not configured")]
+    VerificationUnavailable,
+    #[error("The email could not be sent")]
+    Delivery,
+    #[error(transparent)]
+    Other(#[from] Error),
+}
+impl From<tokio_postgres::Error> for CredentialError {
+    fn from(error: tokio_postgres::Error) -> Self {
+        Error::from(error).into()
+    }
 }
 
 pub struct Login {
@@ -33,23 +62,9 @@ pub async fn login(db: &Db, tenant: i64, email: &str, password: &str) -> Result<
     }
     let client = db.get().await?;
     let row = client.query_opt("SELECT u.id,u.password_hash FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=$1 AND u.email=$2 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active'", &[&tenant,&email]).await?;
-    // Perform a real Argon2 verification for unknown accounts as well.
-    let dummy = "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRmb3J0ZXN0aW5n$0A3fpxjnP4JPN0QSxhKQJNfBQYkxMvEQvEhu0Zp5H8c";
-    let hash: String = row
-        .as_ref()
-        .map(|r| r.get(1))
-        .unwrap_or_else(|| dummy.to_owned());
-    let password = password.to_owned();
-    let valid = tokio::task::spawn_blocking(move || {
-        PasswordHash::new(&hash).ok().is_some_and(|h| {
-            Argon2::default()
-                .verify_password(password.as_bytes(), &h)
-                .is_ok()
-        })
-    })
-    .await
-    .map_err(|_| Error::Internal)?;
-    if !valid {
+    // An unknown account still pays for one verification.
+    let stored: Option<String> = row.as_ref().map(|r| r.get(1));
+    if !password::verify(password, stored.as_deref()).await? {
         return Err(Error::Unauthorized);
     }
     let user: i64 = row.ok_or(Error::Unauthorized)?.get(0);
@@ -181,17 +196,21 @@ pub struct UserService {
     pub db: Db,
     pub notifications: Notifications,
     pub mutations: std::sync::Arc<MutationBoundary>,
+    mailer: std::sync::Arc<bilibi_mail::Mailer>,
+    signer: Signer,
+    /// Public origin that emailed links point at (`APP_ORIGIN`).
+    origin: String,
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory"],migrations:&[MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
+            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
         }}],
     }
 }

@@ -17,3 +17,14 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-notifications.workspace = true
 bilibi-principal-directory.workspace = true
+bilibi-mail = { path = "../../base/mail" }
+thiserror.workspace = true
+hmac = "0.13.0"
+sha2 = "0.11.1"
+subtle = "2.6.1"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+
+[dev-dependencies]
+bilibi-base = { path = "../../base" }
+bilibi-core = { path = ".." }
