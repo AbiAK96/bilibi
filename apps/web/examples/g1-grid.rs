@@ -33,20 +33,50 @@ static VAULT: GridContribution = GridContribution {
             Field::new("title", "Title", T::String),
         ],
     )],
-    links: &[LinkDecl::on(
-        "vault",
-        "Vault",
-        One,
-        "reference_items",
-        "group_id",
-        "example_vault",
-        "id",
-    )],
+    links: &[
+        // An edge query joins through a table the declaring module knows about.
+        LinkDecl::edge(
+            "depot",
+            "Depot",
+            One,
+            "reference_movements",
+            "reference_groups",
+            Source::tenant(
+                "SELECT m.id AS from_key, i.group_id AS to_key FROM base_grid_ref_movements m JOIN base_grid_ref_items i ON i.tenant_id = m.tenant_id AND i.id = m.item_id WHERE m.tenant_id = $1",
+            ),
+        ),
+        LinkDecl::on(
+            "vault",
+            "Vault",
+            One,
+            "reference_items",
+            "group_id",
+            "example_vault",
+            "id",
+        ),
+    ],
 };
+// A table whose source does not select a field it declares. Nobody holds its
+// capability, so it only surfaces when the walkthrough grants it.
+static BROKEN: GridContribution = GridContribution {
+    tables: &[TableDecl::new(
+        "example_broken",
+        "Example broken",
+        "reference.broken.view",
+        Source::tenant("SELECT id FROM base_grid_ref_groups WHERE tenant_id = $1"),
+        "id",
+        &[
+            Field::new("id", "ID", T::Integer),
+            Field::new("ghost", "Ghost", T::String),
+        ],
+    )],
+    links: &[],
+};
+inventory::submit! { Contribution::new(TABLES, "g1.broken", Provenance { module: "base/grid", source: file!(), line: line!() }, &BROKEN) }
 inventory::submit! { Contribution::new(TABLES, "g1.vault", Provenance { module: "base/grid", source: file!(), line: line!() }, &VAULT) }
 inventory::submit! { Contribution::new(VOCABULARY, "g1.vault.vocabulary", Provenance { module: "base/authz", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &["reference"], verbs: &["view"],
-    capabilities: &[C::tenant("reference.vault.view")],
+    capabilities: &[C::tenant("reference.vault.view"), C::platform("reference.broken.view")],
     roles: &[RoleDefinition { code: "manager", name: "manager", description: "Demo extension", grant_all: false, capabilities: &["reference.vault.view"] }],
     system_principals: &[],
 }) }
@@ -152,7 +182,39 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     ] {
         describe(&for_manager, root, spec);
     }
-    println!("== Refusals are typed and the same for unknown and unreachable paths");
+    describe(&for_manager, "reference_movements", "depot.name");
+    describe(&for_manager, "reference_movements", "depot.items:count");
+    println!(
+        "== A source that does not select a declared field is refused when a catalog is built"
+    );
+    let staff = auth.authenticate(client, 1, 3, String::new()).await?;
+    // A platform capability needs the operator identity as well as a grant, so
+    // grant-all administrators never see this table in the other steps.
+    grants
+        .set_direct(&admin, staff.user(), "reference.broken.view", Some(true))
+        .await?;
+    println!(
+        "granted but not operator: sees it = {:?}",
+        Catalog::for_scope(client, &staff)
+            .await
+            .map(|c| c.table("example_broken").is_some())
+    );
+    client.execute("DELETE FROM platform_operator", &[]).await?;
+    client
+        .execute(
+            "INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1)",
+            &[],
+        )
+        .await?;
+    println!(
+        "operator and granted: {:?}",
+        Catalog::for_scope(client, &staff).await.err()
+    );
+    client.execute("DELETE FROM platform_operator", &[]).await?;
+    grants
+        .set_direct(&admin, staff.user(), "reference.broken.view", None)
+        .await?;
+    println!("== Refusals are typed; a link to a table the actor cannot read is simply absent");
     for spec in [
         "nope",
         "group",
@@ -206,15 +268,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             grid::column::parse(spec).map(|p| p.segments.len())
         );
     }
-    let many: Vec<String> = (0..40)
-        .map(|i| format!("movements.delta:sum{}", i))
+    let items = for_manager.table("reference_items").unwrap();
+    let many: Vec<String> = for_manager
+        .suggest(items, "", &[], 50)
+        .into_iter()
+        .map(|c| c.spec)
         .collect();
     println!(
-        "  41st distinct spec of a list: {:?}",
+        "  {} distinct valid specs: {:?}; only the first {}: {:?}",
+        many.len(),
+        for_manager.resolve_all(items, &many).map(|c| c.len()),
+        grid::MAX_COLUMNS,
         for_manager
-            .resolve_all(for_manager.table("reference_items").unwrap(), &many)
+            .resolve_all(items, &many[..grid::MAX_COLUMNS])
             .map(|c| c.len())
-            .map_err(|(_, e)| e)
     );
     let ok = for_manager.resolve_all(
         for_manager.table("reference_items").unwrap(),
@@ -551,7 +618,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
         Provenance {
             module: "base/grid",
             source: file!(),
-            line: 0,
+            line: line!(),
         },
         &GHOSTED,
     );

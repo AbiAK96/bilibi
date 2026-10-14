@@ -341,6 +341,11 @@ impl Table {
     pub fn is_protected(&self, field: &str) -> bool {
         self.protected.contains(field)
     }
+    /// A link to a table the actor cannot read does not exist for them: a path
+    /// through it is refused exactly as an unknown one is, revealing nothing.
+    pub(crate) fn retain_links(&mut self, visible: impl Fn(&str) -> bool) {
+        self.links.retain(|link| visible(link.to()));
+    }
     pub(crate) fn without(&self, restricted: &BTreeSet<&str>) -> Self {
         let mut copy = self.clone();
         copy.fields.retain(|field| !restricted.contains(field.id));

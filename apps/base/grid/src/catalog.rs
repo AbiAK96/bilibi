@@ -143,6 +143,10 @@ impl Catalog {
                 .collect();
             tables.insert(*id, table.without(&hidden));
         }
+        let visible: BTreeSet<&str> = tables.keys().copied().collect();
+        for table in tables.values_mut() {
+            table.retain_links(|id| visible.contains(id));
+        }
         let catalog = Self {
             tenant: scope.tenant(),
             user: scope.user(),
@@ -168,7 +172,7 @@ impl Catalog {
             }
             for link in table.links() {
                 if let Join::Edge(source) = link.decl.join {
-                    if self.tables.contains_key(link.to()) {
+                    {
                         let what = format!("link {}.{} from {}", table.id(), link.id(), link.owner);
                         let keys = selected_keys(client, &what, &source).await?;
                         if !["from_key", "to_key"]

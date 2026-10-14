@@ -149,6 +149,7 @@ apps/base/database    pool, migrations ledger, errors, mutation boundary
 apps/base/audit       audit evidence schema, capture, redaction, SQL console engine
 apps/base/security    compatibility facade for Session, Tenancy and Authz
 apps/base/authz       contributed vocabulary, live grants, decisions, masking
+apps/base/grid        contributed table/field/link catalog, scoped and restriction-aware
 apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/ui          shared shell, styles, small live browser adapter
 apps/core/user        credentials, session actions, notifications, owned SQL

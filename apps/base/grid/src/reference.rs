@@ -31,7 +31,7 @@ static GRID: GridContribution = GridContribution {
             "Reference items",
             READ,
             Source::tenant(
-                "SELECT id, group_id, name, category, quantity, unit_cost, active FROM base_grid_ref_items WHERE tenant_id = $1",
+                "SELECT id, group_id, name, category, quantity, reorder_level, unit_cost, active FROM base_grid_ref_items WHERE tenant_id = $1",
             ),
             "id",
             &[
@@ -40,6 +40,7 @@ static GRID: GridContribution = GridContribution {
                 Field::new("name", "Name", String),
                 Field::choice("category", "Category", &["tools", "parts", "supplies"]),
                 Field::new("quantity", "Quantity", Integer),
+                Field::new("reorder_level", "Reorder level", Integer),
                 Field::new("unit_cost", "Unit cost", Decimal),
                 Field::new("active", "Active", Boolean),
             ],

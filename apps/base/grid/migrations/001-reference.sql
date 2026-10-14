@@ -14,6 +14,7 @@ CREATE TABLE base_grid_ref_items (
  name text NOT NULL CHECK(length(name) BETWEEN 1 AND 160),
  category text NOT NULL CHECK(category IN ('tools','parts','supplies')),
  quantity integer NOT NULL DEFAULT 0 CHECK(quantity>=0),
+ reorder_level integer NOT NULL DEFAULT 0 CHECK(reorder_level>=0),
  unit_cost numeric(12,2) NOT NULL DEFAULT 0 CHECK(unit_cost>=0),
  active boolean NOT NULL DEFAULT true,
  UNIQUE(tenant_id,id), UNIQUE(tenant_id,name),
