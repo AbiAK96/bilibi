@@ -275,3 +275,43 @@ async fn dispatch(
     *response.status_mut() = StatusCode::OK;
     Ok(response)
 }
+
+/// Resolve the same discovered GET routes as HTTP, with literal siblings first.
+pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, String>)> {
+    if !path.starts_with('/') || path.contains(['?', '#', '%', '\\']) || path.contains("//") {
+        return Err(Error::Invalid);
+    }
+    let segments: Vec<_> = path.split('/').collect();
+    let mut matches = Vec::new();
+    for bound in app.routes.iter().filter(|b| b.route.method == Method::Get) {
+        let pattern: Vec<_> = bound.route.path.split('/').collect();
+        if pattern.len() != segments.len() {
+            continue;
+        }
+        let mut params = HashMap::new();
+        let mut specificity = 0;
+        let mut valid = true;
+        for (pattern, value) in pattern.into_iter().zip(&segments) {
+            if parameter(pattern) {
+                if value.is_empty() || [".", ".."].contains(value) {
+                    valid = false;
+                    break;
+                }
+                params.insert(pattern[1..pattern.len() - 1].into(), (*value).into());
+            } else if pattern == *value {
+                specificity += 1;
+            } else {
+                valid = false;
+                break;
+            }
+        }
+        if valid {
+            matches.push((specificity, bound.clone(), params));
+        }
+    }
+    matches
+        .into_iter()
+        .max_by_key(|(score, _, _)| *score)
+        .map(|(_, bound, params)| (bound, params))
+        .ok_or(Error::NotFound)
+}

@@ -1,29 +1,21 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+mod live;
 mod media;
 mod routes;
 use askama::Template;
 use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade,
-    },
+    extract::{DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
 };
-use bilibi_company::{
-    web::{Detail, List},
-    Company, Edit, Page, Params,
-};
 use bilibi_database::{Db, Error, Result};
-use bilibi_security::{authorize, guard, Capability, Scope};
-use bilibi_ui::{Document, Login, Shell};
+use bilibi_ui::{Document, Login};
 use bilibi_user::Notifications;
 use serde::Deserialize;
-use serde_json::json;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Clone)]
 pub struct App {
@@ -313,139 +305,6 @@ async fn logout(
     Ok(response)
 }
 
-#[derive(Clone, Debug)]
-enum Route {
-    List,
-    Detail(i64),
-}
-impl Route {
-    fn parse(path: &str) -> Result<Self> {
-        if path == "/companies" {
-            return Ok(Self::List);
-        }
-        let id = path
-            .strip_prefix("/companies/")
-            .and_then(|s| s.parse::<i64>().ok())
-            .filter(|id| *id > 0)
-            .ok_or(Error::Invalid)?;
-        Ok(Self::Detail(id))
-    }
-    fn declaration<'a>(&self, app: &'a App) -> Result<&'a routes::BoundRoute> {
-        let pattern = match self {
-            Self::List => "/companies",
-            Self::Detail(_) => "/companies/{id}",
-        };
-        app.routes
-            .iter()
-            .find(|bound| {
-                bound.route.path == pattern
-                    && bound.route.method == bilibi_module_registry::contributions::Method::Get
-            })
-            .ok_or(Error::NotFound)
-    }
-    fn path(&self) -> String {
-        match self {
-            Self::List => "/companies".into(),
-            Self::Detail(id) => format!("/companies/{id}"),
-        }
-    }
-}
-fn params(values: &HashMap<String, String>) -> Result<Params> {
-    bilibi_company::web::params(values)
-}
-
-// Snapshot belongs to this socket, including loaded redacted records and current
-// layout. Every operation replaces it from fresh scope, grants, and DB rows.
-enum Content {
-    List(Page),
-    Detail(Company),
-}
-struct Loaded {
-    html: String,
-    scope: Scope,
-    content: Content,
-}
-impl Loaded {
-    fn row_count(&self) -> usize {
-        match &self.content {
-            Content::List(page) => page.rows.len(),
-            Content::Detail(company) => usize::from(company.id > 0),
-        }
-    }
-}
-async fn load(
-    app: &App,
-    token: &str,
-    route: &Route,
-    params: &Params,
-    framed: bool,
-) -> Result<Loaded> {
-    let declaration = route.declaration(app)?;
-    routes::check_access(app, declaration.route.access, Some(token)).await?;
-    if framed && !declaration.route.framed {
-        return Err(Error::Forbidden);
-    }
-    let client = app.db.get().await?;
-    let scope = guard(&**client, token, &app.security.sessions).await?;
-    let (body, content) = match route {
-        Route::List => {
-            let page = bilibi_company::list(&**client, &scope, params).await?;
-            let pages = ((page.total + params.size - 1) / params.size).max(1);
-            (
-                app.renderer
-                    .render(List {
-                        page: &page,
-                        params,
-                        pages,
-                    })
-                    .map_err(|_| Error::Internal)?,
-                Content::List(page),
-            )
-        }
-        Route::Detail(id) => {
-            let (company, masked) = bilibi_company::detail(&**client, &scope, *id).await?;
-            let editable = match authorize(&**client, &scope, Capability::CompaniesUpdate).await {
-                Ok(()) => true,
-                Err(Error::Forbidden) => false,
-                Err(error) => return Err(error),
-            };
-            (
-                app.renderer
-                    .render(Detail::new(&company, &masked, editable))
-                    .map_err(|_| Error::Internal)?,
-                Content::Detail(company),
-            )
-        }
-    };
-    let html = if framed {
-        render(bilibi_ui::Framed {
-            body: &body,
-            live: true,
-        })?
-    } else {
-        let unread = match bilibi_user::unread(&**client, &scope).await {
-            Ok(unread) => unread,
-            Err(Error::Forbidden) => 0,
-            Err(error) => return Err(error),
-        };
-        app.renderer
-            .render(Shell {
-                user: &scope.user_name,
-                email: &scope.email,
-                tenant: &scope.tenant_name,
-                csrf: &scope.csrf,
-                unread,
-                live: true,
-                body: &body,
-            })
-            .map_err(|_| Error::Internal)?
-    };
-    Ok(Loaded {
-        html,
-        scope,
-        content,
-    })
-}
 async fn upgrade(
     State(app): State<App>,
     headers: HeaderMap,
@@ -454,218 +313,19 @@ async fn upgrade(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let token = token(&headers)?;
-    let client = app.db.get().await.map_err(Error::from)?;
-    let scope = app.security.guard(&token).await?;
-    authorize(&**client, &scope, Capability::CompaniesView).await?;
+    // Upgrade proves the session only. Each discovered page/panel has its own gate.
+    app.security.guard(&token).await?;
     Ok(ws
         .max_message_size(16 * 1024)
         .max_frame_size(16 * 1024)
         .on_upgrade(move |socket| {
-            live(
+            live::run(
                 app,
                 token,
                 socket,
                 options.get("framed").is_some_and(|v| v == "true"),
             )
         }))
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum Event {
-    Mount {
-        path: String,
-        #[serde(default)]
-        params: HashMap<String, String>,
-    },
-    Params {
-        params: HashMap<String, String>,
-    },
-    Sort {
-        field: String,
-    },
-    Page {
-        delta: i64,
-    },
-    Save {
-        edit: Edit,
-    },
-    Read,
-}
-struct LivePage {
-    framed: bool,
-    route: Route,
-    params: Params,
-    loaded: Option<Loaded>,
-}
-impl Default for LivePage {
-    fn default() -> Self {
-        Self {
-            framed: false,
-            route: Route::List,
-            params: Params::default(),
-            loaded: None,
-        }
-    }
-}
-impl LivePage {
-    async fn event(&mut self, app: &App, token: &str, event: Event) -> Result<&'static str> {
-        let client = app.db.get().await?;
-        let scope = guard(&**client, token, &app.security.sessions).await?;
-        authorize(&**client, &scope, Capability::CompaniesView).await?;
-        drop(client);
-        let target = match &event {
-            Event::Mount { path, .. } => Route::parse(path)?,
-            _ => self.route.clone(),
-        };
-        let declaration = target.declaration(app)?;
-        routes::check_access(app, declaration.route.access, Some(token)).await?;
-        if self.framed && !declaration.route.framed {
-            return Err(Error::Forbidden);
-        }
-        let mut notice = "";
-        match event {
-            Event::Mount {
-                path,
-                params: values,
-            } => {
-                self.loaded = None;
-                self.route = Route::parse(&path)?;
-                self.params = params(&values)?;
-            }
-            _ if self.loaded.is_none() => return Err(Error::Invalid),
-            Event::Params { params: values } => self.params = params(&values)?,
-            Event::Sort { field } => {
-                if !["name", "status", "created_at"].contains(&field.as_str()) {
-                    return Err(Error::Invalid);
-                }
-                self.params.dir = if self.params.sort == field && self.params.dir == "asc" {
-                    "desc".into()
-                } else {
-                    "asc".into()
-                };
-                self.params.sort = field;
-                self.params.page = 1;
-            }
-            Event::Page { delta } => {
-                if ![-1, 1].contains(&delta) {
-                    return Err(Error::Invalid);
-                }
-                self.params.page = (self.params.page + delta).max(1);
-                self.params.validate()?;
-            }
-            Event::Save { edit } => {
-                if !matches!(self.route,Route::Detail(id) if id==edit.id) {
-                    return Err(Error::Invalid);
-                }
-                app.company.save(token, &edit).await?;
-                notice = "Saved · audit recorded";
-            }
-            Event::Read => {
-                app.user.mark_read(token).await?;
-                notice = "Notifications marked read";
-            }
-        }
-        self.loaded = Some(load(app, token, &self.route, &self.params, self.framed).await?);
-        let client = app.db.get().await?;
-        app.security.sessions.activity(&**client, token).await?;
-        Ok(notice)
-    }
-    fn message(&self, notice: &str) -> serde_json::Value {
-        let loaded = self.loaded.as_ref().expect("loaded after successful event");
-        let query = if matches!(self.route, Route::List) {
-            // URL values come from typed state; encode query values, never HTML.
-            format!(
-                "?page={}&size={}&sort={}&dir={}&q={}&status={}",
-                self.params.page,
-                self.params.size,
-                self.params.sort,
-                self.params.dir,
-                encode(&self.params.q),
-                self.params.status
-            )
-        } else {
-            String::new()
-        };
-        json!({"type":"page","html":loaded.html,"url":format!("{}{query}",self.route.path()),"notice":notice,"rows":loaded.row_count()})
-    }
-}
-fn encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
-}
-
-async fn live(app: App, token: String, mut socket: WebSocket, framed: bool) {
-    let mut page = LivePage {
-        framed,
-        ..LivePage::default()
-    };
-    let mut events = app.notifications.subscribe();
-    let mut refresh = tokio::time::interval(Duration::from_secs(15));
-    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    refresh.tick().await;
-    loop {
-        let result = tokio::select! {
-            message=socket.recv()=>match message {
-                Some(Ok(Message::Text(text)))=>match serde_json::from_str::<Event>(&text) { Ok(event)=>page.event(&app,&token,event).await,Err(_)=>Err(Error::Invalid) },
-                Some(Ok(Message::Ping(data)))=>{if socket.send(Message::Pong(data)).await.is_err(){break;}continue;},
-                Some(Ok(Message::Pong(_)))=>continue,
-                _=>break,
-            },
-            notification=events.recv()=>{
-                match notification {
-                    Ok(event) => if !page.loaded.as_ref().is_some_and(|loaded|loaded.scope.tenant()==event.tenant && loaded.scope.user()==event.user) {continue;},
-                    Err(tokio::sync::broadcast::error::RecvError::Closed)=>break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{},
-                }
-                if page.loaded.is_none() {continue;}
-                page.loaded=None;
-                match load(&app,&token,&page.route,&page.params,page.framed).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
-            },
-            _=refresh.tick()=>{
-                if page.loaded.is_none(){continue;}
-                page.loaded=None;
-                match load(&app,&token,&page.route,&page.params,page.framed).await {Ok(loaded)=>{page.loaded=Some(loaded);Ok("")},Err(error)=>Err(error)}
-            },
-        };
-        let (message, clear) = match result {
-            Ok(notice) => (page.message(notice), false),
-            Err(error) => {
-                let clear = matches!(
-                    error,
-                    Error::Unauthorized
-                        | Error::Forbidden
-                        | Error::NotFound
-                        | Error::Database(_)
-                        | Error::Pool(_)
-                        | Error::Internal
-                );
-                if clear {
-                    page.loaded = None;
-                }
-                (
-                    json!({"type":"error","message":error.to_string(),"clear":clear}),
-                    clear,
-                )
-            }
-        };
-        if socket
-            .send(Message::Text(message.to_string().into()))
-            .await
-            .is_err()
-            || clear
-        {
-            break;
-        }
-    }
 }
 
 pub mod seed;

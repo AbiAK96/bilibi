@@ -250,6 +250,14 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
         dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu"],migrations:&[MIGRATION],
-        services:&[bilibi_module_registry::Service {id:"core/company.pages",factory:|services|Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages { db: services.get::<Db>("base/database.pool")?.as_ref().clone() }))))}, bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
+        services: &[
+            bilibi_module_registry::Service { id: "core/company.companies", factory: |services| Ok(std::sync::Arc::new(CompanyService {
+                sessions: services.get("base/session.sessions")?, mutations: services.get("base/database.mutations")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), notifications: services.get("base/notifications.sink")?,
+            })) },
+            bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get("core/company.companies")?,
+            })))) },
+        ],
     }
 }

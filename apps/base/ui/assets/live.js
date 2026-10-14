@@ -6,6 +6,8 @@
   document.body.append(feedback);
   let socket;
   let pending = false;
+  let sequence = 0;
+  let activeRequest = null;
   let submittedField = null;
   let lastHTML = null;
   let reconnecting = false;
@@ -57,14 +59,26 @@
           }
           lastHTML = message.html;
         }
-        if (message.url) history.replaceState(null, '', message.url);
+        if (message.url && message.url !== location.pathname + location.search) {
+          history[message.history === 'push' ? 'pushState' : 'replaceState'](null, '', message.url);
+        }
         if (message.notice) { feedback.textContent = message.notice; submittedField = null; }
-        pending = false;
+        if (message.request_id === activeRequest) pending = false;
+      } else if (message.type === 'fragment') {
+        const target = document.getElementById(message.target);
+        if (target) target.outerHTML = message.html;
+        if (message.notice) feedback.textContent = message.notice;
+        if (message.request_id === activeRequest) pending = false;
       } else if (message.type === 'error') {
         feedback.textContent = message.message;
-        pending = false; submittedField = null;
+        if (message.request_id === activeRequest) pending = false;
+        submittedField = null;
         if (message.clear) {
-          document.getElementById('app').remove();
+          if (message.target && message.target !== 'app' && message.target !== 'page' && message.target !== 'shell') {
+            document.getElementById(message.target)?.remove();
+            return;
+          }
+          document.getElementById('app')?.remove();
           const link = document.createElement('a'); link.href='/login'; link.textContent='Sign in again';
           feedback.append(' ', link); socket.close();
         }
@@ -88,23 +102,36 @@
   }
   function send(event) {
     if (socket?.readyState !== WebSocket.OPEN || pending) return;
-    pending = true; socket.send(JSON.stringify(event));
+    pending = true;
+    activeRequest = ++sequence;
+    socket.send(JSON.stringify({...event, request_id:activeRequest}));
   }
   document.addEventListener('submit', event => {
     const form = event.target;
     if (!form.dataset.event) return;
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form));
-    if (form.dataset.event === 'save') { submittedField = values.field; send({type:'save', edit:{...values, id:Number(values.id), version:Number(values.version)}}); }
+    if (form.dataset.event === 'save') { submittedField = values.field; send({type:'event', target:form.dataset.target || 'page', payload:{type:'save', edit:{...values, id:Number(values.id), version:Number(values.version)}}}); }
     else send({type:'params', params:values});
   });
   document.addEventListener('click', event => {
     const button = event.target.closest('button[data-event]');
     if (!button || button.disabled) return;
     const type = button.dataset.event;
-    if (type === 'sort') send({type, field:button.dataset.field});
-    else if (type === 'page') send({type, delta:Number(button.dataset.delta)});
-    else if (type === 'read') send({type});
+    if (type === 'sort') send({type:'event', target:button.dataset.target || 'page', payload:{type, field:button.dataset.field}});
+    else if (type === 'page') send({type:'event', target:button.dataset.target || 'page', payload:{type, delta:Number(button.dataset.delta)}});
+    else if (type === 'read') send({type:'event', target:'shell', payload:{type}});
+    else send({type:'event', target:button.dataset.target || 'page', payload:{type}});
+  });
+  window.addEventListener('popstate', () => {
+    send({type:'mount', path:location.pathname, params:Object.fromEntries(new URLSearchParams(location.search))});
+  });
+  document.addEventListener('bilibi:navigate', ({detail}) => {
+    send({type:'navigate', path:detail.path, params:detail.params || {}});
+  });
+  // Component adapters send module intent through this bounded transport entry point.
+  document.addEventListener('bilibi:event', ({detail}) => {
+    send({type:'event', target:detail.target || 'page', payload:detail.payload});
   });
   connect();
 })();
