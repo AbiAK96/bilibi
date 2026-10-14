@@ -72,9 +72,11 @@ impl Subjects {
     ) -> bilibi_module_registry::Result<Self> {
         let mut owners = BTreeMap::new();
         for entry in catalog.entries::<Subject>(SUBJECTS)? {
-            let depends = modules.iter().any(|module| {
-                module.id == entry.provenance.module && module.dependencies.contains(&"base/media")
-            });
+            let depends = entry.provenance.module == "base/media"
+                || modules.iter().any(|module| {
+                    module.id == entry.provenance.module
+                        && module.dependencies.contains(&"base/media")
+                });
             if !depends {
                 return Err(RegistryError::Contribution(format!(
                     "media subject {} at {}:{} is contributed by a module that does not depend on base/media",

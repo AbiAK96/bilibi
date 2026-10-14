@@ -21,6 +21,11 @@ nullable override; missing runtime state resolves to null. `Resolved.source`
 is absent for a default; `overridden` means a row at the exact requested target.
 Bulk reads use one uncached SQL snapshot and only the requested scope identities.
 
+`Settings::get_global` is the one ambient read: a non-secret, global-scope value
+for consumers with no session (signed links, workers). Encrypted definitions,
+runtime claims and keys without a global scope refuse; a secret needs an
+explicit, authorized `get`.
+
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. Each company read,
 write, and delete calls `base/tenancy.parties` on the same DB connection. A missing

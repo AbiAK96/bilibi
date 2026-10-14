@@ -394,7 +394,7 @@ impl Media {
                         )
                         .await?;
                     let row = stored(&row);
-                    let change = Change { kind: "base/media/asset".into(), id: row.asset.id, old: Value::Null, new: audit(&row) };
+                    let change = Change { kind: "base/media/asset".into(), id: row.asset.id, old: json!({}), new: audit(&row) };
                     Ok((row, vec![change]))
                 })
             })
@@ -571,7 +571,7 @@ impl Media {
                 kind: "base/media/asset".into(),
                 id: row.asset.id,
                 old: audit(row),
-                new: Value::Null,
+                new: json!({}),
             })
             .collect();
         tx.mutate(move |sql| {
