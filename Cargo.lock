@@ -234,6 +234,7 @@ dependencies = [
  "bilibi-authz",
  "bilibi-database",
  "bilibi-datetime",
+ "bilibi-grid",
  "bilibi-locale",
  "bilibi-media",
  "bilibi-menu",
@@ -312,6 +313,18 @@ version = "0.1.0"
 [[package]]
 name = "bilibi-extensions"
 version = "0.1.0"
+
+[[package]]
+name = "bilibi-grid"
+version = "0.1.0"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "tokio-postgres",
+]
 
 [[package]]
 name = "bilibi-locale"

@@ -3,6 +3,7 @@ pub use bilibi_audit as audit;
 pub use bilibi_authz as authz;
 pub use bilibi_database as database;
 pub use bilibi_datetime as datetime;
+pub use bilibi_grid as grid;
 pub use bilibi_locale as locale;
 pub use bilibi_media as media;
 pub use bilibi_menu as menu;

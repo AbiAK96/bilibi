@@ -1,0 +1,14 @@
+[package]
+name = "bilibi-grid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-tenancy = { path = "../tenancy" }
+bilibi-authz = { path = "../authz" }
+tokio-postgres.workspace = true
+inventory.workspace = true

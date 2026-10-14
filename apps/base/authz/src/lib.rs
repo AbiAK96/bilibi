@@ -1,9 +1,11 @@
 //! Live authorization, immutable contributed vocabulary, and field withholding.
+pub mod effective;
 pub mod fields;
 pub mod grants;
 pub mod vocabulary;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
+pub use effective::effective_capabilities;
 use std::{
     collections::HashSet,
     sync::{Arc, OnceLock},
@@ -117,7 +119,7 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
     log(client, scope.tenant(), scope.user(), None, key, decision).await?;
     Ok(decision)
 }
-async fn is_operator(client: &impl GenericClient, tenant: i64) -> Result<bool> {
+pub(crate) async fn is_operator(client: &impl GenericClient, tenant: i64) -> Result<bool> {
     Ok(client.query_opt("SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL",&[&tenant]).await?.is_some())
 }
 async fn log(
