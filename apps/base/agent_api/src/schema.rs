@@ -1,6 +1,7 @@
 //! The deliberately small Bilimbi input-schema dialect. Unknown keywords fail
 //! discovery; unknown input fields fail dispatch, including nested objects.
 use serde_json::Value;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 pub type FieldErrors = BTreeMap<String, Vec<String>>;
@@ -76,9 +77,8 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
     }
     if node
         .get("minimum")
-        .and_then(Value::as_f64)
-        .zip(node.get("maximum").and_then(Value::as_f64))
-        .is_some_and(|(a, b)| a > b)
+        .zip(node.get("maximum"))
+        .is_some_and(|(a, b)| compare(a, b) == Some(Ordering::Greater))
     {
         return Err("minimum exceeds maximum".into());
     }
@@ -103,6 +103,22 @@ fn of_type(kind: &str, v: &Value) -> bool {
         "boolean" => v.is_boolean(),
         _ => false,
     }
+}
+// Integer schemas must not round IDs or bounds through f64 above 2^53.
+fn compare(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Some(a), Some(b)) = (a.as_i64(), b.as_i64()) {
+        return Some(a.cmp(&b));
+    }
+    if let (Some(a), Some(b)) = (a.as_u64(), b.as_u64()) {
+        return Some(a.cmp(&b));
+    }
+    if a.is_i64() && b.is_u64() {
+        return Some(Ordering::Less);
+    }
+    if a.is_u64() && b.is_i64() {
+        return Some(Ordering::Greater);
+    }
+    a.as_f64()?.partial_cmp(&b.as_f64()?)
 }
 pub fn validate(schema: &Value, input: &Value) -> Result<(), FieldErrors> {
     let mut errors = FieldErrors::new();
@@ -183,11 +199,14 @@ fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors
         ("minimum", true, "must be at least"),
         ("maximum", false, "must be at most"),
     ] {
-        if let Some(bound) = schema.get(key).and_then(Value::as_f64) {
-            if input
-                .as_f64()
-                .is_some_and(|v| if holds { v < bound } else { v > bound })
-            {
+        if let Some(bound) = schema.get(key) {
+            if compare(input, bound).is_some_and(|order| {
+                if holds {
+                    order == Ordering::Less
+                } else {
+                    order == Ordering::Greater
+                }
+            }) {
                 add(errors, path, format!("{message} {}", schema[key]));
             }
         }

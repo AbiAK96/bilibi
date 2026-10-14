@@ -202,8 +202,6 @@ name = "bilibi-agent-api"
 version = "0.1.0"
 dependencies = [
  "bilibi-authz",
- "bilibi-base",
- "bilibi-core",
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-settings",
