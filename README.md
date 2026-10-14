@@ -6,7 +6,7 @@ not a replacement for the full platform or a bake-off benchmark implementation.
 
 ## Run locally
 
-Install stable Rust 1.99, PostgreSQL 18 server and client tools, Caddy, mkcert
+Install stable Rust 1.99, Node.js >=22 with npm, PostgreSQL 18 server and client tools, Caddy, mkcert
 and Python 3.11+. Caddy must already be running with its admin API at
 `http://localhost:2019`. On Ubuntu/WSL2:
 
@@ -116,7 +116,9 @@ SQL migrations and Askama templates. Askama plus the browser's native WebSocket
 API was chosen because both are small, established tools: compiled templates
 escape data by default, and axum already provides socket support. A short shared
 browser adapter sends intent and replaces server-rendered HTML. There is no SPA
-framework, client model, or Node build step.
+framework or client model. A pinned Tailwind build produces the committed CSS;
+Node is needed only to rebuild assets, not to run the Rust app. See the
+[UI asset contract](apps/base/ui/assets/README.md) for sources and licenses.
 
 Each connection owns its route, list parameters, loaded redacted records, and
 rendered page. Sort/search/page events reload through the same domain APIs as

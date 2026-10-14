@@ -27,6 +27,47 @@ pub struct Login<'a> {
 pub const CSS: &str = include_str!("../assets/app.css");
 pub const JS: &str = include_str!("../assets/live.js");
 
+/// Vendored public assets. Keep this allowlist bounded: never resolve a
+/// request path on disk, and never make font loading depend on authentication.
+pub struct StaticAsset {
+    pub content_type: &'static str,
+    pub bytes: &'static [u8],
+}
+
+pub fn static_asset(name: &str) -> Option<StaticAsset> {
+    let (content_type, bytes): (&str, &[u8]) = match name {
+        "instrument-sans-variable.woff2" => (
+            "font/woff2",
+            include_bytes!("../assets/static/fonts/instrument-sans-variable.woff2"),
+        ),
+        "instrument-sans-variable-italic.woff2" => (
+            "font/woff2",
+            include_bytes!("../assets/static/fonts/instrument-sans-variable-italic.woff2"),
+        ),
+        "OFL.txt" => (
+            "text/plain; charset=utf-8",
+            include_bytes!("../assets/static/fonts/OFL.txt"),
+        ),
+        "ui-specimen.html" => (
+            "text/html; charset=utf-8",
+            include_bytes!("../assets/static/ui-specimen.html"),
+        ),
+        "favicon.svg" => (
+            "image/svg+xml",
+            include_bytes!("../assets/static/favicon.svg"),
+        ),
+        "favicon.ico" => (
+            "image/x-icon",
+            include_bytes!("../assets/static/favicon.ico"),
+        ),
+        _ => return None,
+    };
+    Some(StaticAsset {
+        content_type,
+        bytes,
+    })
+}
+
 pub struct Renderer;
 impl Renderer {
     pub fn render<T: Template>(&self, template: T) -> std::result::Result<String, askama::Error> {

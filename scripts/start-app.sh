@@ -9,6 +9,7 @@ done
 cargo watch --version >/dev/null 2>&1 || { echo 'Install the rebuild watcher: cargo install cargo-watch --version 8.5.3 --locked' >&2; exit 1; }
 echo "$(rustc --version); $(cargo --version)"
 python3 scripts/discover-modules.py
+./scripts/build-assets.sh
 if [[ -z ${DATABASE_URL:-} ]]; then
     pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
     [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" ]] || {

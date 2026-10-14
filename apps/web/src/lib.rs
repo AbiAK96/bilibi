@@ -87,6 +87,19 @@ pub fn router(app: App) -> Router {
         .route("/companies", get(companies))
         .route("/companies/{id}", get(company))
         .route("/live", get(upgrade))
+        .route("/fonts/{name}", get(font_asset))
+        .route(
+            "/assets/ui-specimen.html",
+            get(|| async { asset_response("ui-specimen.html") }),
+        )
+        .route(
+            "/favicon.svg",
+            get(|| async { asset_response("favicon.svg") }),
+        )
+        .route(
+            "/favicon.ico",
+            get(|| async { asset_response("favicon.ico") }),
+        )
         .route(
             "/assets/app.css",
             get(|| async { ([(header::CONTENT_TYPE, "text/css")], bilibi_ui::CSS) }),
@@ -110,13 +123,24 @@ pub fn router(app: App) -> Router {
         .with_state(app)
 }
 
+fn asset_response(name: &str) -> Response {
+    match bilibi_ui::static_asset(name) {
+        Some(asset) => ([(header::CONTENT_TYPE, asset.content_type)], asset.bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn font_asset(Path(name): Path<String>) -> Response {
+    asset_response(&name)
+}
+
 async fn response_headers(request: axum::extract::Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     for (key,value) in [
         ("cache-control","no-store"),
         ("x-content-type-options","nosniff"),
         ("referrer-policy","same-origin"),
-        ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"),
+        ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"),
     ] { response.headers_mut().insert(axum::http::HeaderName::from_static(key),HeaderValue::from_static(value)); }
     response
 }

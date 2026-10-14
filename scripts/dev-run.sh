@@ -5,6 +5,7 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
 python3 scripts/discover-modules.py
+./scripts/build-assets.sh
 started=$(date +%s)
 result=0
 cargo build -p bilibi-web --timings || result=$?
