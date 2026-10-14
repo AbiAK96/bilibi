@@ -51,7 +51,12 @@ pub fn installed() -> Result<&'static Installed> {
     SNAPSHOT
         .get_or_init(|| {
             let installed = Installed::from_inventory()?;
-            validate_capabilities(&installed)?;
+            validate_capabilities(
+                &installed,
+                bilibi_authz::vocabulary().map_err(|_| {
+                    RegistryError::Contribution("authz vocabulary unavailable".into())
+                })?,
+            )?;
             Ok(installed)
         })
         .as_ref()
@@ -59,9 +64,10 @@ pub fn installed() -> Result<&'static Installed> {
 }
 
 /// A typo in a table's capability must fail at boot, not hide the table forever.
-fn validate_capabilities(installed: &Installed) -> Result<()> {
-    let vocabulary = bilibi_authz::vocabulary()
-        .map_err(|_| RegistryError::Contribution("authz vocabulary unavailable".into()))?;
+pub fn validate_capabilities(
+    installed: &Installed,
+    vocabulary: &bilibi_authz::Vocabulary,
+) -> Result<()> {
     for table in installed.tables() {
         if !vocabulary.capabilities.contains_key(table.capability()) {
             return Err(RegistryError::Contribution(format!(
