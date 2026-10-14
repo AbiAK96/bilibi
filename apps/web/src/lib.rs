@@ -92,6 +92,7 @@ pub fn router(app: App) -> Router {
             "/assets/ui-specimen.html",
             get(|| async { asset_response("ui-specimen.html") }),
         )
+        .route("/assets/ui-components.html", get(components_specimen))
         .route(
             "/favicon.svg",
             get(|| async { asset_response("favicon.svg") }),
@@ -121,6 +122,13 @@ pub fn router(app: App) -> Router {
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn(response_headers))
         .with_state(app)
+}
+
+/// The shared component specimen: the screenshot baseline for the primitives
+/// in `bilibi_ui`, served like the asset specimen and not a product page.
+async fn components_specimen() -> std::result::Result<Html<String>, HttpError> {
+    let specimen = bilibi_ui::ComponentsSpecimen::new().map_err(|_| Error::Internal)?;
+    Ok(Html(render(specimen)?))
 }
 
 fn asset_response(name: &str) -> Response {
