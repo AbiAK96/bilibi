@@ -1,4 +1,6 @@
-//! Outgoing mail: one validated message type and two transports. SMTP is used
+//! Outgoing mail: one validated message type and two transports. Send through the
+//! `base/mail.mailer` service; never open your own SMTP connection or write
+//! message files, which would skip the header validation in `Message::render`. SMTP is used
 //! when `MAIL_HOST` is configured; otherwise the dev mailbox keeps every message
 //! as an `.eml` file so a reset link can be read without a mail server.
 mod mailbox;

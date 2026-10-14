@@ -70,6 +70,10 @@ pagination can be tried. Seeding and migrations are explicit, transactional and
 idempotent; re-seeding preserves passwords and company edits, and ensures the
 demo roles and assignments exist.
 
+Outgoing mail goes to `.local/mailbox/` (one file per message, newest 100) unless
+`MAIL_HOST` configures an SMTP relay; see [Mail](apps/base/mail/README.md).
+Email verification links also need `BILIBI_USER_SIGNING_KEY` (64 hex characters).
+
 `BIND_ADDR` defaults to `127.0.0.1:3000`. `APP_ORIGIN` must exactly match the
 browser's origin, without a trailing slash. POST requests and WebSocket upgrades
 require that Origin. HTTPS origins set Secure session cookies; terminate TLS at
@@ -150,9 +154,10 @@ apps/base/audit       audit evidence schema, capture, redaction, SQL console eng
 apps/base/security    compatibility facade for Session, Tenancy and Authz
 apps/base/authz       contributed vocabulary, live grants, decisions, masking
 apps/base/grid        contributed table/field/link catalog, scoped and restriction-aware
+apps/base/mail        validated outgoing mail: SMTP relay or dev mailbox files
 apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/ui          shared shell, styles, small live browser adapter
-apps/core/user        credentials, session actions, notifications, owned SQL
+apps/core/user        credentials, password reset/verification, sessions, notifications, owned SQL
 apps/core/company     Companies API, owned SQL, page templates
 apps/web              executable host, route/socket transport, explicit seed
 ```
@@ -194,7 +199,9 @@ cargo build --workspace --release --locked
 
 ## Left out
 
-Other business modules, user/role administration, password reset/registration,
+Other business modules, user/role administration, registration, the password
+reset, forgot-password and verification pages (their services exist, see
+`apps/core/user/README.md`),
 saved column layouts, tiling, settings, impersonation, audit and decision-log
 screens, distributed notification fan-out, production login throttling and
 operational hardening. Broadcasts are process-local; use one app process for this

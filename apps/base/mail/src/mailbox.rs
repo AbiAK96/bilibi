@@ -99,7 +99,7 @@ fn valid_id(name: &str) -> bool {
 }
 impl Transport for Mailbox {
     fn send<'a>(&'a self, message: &'a lettre::Message) -> SendFuture<'a> {
-        let rendered = message.formatted();
+        let rendered = readable(&message.formatted());
         Box::pin(async move {
             // Blocking file work stays off the async workers.
             let mailbox = Mailbox::new(self.dir.clone(), self.capacity);
@@ -115,4 +115,44 @@ impl Transport for Mailbox {
             self.capacity
         )
     }
+}
+
+/// Long lines make the library choose quoted-printable, which is right on the wire
+/// but unreadable in a file (`=3D`, soft breaks). The dev mailbox stores the
+/// decoded body under an `8bit` header so a link can be copied straight out.
+fn readable(raw: &[u8]) -> Vec<u8> {
+    let Some(split) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return raw.to_vec();
+    };
+    let (head, body) = (&raw[..split], &raw[split + 4..]);
+    let marker = b"Content-Transfer-Encoding: quoted-printable";
+    let Some(at) = head
+        .windows(marker.len())
+        .position(|window| window == marker)
+    else {
+        return raw.to_vec();
+    };
+    let mut out = head[..at].to_vec();
+    out.extend_from_slice(b"Content-Transfer-Encoding: 8bit");
+    out.extend_from_slice(&head[at + marker.len()..]);
+    out.extend_from_slice(b"\r\n\r\n");
+    let mut index = 0;
+    while index < body.len() {
+        let decoded = (body[index] == b'=')
+            .then(|| body.get(index + 1..index + 3).and_then(hex))
+            .flatten();
+        if body[index..].starts_with(b"=\r\n") {
+            index += 3;
+        } else if let Some(byte) = decoded {
+            out.push(byte);
+            index += 3;
+        } else {
+            out.push(body[index]);
+            index += 1;
+        }
+    }
+    out
+}
+fn hex(pair: &[u8]) -> Option<u8> {
+    u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()
 }
