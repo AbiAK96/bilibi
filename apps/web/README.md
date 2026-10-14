@@ -34,9 +34,7 @@ CSP permits same-origin frames. The frame flag grants no authority. The legacy
 socket carries a cosmetic framing hint so mounts and refreshes keep that layout;
 it rechecks route access and framing eligibility on mount/events/refreshes.
 
-`PageBody.live` enables the current browser socket adapter. Until F5 introduces
-module-owned page state/events, only the existing Company adapter supports live
-updates. Other HTTP adapters should return `live: false`. F5 replaces the
-Company-specific socket enum, row snapshot, upgrade check and refresh dispatch;
-F6 owns queued events and retained fragment/iframe lifecycle. The HTTP adapter
-and `PageService` are the seam those slices can reuse.
+`PageBody.live` enables the browser socket adapter for owners implementing
+`Page::mount` and `LiveState`. See `docs/live-pages.md` for module-owned state,
+targeted panels, URL changes and guarded subscriptions. HTTP-only adapters should
+return `live: false`. F6 owns queued events and retained fragment/iframe lifecycle.
