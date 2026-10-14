@@ -1,0 +1,11 @@
+# Tenancy identity boundary
+
+Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. Raw route IDs and K0 party IDs carry no authority. Scope and Actor have private identity fields, no deserialize implementation and no public constructor; the display fields are never policy input. A proof applies to one freshly guarded unit of work, not a permanent credential.
+
+`base/tenancy.authentication` owns a once-bound `ActorVerifier`. Core User installs the account adapter during registry boot; missing and duplicate bindings fail startup. The `ProofClient` read adapter keeps owner checks on the caller's connection or transaction. Base has no SQL against Core account/company/person tables. `Authentication::authenticate` is an authentication-edge API: supply only identities extracted from validated durable credentials, never request IDs. It establishes identity and grants no capabilities. `Scope::mutation_context` supplies F2 attribution from that identity.
+
+`base/tenancy.parties` owns optional `OrganisationProvider` and `PersonProvider` bindings. K1/K7/K9 install owner adapters using K0's `bilibi-party-ids`. Missing providers refuse all target proof requests. Providers must prove live, eligible targets in the exact scope, including tenant and access checks; IDs and business relationship roles never grant authority. An organisation/person proof retains its scope and typed target ID. The current account adapter leaves all party facets absent until K9 can prove the real links. This boundary neither fabricates Person data nor depends on People.
+
+`prove_operator` returns a sealed proof only when the live scope tenant is explicitly recorded in the singleton `platform_operator` table. Numeric tenant IDs and `grant_all` have no operator meaning. Migration `005-tenancy-operator` leaves the marker unset; K17 owns bootstrap. Operator proof establishes identity, not a permission grant: use Authz `authorize_operator` for an operation that requires both. The migration does not replay the historical tenancy schema in `001-base`.
+
+Named system principals, impersonation and delegated job rehydration require the corresponding P6/Q2/K14 owner adapters; an unverified worker or system identity cannot construct an authenticated Scope through this API.

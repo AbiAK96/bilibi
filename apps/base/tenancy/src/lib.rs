@@ -251,9 +251,65 @@ inventory::submit! {
         id: "base/tenancy", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/database", "base/party_ids"],
         migrations: &[("005-tenancy-operator", include_str!("../migrations/005-operator.sql"))],
-        services: &[bilibi_module_registry::Service { id: "base/tenancy.authentication", factory: |_| Ok(Arc::new(Authentication::default())) }],
+        services: &[bilibi_module_registry::Service { id: "base/tenancy.authentication", factory: |_| Ok(Arc::new(Authentication::default())) }, bilibi_module_registry::Service { id: "base/tenancy.parties", factory: |_| Ok(Arc::new(PartyProofs::default())) }],
     }
 }
 inventory::submit! {
     bilibi_module_registry::Ready { module: "base/tenancy", check: |services| services.get::<Authentication>("base/tenancy.authentication")?.ready() }
+}
+
+/// Optional owner bindings. Missing Company/Person adapters always refuse proof;
+/// installing unrelated Core modules never implicitly makes targets trusted.
+#[derive(Default)]
+pub struct PartyProofs {
+    organisations: OnceLock<Arc<dyn OrganisationProvider>>,
+    persons: OnceLock<Arc<dyn PersonProvider>>,
+}
+impl PartyProofs {
+    pub fn bind_organisations(
+        &self,
+        provider: Arc<dyn OrganisationProvider>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.organisations.set(provider).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate organisation proof provider".into(),
+            )
+        })
+    }
+    pub fn bind_persons(
+        &self,
+        provider: Arc<dyn PersonProvider>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.persons.set(provider).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service("duplicate person proof provider".into())
+        })
+    }
+    pub async fn organisation(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        id: OrganisationId,
+    ) -> Result<OrganisationProof> {
+        prove_organisation(
+            self.organisations.get().ok_or(Error::Forbidden)?.as_ref(),
+            client,
+            scope,
+            id,
+        )
+        .await
+    }
+    pub async fn person(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        id: PersonId,
+    ) -> Result<PersonProof> {
+        prove_person(
+            self.persons.get().ok_or(Error::Forbidden)?.as_ref(),
+            client,
+            scope,
+            id,
+        )
+        .await
+    }
 }

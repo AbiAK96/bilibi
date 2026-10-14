@@ -28,7 +28,7 @@ impl Default for Policy {
     fn default() -> Self {
         Self {
             idle_seconds: 7200,
-            touch_seconds: 60,
+            touch_seconds: 300,
         }
     }
 }
@@ -44,7 +44,7 @@ impl Sessions {
         }
     }
     /// Opaque token lookup is the bootstrap exception to tenant scoping. One
-    /// statement checks session, tenant and (through the owner) account identity.
+    /// lookup checks session expiry, then Tenancy and the owner re-prove identity.
     pub async fn check(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
         self.resolve(client, token, false).await
     }
@@ -72,9 +72,9 @@ impl Sessions {
             .authenticate(client, row.get(0), row.get(1), row.get(2))
             .await?;
         if activity {
-            // RETURNING also covers a valid row whose throttled timestamp is
-            // unchanged, and refuses revocation between lookup and touch.
-            let touched = client.query_opt("UPDATE sessions SET last_activity=CASE WHEN last_activity<now()-make_interval(secs => $5::double precision) THEN now() ELSE last_activity END WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND expires_at>now() AND last_activity>now()-make_interval(secs => $4::double precision) RETURNING id", &[&token,&scope.tenant(),&scope.user(),&(self.policy.idle_seconds as f64),&(self.policy.touch_seconds as f64)]).await?;
+            // Lock the valid row, even when renewal is throttled. The UPDATE
+            // executes only when due; a revoked/expired row cannot be revived.
+            let touched = client.query_opt("WITH valid AS MATERIALIZED (SELECT id,last_activity FROM sessions WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND expires_at>now() AND last_activity>now()-make_interval(secs => $4::double precision) FOR UPDATE), touched AS (UPDATE sessions s SET last_activity=now() FROM valid v WHERE s.id=v.id AND v.last_activity<now()-make_interval(secs => $5::double precision) RETURNING s.id) SELECT id FROM valid", &[&token,&scope.tenant(),&scope.user(),&(self.policy.idle_seconds as f64),&(self.policy.touch_seconds as f64)]).await?;
             if touched.is_none() {
                 return Err(Error::Unauthorized);
             }

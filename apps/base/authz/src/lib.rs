@@ -30,7 +30,15 @@ pub async fn authorize(
     scope: &Scope,
     capability: Capability,
 ) -> Result<()> {
-    let key = capability.key();
+    authorize_key(client, scope, capability.key()).await
+}
+
+/// String capability seam for contributed vocabulary (P6). No identity or
+/// relationship role is itself a grant.
+pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
+    if key.is_empty() || key.len() > 200 {
+        return Err(Error::Invalid);
+    }
     let roles = client.query("SELECT r.id,r.grant_all FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2", &[&scope.tenant(),&scope.user()]).await?;
     let direct = client.query_opt("SELECT is_allowed FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3", &[&scope.tenant(),&scope.user(),&key]).await?;
     let direct = direct.map(|row| row.get::<_, bool>(0));
@@ -49,7 +57,19 @@ pub async fn authorize(
 }
 
 pub async fn restrictions(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id='companies'", &[&scope.tenant(),&scope.user()]).await?.iter().map(|row| row.get(0)).collect())
+    restrictions_for(client, scope, "companies").await
+}
+
+/// Every restricting role applies, even when a different role grants all.
+pub async fn restrictions_for(
+    client: &impl GenericClient,
+    scope: &Scope,
+    table: &str,
+) -> Result<HashSet<String>> {
+    if table.is_empty() || table.len() > 200 {
+        return Err(Error::Invalid);
+    }
+    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3", &[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row| row.get(0)).collect())
 }
 
 inventory::submit! {
@@ -57,4 +77,15 @@ inventory::submit! {
         id:"base/authz",layer:bilibi_module_registry::Layer::Base,
         dependencies:&["base/database","base/tenancy"],migrations:&[],services:&[],
     }
+}
+
+/// Operator identity and a capability are independent requirements.
+pub async fn authorize_operator(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    key: &str,
+) -> Result<bilibi_tenancy::OperatorProof> {
+    let proof = bilibi_tenancy::prove_operator(client, scope).await?;
+    authorize_key(client, scope, key).await?;
+    Ok(proof)
 }
