@@ -167,6 +167,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-notifications",
+ "bilibi-party-ids",
  "bilibi-security",
  "bilibi-ui",
 ]
@@ -192,6 +193,7 @@ name = "bilibi-core"
 version = "0.1.0"
 dependencies = [
  "bilibi-company",
+ "bilibi-party",
  "bilibi-user",
 ]
 
@@ -233,6 +235,26 @@ dependencies = [
  "bilibi-security",
  "inventory",
  "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-party"
+version = "0.1.0"
+dependencies = [
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "inventory",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bilibi-party-ids"
+version = "0.1.0"
+dependencies = [
+ "bilibi-module-registry",
+ "inventory",
+ "serde",
 ]
 
 [[package]]

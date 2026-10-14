@@ -8,4 +8,5 @@ license.workspace = true
 
 [dependencies]
 bilibi-company = { path = "company" }
+bilibi-party = { path = "party" }
 bilibi-user = { path = "user" }
