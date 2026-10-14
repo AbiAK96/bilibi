@@ -29,3 +29,4 @@ bilibi-tenancy = { path = "../base/tenancy" }
 [dev-dependencies]
 inventory.workspace = true
 tokio-postgres.workspace = true
+jiff = "0.2.38"
