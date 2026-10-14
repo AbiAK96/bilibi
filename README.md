@@ -91,10 +91,13 @@ run automatically on app boot.
 - Tenant-scoped, soft-delete-aware Companies list with search, status filter,
   sorting and 25/50/100-row pages; detail with inline edits and archived read-only
   behavior. A row lock plus version check rejects stale edits.
-- Old/new company values and actor recorded in `audit_mutations` in the same
-  transaction as the save. An audit error rolls back the company update and
-  notification. Notification creation/read changes are audited too. Session
-  creation, deletion and activity touches are authentication housekeeping.
+- Old/new company values and actor recorded in `base_audit_mutations`, plus a
+  committed `company.update` row in `base_audit_actions`, in the same transaction
+  as the save. An audit error rolls back the company update and notification.
+  Notification creation/read changes are audited too. Session creation, deletion
+  and activity touches are authentication housekeeping. Evidence is append-only;
+  secrets are redacted by field name; the read-only SQL console engine records
+  every command. See `apps/base/audit/README.md`.
 - Warm stone shell, lime orientation markers, compact ruled tables, header,
   sidebar, account/tenant disclosure and a notification bell, drawn from
   Bilimbi's `DESIGN.md` and shell components. System fonts provide a local
@@ -138,7 +141,8 @@ apps/core/            Core composition root
 apps/domains/         empty Domain composition root
 apps/extensions/      empty Extension composition root
 apps/base/module_registry  discovered module graph and typed service registry
-apps/base/database    pool, migrations ledger, errors, mutation audit primitive
+apps/base/database    pool, migrations ledger, errors, mutation boundary
+apps/base/audit       audit evidence schema, capture, redaction, SQL console engine
 apps/base/security    session/scope guard, capabilities, restrictions
 apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/ui          shared shell, styles, small live browser adapter

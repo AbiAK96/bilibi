@@ -11,21 +11,24 @@ query operations; it is an explicit escape hatch, not automatic SQL interception
 Every business write using it must still call `record`. Sessions and migration or
 seed ledgers are lifecycle writes, rather than business mutations.
 
-The authoritative API is [src/transaction.rs](src/transaction.rs). Audit binds a
+The authoritative API is [src/transaction.rs](src/transaction.rs). Audit binds its
 `Capture` implementation once through `MutationBoundary::bind_capture` during
-service installation. Its methods receive the same PostgreSQL transaction and
-must propagate failure. The transitional `DemoCapture` persists original
-`audit_mutations` plus attribution JSON and a `bilibi_action_commits` row. That row
-means a successful outer commit, not an attempted/refused action log. P5 owns the
-full Audit implementation, redaction, attempted/refused action semantics and
-subsequent Audit schema. `begin_with` also supports explicit deployment adapters.
+service installation; a readiness check refuses boot, and `begin` refuses a
+transaction, while nothing is bound. Capture methods receive the same PostgreSQL
+transaction and must propagate failure; `Capture::mutations` receives a whole
+bulk write so the implementation can batch. Rows, redaction, attribution and
+attempted/refused action semantics are owned by `base/audit`
+(see [apps/base/audit/README.md](../audit/README.md)). The historical
+`audit_mutations` and `bilibi_action_commits` demo ledgers are frozen; Audit
+carried their rows over once in `006-audit-evidence`. `begin_with` also supports
+explicit deployment adapters.
 
 `Context` carries tenant, actor `{kind,id}`, optional impersonator, action and one
 trace ID shared by all nested changes. Database validates its shape; it does not
 prove authorization. F3's session/worker adapters supply trusted attribution.
-System and agent principals do not borrow a human ID; the demo's legacy numeric
-`actor_id` is null for those kinds, with their identity preserved in `context`.
-Historical mutation rows retain their original actor and have no context backfill.
+Use the Audit actor kinds (`user`, `agent`, `guest`, `console`, `scheduler`,
+`queue`, `system`, `unknown`); a `system` principal carries its name as the id and
+`0` when anonymous. Audit refuses any other kind, which refuses the commit.
 
 Register infallible, synchronous notification/cache callbacks with `after_commit`.
 They run in registration order after PostgreSQL accepts commit and never on
@@ -40,7 +43,7 @@ than opening or committing an inner transaction.
 `001-base`, `002-user` and `003-company` and their SQL files are frozen historical
 demo migrations. Do not split, rename, move their registration, or replay their
 DDL on databases where their versions were applied. `004-database-boundary` is
-an additive bridge and Database ledger migration. Future tenancy, session,
+an additive bridge and Database ledger migration; `006-audit-evidence` is Audit's. Future tenancy, session,
 authorization and audit DDL is contributed by those owning modules through
 `Module::migrations`; Database only supplies orchestration. Use globally unique
 module-prefixed versions, such as `base/settings/001-values`. The host runs
