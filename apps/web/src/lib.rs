@@ -378,13 +378,17 @@ async fn load(
             )
         }
     };
-    let unread = bilibi_user::unread(&**client, &scope).await?;
     let html = if framed {
         render(bilibi_ui::Framed {
             body: &body,
             live: true,
         })?
     } else {
+        let unread = match bilibi_user::unread(&**client, &scope).await {
+            Ok(unread) => unread,
+            Err(Error::Forbidden) => 0,
+            Err(error) => return Err(error),
+        };
         app.renderer
             .render(Shell {
                 user: &scope.user_name,
