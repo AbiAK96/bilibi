@@ -2,7 +2,11 @@
 //! never commit an inner transaction or publish before the outer commit.
 use crate::{Error, Result};
 use serde_json::{json, Value};
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
 use tokio_postgres::{Client, Transaction};
 
 pub type CaptureFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
@@ -108,6 +112,37 @@ impl Capture for DemoCapture {
     }
 }
 
+/// Shared registry service. Audit binds its capture once during installation;
+/// the historical demo adapter keeps the current increment runnable beforehand.
+#[derive(Default)]
+pub struct MutationBoundary {
+    capture: OnceLock<Arc<dyn Capture>>,
+}
+impl MutationBoundary {
+    pub fn bind_capture(&self, capture: Arc<dyn Capture>) -> bilibi_module_registry::Result<()> {
+        self.capture.set(capture).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate mutation capture binding".into(),
+            )
+        })
+    }
+    pub async fn begin<'a>(
+        &self,
+        client: &'a mut Client,
+        context: Context,
+    ) -> Result<MutationTransaction<'a>> {
+        MutationTransaction::begin_with(
+            client,
+            context,
+            self.capture
+                .get()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(DemoCapture)),
+        )
+        .await
+    }
+}
+
 #[must_use = "commit explicitly; dropping rolls back and discards callbacks"]
 pub struct MutationTransaction<'a> {
     tx: Transaction<'a>,
@@ -150,11 +185,13 @@ impl<'a> MutationTransaction<'a> {
             self.poisoned = true;
             return Err(Error::Invalid);
         }
+        // Cancellation while awaiting capture must also forbid commit.
+        self.poisoned = true;
         let result = self
             .capture
             .mutation(&self.tx, &self.context, &change)
             .await;
-        self.poisoned |= result.is_err();
+        self.poisoned = result.is_err();
         result
     }
     /// Prefer `mutate` for owner writes: an owner/capture error permanently
@@ -169,6 +206,9 @@ impl<'a> MutationTransaction<'a> {
         if self.poisoned {
             return Err(Error::Internal);
         }
+        // A timed-out/cancelled owner future may already have performed SQL.
+        // Leave the transaction poisoned until the write and capture finish.
+        self.poisoned = true;
         let result = write(&self.tx).await;
         match result {
             Ok((value, changes)) => {
@@ -176,6 +216,7 @@ impl<'a> MutationTransaction<'a> {
                     self.poisoned = true;
                     return Err(Error::Invalid);
                 }
+                self.poisoned = false;
                 for change in changes {
                     self.record(change).await?;
                 }

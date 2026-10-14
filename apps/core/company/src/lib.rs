@@ -1,7 +1,7 @@
 //! Tenant-scoped company reads and atomic, audited inline edits.
 mod contributions;
 
-use bilibi_database::{Change, Context, Db, Error, MutationTransaction, Result};
+use bilibi_database::{Change, Context, Db, Error, MutationBoundary, Result};
 use bilibi_notifications::NotificationBoundary;
 use bilibi_security::{authorize, guard, restrictions, Capability, Scope};
 use serde::{Deserialize, Serialize};
@@ -186,15 +186,17 @@ pub async fn save(
     token: &str,
     edit: &Edit,
     notifications: &NotificationBoundary,
+    mutations: &MutationBoundary,
 ) -> Result<()> {
     edit.validate()?;
     let mut client = db.get().await?;
     let scope = guard(&**client, token).await?;
-    let mut tx = MutationTransaction::begin(
-        &mut client,
-        Context::user(scope.tenant(), scope.user(), "company.update"),
-    )
-    .await?;
+    let mut tx = mutations
+        .begin(
+            &mut client,
+            Context::user(scope.tenant(), scope.user(), "company.update"),
+        )
+        .await?;
     let scope = guard(tx.sql(), token).await?;
     authorize(tx.sql(), &scope, Capability::CompaniesUpdate).await?;
     if restrictions(tx.sql(), &scope).await?.contains(&edit.field) {
@@ -230,16 +232,17 @@ pub mod web;
 pub struct CompanyService {
     db: Db,
     notifications: std::sync::Arc<NotificationBoundary>,
+    mutations: std::sync::Arc<MutationBoundary>,
 }
 impl CompanyService {
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
-        save(&self.db, token, edit, &self.notifications).await
+        save(&self.db, token, edit, &self.notifications, &self.mutations).await
     }
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
         dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids"],migrations:&[MIGRATION],
-        services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
+        services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
     }
 }

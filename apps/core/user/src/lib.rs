@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
-use bilibi_database::{Change, Context, Db, Error, MutationTransaction, Result};
+use bilibi_database::{Change, Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_security::{authorize, guard, Capability, Scope};
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -127,14 +127,20 @@ pub async fn saved_notification(
     .await
 }
 
-pub async fn mark_read(db: &Db, token: &str, notifications: &Notifications) -> Result<()> {
+pub async fn mark_read(
+    db: &Db,
+    token: &str,
+    notifications: &Notifications,
+    mutations: &MutationBoundary,
+) -> Result<()> {
     let mut client = db.get().await?;
     let scope = guard(&**client, token).await?;
-    let mut tx = MutationTransaction::begin(
-        &mut client,
-        Context::user(scope.tenant(), scope.user(), "notifications.mark_read"),
-    )
-    .await?;
+    let mut tx = mutations
+        .begin(
+            &mut client,
+            Context::user(scope.tenant(), scope.user(), "notifications.mark_read"),
+        )
+        .await?;
     let scope = guard(tx.sql(), token).await?;
     authorize(tx.sql(), &scope, Capability::NotificationsUpdate).await?;
     let rows = tx.sql().query("SELECT id FROM notifications WHERE tenant_id=$1 AND user_id=$2 AND read_at IS NULL FOR UPDATE", &[&scope.tenant(),&scope.user()]).await?;
@@ -171,6 +177,7 @@ pub async fn logout(db: &Db, token: &str, csrf: &str) -> Result<()> {
 pub struct UserService {
     pub db: Db,
     pub notifications: Notifications,
+    pub mutations: std::sync::Arc<MutationBoundary>,
 }
 inventory::submit! {
     bilibi_module_registry::Module {
@@ -179,7 +186,7 @@ inventory::submit! {
         services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
-            Ok(std::sync::Arc::new(UserService {db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
+            Ok(std::sync::Arc::new(UserService {mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications}))
         }}],
     }
 }
@@ -192,7 +199,7 @@ impl UserService {
         logout(&self.db, token, csrf).await
     }
     pub async fn mark_read(&self, token: &str) -> Result<()> {
-        mark_read(&self.db, token, &self.notifications).await
+        mark_read(&self.db, token, &self.notifications, &self.mutations).await
     }
 }
 
