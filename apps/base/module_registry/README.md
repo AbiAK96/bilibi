@@ -35,9 +35,11 @@ Company records through that sink inside the company transaction. User binds
 its adapter at boot, audits the notification inside the transaction, and emits
 the bell after commit. Do not import User from Company or import Core from Base.
 
-This slice registers existing Company routes and User's shell bell. It does not
-replace host dispatch or add a production seed runner; those consume these
-contracts in the following foundation slices. No unit tests are used.
+Company contributes its HTTP page routes, and User contributes the shell bell.
+Web binds route services through `bilibi_ui::page::PageService` and enforces
+access and framing before dispatch (see `apps/web/README.md`). Production seeds
+are executed by `bilibi_database::seeds` through the host's explicit command.
+No unit tests are used.
 
 Menu is the first consumer: `base/menu.items` carries `MenuItem` payloads (see
 `apps/base/menu/README.md`). PrincipalDirectory is bound through a service
