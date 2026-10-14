@@ -1,6 +1,7 @@
 //! Module-owned agent discovery and read dispatch. Production host adapters use
 //! this service; they must authenticate a fresh sealed Scope at every request.
 pub mod json;
+pub mod plans;
 pub mod reach;
 mod reference;
 pub mod schema;
@@ -50,6 +51,18 @@ pub enum Error {
     Forbidden,
     #[error("writes_not_enabled")]
     WritesNotEnabled,
+    #[error("invalid_plan_code")]
+    InvalidPlanCode,
+    #[error("plan_mismatch")]
+    PlanMismatch,
+    #[error("plan_already_used")]
+    PlanAlreadyUsed,
+    #[error("plan_expired")]
+    PlanExpired,
+    #[error("stale_plan")]
+    StalePlan,
+    #[error("plan_rejected")]
+    PlanRejected(Value),
     #[error("not_found")]
     NotFound,
     #[error(transparent)]
@@ -72,8 +85,10 @@ pub trait ReadHandler: Send + Sync {
         input: &'a Value,
     ) -> OperationFuture<'a>;
 }
-/// E2 owns plan orchestration. This trait ensures a supported write has both
-/// callbacks and shares the outer audited transaction on commit.
+/// Safe-write owners return deterministic review facts without business writes.
+/// Include versions/defaults/reference facts; commit must lock and revalidate
+/// them, enforce owner field policy, and record every mutation through the
+/// supplied transaction. Never open or commit a separate transaction.
 pub trait WriteHandler: Send + Sync {
     fn owner(&self) -> &'static str;
     fn preview<'a>(
@@ -434,6 +449,7 @@ impl Registry {
 inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|entries|Registry::from_entries(entries).map(|_|())) }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/agent_api",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy"], migrations:&[],
-    services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))}],
+    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
+    services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))},
+    bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?)))}],
 } }
