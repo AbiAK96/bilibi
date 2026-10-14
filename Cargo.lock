@@ -215,10 +215,14 @@ dependencies = [
 name = "bilibi-authz"
 version = "0.1.0"
 dependencies = [
+ "bilibi-audit",
  "bilibi-database",
+ "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-settings",
  "bilibi-tenancy",
  "inventory",
+ "serde_json",
  "tokio-postgres",
 ]
 

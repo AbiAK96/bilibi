@@ -5,6 +5,14 @@ async fn main() -> Result<()> {
     let db = pool(&url)?;
     match std::env::args().nth(1).as_deref() {
         Some("migrate") => bilibi_web::migrate(&db).await?,
+        Some("authz-reconcile") => {
+            let app = bilibi_web::App::new(db.clone(), "http://localhost")?;
+            app.services
+                .get::<bilibi_base::authz::grants::Grants>("base/authz.grants")?
+                .reconcile()
+                .await?;
+            println!("Authorization system roles reconciled");
+        }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;

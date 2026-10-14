@@ -11,3 +11,7 @@ tokio-postgres.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
+bilibi-audit.workspace = true
+serde_json.workspace = true
+bilibi-menu.workspace = true
+bilibi-settings = { path = "../settings" }

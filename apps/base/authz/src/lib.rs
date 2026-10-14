@@ -1,8 +1,18 @@
-//! Authorization decisions and field restrictions, independent of session lifecycle.
+//! Live authorization, immutable contributed vocabulary, and field withholding.
+pub mod fields;
+pub mod grants;
+pub mod vocabulary;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 use tokio_postgres::GenericClient;
+pub use vocabulary::{
+    CapabilityDefinition, RoleDefinition, SystemPrincipalDefinition, Vocabulary,
+    VocabularyContribution, VOCABULARY,
+};
 
 #[derive(Clone, Copy)]
 pub enum Capability {
@@ -23,8 +33,40 @@ impl Capability {
         }
     }
 }
-
-/// No cached grants. A decision is persisted for every allow and deny.
+/// Immutable deployment snapshot. Database grants/restrictions are never cached.
+pub fn vocabulary() -> Result<&'static Vocabulary> {
+    static SNAPSHOT: OnceLock<bilibi_module_registry::Result<Vocabulary>> = OnceLock::new();
+    SNAPSHOT
+        .get_or_init(Vocabulary::from_inventory)
+        .as_ref()
+        .map_err(|_| Error::Internal)
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Decision {
+    pub allowed: bool,
+    pub reason: &'static str,
+}
+impl Decision {
+    fn allow(reason: &'static str) -> Self {
+        Self {
+            allowed: true,
+            reason,
+        }
+    }
+    fn deny(reason: &'static str) -> Self {
+        Self {
+            allowed: false,
+            reason,
+        }
+    }
+    pub fn require(self) -> Result<()> {
+        if self.allowed {
+            Ok(())
+        } else {
+            Err(Error::Forbidden)
+        }
+    }
+}
 pub async fn authorize(
     client: &impl GenericClient,
     scope: &Scope,
@@ -32,35 +74,180 @@ pub async fn authorize(
 ) -> Result<()> {
     authorize_key(client, scope, capability.key()).await
 }
-
-/// String capability seam for contributed vocabulary (P6). No identity or
-/// relationship role is itself a grant.
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
+    decide(client, scope, key).await?.require()
+}
+/// Unknown keys, invalid live tenants, and non-operator platform requests deny
+/// before any grants (including grant_all) can take effect. Denials are logged.
+pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
-    let roles = client.query("SELECT r.id,r.grant_all FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2", &[&scope.tenant(),&scope.user()]).await?;
-    let direct = client.query_opt("SELECT is_allowed FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3", &[&scope.tenant(),&scope.user(),&key]).await?;
-    let direct = direct.map(|row| row.get::<_, bool>(0));
-    let mut granted = roles.iter().any(|row| row.get::<_, bool>(1));
-    if !granted && !roles.is_empty() {
-        let ids: Vec<i64> = roles.iter().map(|row| row.get(0)).collect();
-        granted = client.query_opt("SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=ANY($2) AND capability=$3 LIMIT 1", &[&scope.tenant(),&ids,&key]).await?.is_some();
+    let decision = match vocabulary()?.capabilities.get(key) {
+        None => Decision::deny("denied_unknown_capability"),
+        Some(cap) => {
+            let live = client
+                .query_opt(
+                    "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
+                    &[&scope.tenant()],
+                )
+                .await?
+                .is_some();
+            let operator = !cap.definition.platform || is_operator(client, scope.tenant()).await?;
+            if !live {
+                Decision::deny("denied_invalid_actor_context")
+            } else if !operator {
+                Decision::deny("denied_platform_scope")
+            } else {
+                let row = client.query_one("SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)",&[&scope.tenant(),&scope.user(),&key]).await?;
+                if row.get::<_, bool>(0) {
+                    Decision::deny("denied_explicitly")
+                } else if row.get::<_, bool>(1) {
+                    Decision::allow("direct_capability")
+                } else if row.get::<_, bool>(2) {
+                    Decision::allow("grant_all")
+                } else if row.get::<_, bool>(3) {
+                    Decision::allow("role_capability")
+                } else {
+                    Decision::deny("denied_missing_capability")
+                }
+            }
+        }
+    };
+    log(client, scope.tenant(), scope.user(), None, key, decision).await?;
+    Ok(decision)
+}
+async fn is_operator(client: &impl GenericClient, tenant: i64) -> Result<bool> {
+    Ok(client.query_opt("SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL",&[&tenant]).await?.is_some())
+}
+async fn log(
+    client: &impl GenericClient,
+    tenant: i64,
+    user: i64,
+    principal: Option<&str>,
+    key: &str,
+    decision: Decision,
+) -> Result<()> {
+    let kind = if user == 0 { "system" } else { "user" };
+    client.execute("INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)",&[&tenant,&user,&key,&decision.allowed,&decision.reason,&kind,&principal]).await?;
+    Ok(())
+}
+/// Trusted worker identity; not deserializable or usable as a user scope. It
+/// holds no roles, cannot administer grants, and gains nothing by declaration.
+#[derive(Clone, Debug)]
+pub struct SystemScope {
+    tenant: i64,
+    principal: Option<String>,
+}
+impl SystemScope {
+    pub fn tenant(&self) -> i64 {
+        self.tenant
     }
-    let allowed = (granted || direct == Some(true)) && direct != Some(false);
-    client.execute("INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed) VALUES($1,$2,$3,$4)", &[&scope.tenant(),&scope.user(),&key,&allowed]).await?;
-    if allowed {
-        Ok(())
-    } else {
-        Err(Error::Forbidden)
+    pub fn principal(&self) -> Option<&str> {
+        self.principal.as_deref()
+    }
+    /// Rehydrate persisted worker metadata at the trusted execution edge. Every
+    /// decision still checks the live tenant, declaration and durable grant.
+    pub async fn rehydrate(
+        client: &impl GenericClient,
+        tenant: i64,
+        principal: Option<&str>,
+    ) -> Result<Self> {
+        if client
+            .query_opt(
+                "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
+                &[&tenant],
+            )
+            .await?
+            .is_none()
+        {
+            return Err(Error::Unauthorized);
+        }
+        if principal
+            .is_some_and(|name| !vocabulary().is_ok_and(|v| v.system_principals.contains_key(name)))
+        {
+            return Err(Error::Forbidden);
+        }
+        Ok(Self {
+            tenant,
+            principal: principal.map(str::to_owned),
+        })
     }
 }
-
+pub async fn decide_system(
+    client: &impl GenericClient,
+    scope: &SystemScope,
+    key: &str,
+) -> Result<Decision> {
+    if key.is_empty() || key.len() > 200 {
+        return Err(Error::Invalid);
+    }
+    let vocab = vocabulary()?;
+    let live = client
+        .query_opt(
+            "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
+            &[&scope.tenant],
+        )
+        .await?
+        .is_some();
+    let d = if !live {
+        Decision::deny("denied_invalid_actor_context")
+    } else if !vocab.capabilities.contains_key(key) {
+        Decision::deny("denied_unknown_capability")
+    } else if scope.principal.is_none() {
+        Decision::deny("denied_no_principal")
+    } else if vocab.capabilities[key].definition.platform
+        && !is_operator(client, scope.tenant).await?
+    {
+        Decision::deny("denied_platform_scope")
+    } else if !vocab
+        .system_principals
+        .get(scope.principal().unwrap())
+        .is_some_and(|p| p.capabilities.contains(&key))
+    {
+        Decision::deny("denied_undeclared_capability")
+    } else {
+        match client.query_opt("SELECT is_allowed FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2 AND capability=$3",&[&scope.tenant,&scope.principal(),&key]).await?.map(|r|r.get::<_,bool>(0)) {
+            Some(true)=>Decision::allow("system_principal_grant"), Some(false)=>Decision::deny("denied_explicitly"),None=>Decision::deny("denied_missing_capability"),
+        }
+    };
+    log(client, scope.tenant, 0, scope.principal(), key, d).await?;
+    Ok(d)
+}
+pub async fn authorize_system(
+    client: &impl GenericClient,
+    scope: &SystemScope,
+    key: &str,
+) -> Result<()> {
+    decide_system(client, scope, key).await?.require()
+}
+/// Operator identity and capability are independent, logged requirements.
+pub async fn authorize_operator(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    key: &str,
+) -> Result<bilibi_tenancy::OperatorProof> {
+    if !is_operator(client, scope.tenant()).await? {
+        if key.is_empty() || key.len() > 200 {
+            return Err(Error::Invalid);
+        }
+        log(
+            client,
+            scope.tenant(),
+            scope.user(),
+            None,
+            key,
+            Decision::deny("denied_platform_scope"),
+        )
+        .await?;
+        return Err(Error::Forbidden);
+    }
+    authorize_key(client, scope, key).await?;
+    bilibi_tenancy::prove_operator(client, scope).await
+}
 pub async fn restrictions(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
     restrictions_for(client, scope, "companies").await
 }
-
-/// Every restricting role applies, even when a different role grants all.
 pub async fn restrictions_for(
     client: &impl GenericClient,
     scope: &Scope,
@@ -69,23 +256,21 @@ pub async fn restrictions_for(
     if table.is_empty() || table.len() > 200 {
         return Err(Error::Invalid);
     }
-    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3", &[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row| row.get(0)).collect())
+    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3",&[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row|row.get(0)).collect())
 }
+inventory::submit! { bilibi_module_registry::Module {
+    id:"base/authz",layer:bilibi_module_registry::Layer::Base,
+    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings"],
+    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql"))],
+    services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
+        services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+        services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,
+    ))) }, bilibi_module_registry::Service { id:"base/authz.seeds", factory:|services| Ok(Arc::new(bilibi_database::seeds::SeedService(services.get::<grants::Grants>("base/authz.grants")?))) }],
+} }
 
 inventory::submit! {
-    bilibi_module_registry::Module {
-        id:"base/authz",layer:bilibi_module_registry::Layer::Base,
-        dependencies:&["base/database","base/tenancy"],migrations:&[],services:&[],
-    }
-}
-
-/// Operator identity and a capability are independent requirements.
-pub async fn authorize_operator(
-    client: &(impl GenericClient + Sync),
-    scope: &Scope,
-    key: &str,
-) -> Result<bilibi_tenancy::OperatorProof> {
-    let proof = bilibi_tenancy::prove_operator(client, scope).await?;
-    authorize_key(client, scope, key).await?;
-    Ok(proof)
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::SEEDS,
+        "authz.roles.v1", bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
+        &bilibi_module_registry::contributions::Seed { version:"authz-system-roles-v1", mode:bilibi_module_registry::contributions::SeedMode::Production,
+            action:bilibi_module_registry::contributions::SeedAction::Service {service:"base/authz.seeds",operation:"reconcile"} })
 }
