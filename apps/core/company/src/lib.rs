@@ -61,6 +61,12 @@ pub struct Company {
     pub version: i64,
 }
 impl Company {
+    /// Organisation identity of this company, preserving existing record IDs.
+    /// The ID alone does not prove tenant ownership or authorization.
+    pub fn organisation_id(&self) -> Result<bilibi_party_ids::OrganisationId> {
+        bilibi_party_ids::OrganisationId::new(self.id).map_err(|_| Error::Invalid)
+    }
+
     fn from_row(row: &Row, masked: &HashSet<String>) -> Self {
         let read = |field: &str| {
             if masked.contains(field) {
@@ -247,7 +253,7 @@ impl CompanyService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications"],migrations:&[MIGRATION],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids"],migrations:&[MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/company.companies",factory:|services|Ok(std::sync::Arc::new(CompanyService {db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications:services.get::<NotificationBoundary>("base/notifications.sink")?}))}],
     }
 }

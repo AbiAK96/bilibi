@@ -1,7 +1,9 @@
 # Core party contract (K0)
 
 The authoritative Rust wire types are `src/lib.rs`, `src/dates.rs`, and
-`apps/base/party_ids/src/lib.rs`. Base holds only typed IDs so tenancy/authorization
+`apps/base/party_ids/src/lib.rs`. `schema.json` (also `INPUT_SCHEMAS`) publishes
+JSON Schema definitions for the four creation inputs; cross-field dates, UTF-8
+email byte limits and owner authorization require the Rust/owner checks. Base holds only typed IDs so tenancy/authorization
 can accept provider results without depending on Core. `core/party` publishes
 contracts; it installs no tables, seeds, services or routes. Consumers use these
 contracts rather than treating a Person ID as an account or employee ID.
@@ -70,7 +72,8 @@ Several affiliations per Person, including concurrent different organisations or
 positions, are valid. Do not enforce unique(person_id) or merge affiliations by
 contact/email. End/unlink retains history and account/Employment references.
 
-Relationship roles store stable tenant-local unique code, name, inverse_name,
+Relationship roles store stable tenant-local unique nonblank code (64 characters),
+nonblank name/inverse_name (160 characters),
 retired_on, version. Default codes: vendor (supplier synonym), customer, prospect,
 partner. No hardcoded default role numeric IDs. Seed/reconcile defaults by code
 within each tenant. `source → target: vendor` means target supplies source;
@@ -134,6 +137,9 @@ agents, user/employee links, integration and foreign keys need an explicit mappi
 | tenant 1, accounts 1..4 and 6; tenant 2, account 5 | existing account IDs and roles retained, Person link unset |
 | account 6, AI Agent | remains an account; future K7/K9 creates/links explicit agent Person |
 | Person/Affiliation/RelationshipRole/Relationship demo rows | none exist; do not invent mappings |
+
+`Company::organisation_id()` exposes the typed identity on existing Company
+read results without changing old route/edit contracts.
 
 This manifest describes the original deterministic demo, not a resolver for all
 companies. Production owner APIs resolve real records under Scope. K1 preserves

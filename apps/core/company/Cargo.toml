@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-party-ids = { path = "../../base/party_ids" }
 bilibi-database.workspace = true
 bilibi-security.workspace = true
 tokio-postgres.workspace = true

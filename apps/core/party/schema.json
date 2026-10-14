@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bilibi K0 Core party creation inputs",
+  "description": "Published contract only; not operation registration. Owner enforces scope, authorization, contact normalization, byte limits, references and business validation. Select the relevant $defs input via $ref.",
+  "$defs": {
+    "PersonId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "OrganisationId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "AffiliationId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "RelationshipRoleId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "RelationshipId": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "CalendarDate": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Gregorian date, years 0001..9999. Owner and Rust parser reject impossible dates."
+    },
+    "EffectiveDates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "effective_from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CalendarDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective_to": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CalendarDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "description": "Inclusive, nullable bounds. Rust and SQL enforce effective_from <= effective_to when both supplied."
+    },
+    "PartyId": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "organisation"
+            },
+            "id": {
+              "$ref": "#/$defs/OrganisationId"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "person"
+            },
+            "id": {
+              "$ref": "#/$defs/PersonId"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "PersonInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "kind": {
+          "enum": [
+            "human",
+            "agent"
+          ]
+        },
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 254
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ]
+    },
+    "AffiliationInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "person_id": {
+          "$ref": "#/$defs/PersonId"
+        },
+        "organisation_id": {
+          "$ref": "#/$defs/OrganisationId"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "work_email": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 254
+        },
+        "work_phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "dates": {
+          "$ref": "#/$defs/EffectiveDates"
+        }
+      },
+      "required": [
+        "person_id",
+        "organisation_id",
+        "dates"
+      ]
+    },
+    "RelationshipRoleInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "inverse_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "code",
+        "name",
+        "inverse_name"
+      ]
+    },
+    "RelationshipInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_organisation_id": {
+          "$ref": "#/$defs/OrganisationId"
+        },
+        "target": {
+          "$ref": "#/$defs/PartyId"
+        },
+        "role_id": {
+          "$ref": "#/$defs/RelationshipRoleId"
+        },
+        "dates": {
+          "$ref": "#/$defs/EffectiveDates"
+        }
+      },
+      "required": [
+        "source_organisation_id",
+        "target",
+        "role_id",
+        "dates"
+      ]
+    }
+  }
+}

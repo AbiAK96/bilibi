@@ -7,6 +7,9 @@ pub use bilibi_party_ids::{
 use serde::{Deserialize, Serialize};
 
 pub mod dates;
+/// JSON Schema definitions for owner operation registration; never authorization.
+pub const INPUT_SCHEMAS: &str = include_str!("../schema.json");
+
 pub mod demo;
 pub use dates::{CalendarDate, EffectiveDates};
 
