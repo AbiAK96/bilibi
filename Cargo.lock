@@ -236,6 +236,7 @@ dependencies = [
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-principal-directory",
+ "bilibi-queue",
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
@@ -378,6 +379,22 @@ dependencies = [
  "bilibi-tenancy",
  "inventory",
  "thiserror",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-queue"
+version = "0.1.0"
+dependencies = [
+ "bilibi-audit",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "inventory",
+ "serde_json",
+ "tokio",
  "tokio-postgres",
 ]
 
