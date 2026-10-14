@@ -15,6 +15,7 @@ bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }
 bilibi-grid = { path = "grid" }
 bilibi-locale = { path = "locale" }
+bilibi-mail = { path = "mail" }
 bilibi-media = { path = "media" }
 bilibi-menu = { path = "menu" }
 bilibi-module-registry = { path = "module_registry" }
