@@ -9,8 +9,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Store and serve files through `Media` (`base/media.store`, `README.md`), not hand-rolled `std::fs` writes or your own download handler: it owns the private-disk rules, libmagic type checks, tenant scoping and the signed route, and none of them can be bolted on afterwards.
 - Build stream headers with `StreamFile::delivery` (`src/response.rs`); only raster images may render inline, so never set `content-type` from stored metadata yourself.
 - A call that writes bytes takes a plain `&mut Client` because files and rows cannot share a rollback; use `register_original`/`register_derivative` inside your own `MutationTransaction` only for bytes you already placed.
-- Private attachment bytes must be registered with `NewAsset::private`; that flag alone keeps the generic stream, derivative and delete paths away from them.
-- Private files for your records come from a `Subject` contribution (`src/owner.rs`), which makes Media ask your `SubjectOwner` on every access; do not skip it by checking the asset id yourself.
+- Private files for your records go through `upload_attachment`/`submit_attachments`/`download_attachment` (`src/attachments.rs`), never `register_original` with `NewAsset::private`, a stored asset id or your own download route: only the attachment path rechecks the tenant and your `SubjectOwner` (a `Subject` contribution, `src/owner.rs`) on every access and keeps submitted evidence immutable.
+- Store the attachment ULID (`public_id`), not an asset id; call `submit_attachments` inside your own transaction so a rollback undoes the binding, and send bytes with `StreamFile::delivery(true)`.
 
 ## Maintaining this file
 

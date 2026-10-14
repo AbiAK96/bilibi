@@ -1,9 +1,10 @@
-# Media storage contract (M1)
+# Media storage contract
 
 `base/media` owns private asset storage: operator-mapped disks, asset metadata
-(`base_media_assets`), content-checked uploads, signed single-asset streams and
-the trusted subject-owner seam. Private attachment state, ULIDs and cleanup are
-M2; this crate leaves the seam they need (`NewAsset::private`, `SubjectOwner`).
+(`base_media_assets`), content-checked uploads, signed single-asset streams, the
+trusted subject-owner seam and private subject attachments
+(`base_media_attachments`: draft/submitted state, ULID public ids, owner-checked
+downloads and draft cleanup).
 
 Owners call `base/media.store` (`Media`) **after** authorizing their own
 workflow. Nothing here is a browser endpoint except the signed stream route the
@@ -64,8 +65,10 @@ Only JPEG, PNG, GIF and WebP render inline. Everything else is an
 build headers with `StreamFile::delivery`, never by hand. The Web host's
 default security headers only fill gaps, so these win.
 
-An asset in a tree containing a `private` row (a private attachment, M2) is
-refused by streams, derivatives, listing and deletion in either direction.
+An asset in a tree containing a `private` row (a private attachment) is refused
+by streams, derivatives, listing and deletion in either direction. The database
+backs this: a private asset is always a lone original, and no row may name a
+private asset as its parent.
 
 ## Subject owners
 
@@ -77,7 +80,63 @@ The owner resolves its live record and checks its own capability; unknown
 subjects have no access. Contributions from modules that do not depend on
 `base/media` fail at boot.
 
-## Manual walkthrough
+## Private attachments
+
+Attachments are files a user adds to *someone else's* record (a ticket photo, an
+expense receipt). Bytes are a `private` asset and the attachment row binds them
+to `(subject type, subject id)` with a state: `draft`, then `submitted`.
+`AttachmentSubject { kind, id }` names the record; `kind` is the key the owner
+contributed to `SUBJECTS` and `id` is the owner's own id, passed as text.
+
+| Call | Takes | What it does |
+|---|---|---|
+| `upload_attachment(&mut client, scope, subject, Upload, Rules)` | plain connection | Owner `Upload` check, size/libmagic/allowlist checks (`Rules` may only narrow `media.max_bytes` and `media.attachment_allowed_types`), private write to `media.attachment_disk`, owner `Upload` check again inside the registering transaction, then a draft with a fresh ULID. A failed registration deletes the file. |
+| `submit_attachments(&mut tx, scope, subject, ids)` | owner's `MutationTransaction` | Locks the rows in id order, requires every id to exist in this tenant and belong to this subject, asks the owner for `Submit`, then marks drafts submitted. Repeating it changes nothing and adds no audit row. |
+| `retain_drafts(&mut tx, scope, subject, ids)` | owner's `MutationTransaction` | Same checks with `Retain`; sets `retained_at` so cleanup spares the draft. Submitted rows pass through. |
+| `download_attachment(&client, scope, public_id)` | any client | Tenant-scoped lookup, owner `Download` check, then the bytes. Send them with `StreamFile::delivery(true)`: private files always download as `application/octet-stream`. |
+| `discard_draft(&mut client, scope, public_id)` | plain connection | Uploader only, drafts only, owner `Discard` check; commits the row deletions, then removes the file (`CleanupFailed` if it cannot). |
+| `cleanup_drafts(&mut client, tenant, older_than)` | plain connection | Trusted callers only. Removes that tenant's unretained drafts older than the age, re-locking and rechecking each. Attributed to system principal `media.attachments.cleanup`. |
+
+Every id is a request, never proof: a public id from another tenant is
+`NotFound`, malformed or lowercased ids are `NotFound`, and the owner is asked
+fresh on every call, so closing the record or revoking the capability stops the
+very next download. Impersonated sessions are refused for submit and retain
+because the row cannot name the operator. Submitted attachments have no delete
+or update path: the API refuses (`ImmutableAttachment`), a database trigger
+refuses raw writes, and the asset foreign key refuses removing the bytes.
+Audit records name the binding, never filename, key or bytes.
+
+`submit_attachments` and `retain_drafts` compose into the owner's business
+transaction, so a rollback undoes the binding. Everything that writes or removes
+bytes needs a plain connection, as in M1.
+
+The Web host serves `GET /media/attachments/{public_id}` for a signed-in
+session only (no session redirects to `/login`; not found and wrong tenant are
+404; an owner refusal is 403). It never uses signed links. Remove abandoned
+drafts for one tenant with the host command, which has no automatic schedule:
+
+    bilibi-web media-cleanup --tenant ID [--hours POSITIVE_INTEGER]   # default 24
+
+Photo cleanup (background removal and the like) is not part of this module.
+Per-owner adapters for Company and Person records follow K15.
+
+## Manual walkthroughs
+
+### Attachments
+
+`attachments-walkthrough` covers the attachment lifecycle; its fixture subject
+owner is the `walkthrough.ticket` rows in a `walkthrough_tickets` table the
+example creates in the disposable database. Run it like `media-walkthrough`
+below (adding `media.attachment_disk` is done for you); it prints outcomes for
+uploads, ULIDs, rejected files, tenant and owner rechecks, submit, retain,
+discard, immutability and audit, and finishes by printing ids. Then
+`-- serve` (with `APP_ORIGIN` and `BIND_ADDR`) runs the real host with the
+fixture owner registered: sign in with the seeded demo accounts and fetch
+`/media/attachments/{id}`, or change the ticket row with `psql` and watch the
+next request flip to 403. Backdated drafts can then be removed with
+`bilibi-web media-cleanup --tenant 1`.
+
+### Assets and subject owners
 
 On a disposable database run the host's `migrate` and `seed`. Set
 `DATABASE_URL`, `BILIBI_DISPOSABLE_MEDIA_DEMO=yes`, `BILIBI_MEDIA_SIGNING_KEY`

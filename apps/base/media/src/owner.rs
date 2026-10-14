@@ -1,6 +1,6 @@
 //! Trusted subject owners. A module that wants private files for its records
 //! contributes a `Subject` under a stable key; Media then asks that owner, with
-//! the caller's sealed scope, before every attachment operation (M2). Media
+//! the caller's sealed scope, before every attachment operation. Media
 //! never learns the owner's tables: the owner resolves its live record through
 //! its own public API and refuses missing, deleted or cross-tenant subjects.
 use crate::{Error, Result};

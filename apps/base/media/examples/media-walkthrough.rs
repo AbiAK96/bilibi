@@ -409,7 +409,8 @@ async fn main() -> DbResult<()> {
             .await
             .map(|d| d.len()),
     );
-    // Stand-in for M2: an owner registers bytes it placed itself, marked private.
+    // An owner registering bytes it placed itself, marked private (the attachment
+    // lifecycle does this for real; see attachments-walkthrough).
     let private_key = "tenants/1/private-evidence/receipt.txt";
     let evidence = format!("{root}/tenants/1/private-evidence");
     std::fs::create_dir_all(&evidence).map_err(|_| bilibi_database::Error::Internal)?;

@@ -1,4 +1,4 @@
-//! Private subject attachments (M2). A file a user uploads for a record of
+//! Private subject attachments. A file a user uploads for a record of
 //! someone else's module (an expense receipt, a ticket photo) lives as a
 //! `private` asset bound to a `(subject type, subject id)` by one attachment
 //! row: first a draft, then submitted evidence the owner keeps.

@@ -111,7 +111,8 @@ pub struct Asset {
 }
 /// Attributes an owner supplies when registering bytes it already produced.
 /// `private` marks the bytes of a private attachment: only the attachment
-/// lifecycle (M2) may set it, and it hides the whole tree from generic access.
+/// lifecycle (`attachments.rs`) should set it, and it hides the whole tree from
+/// generic access.
 #[derive(Clone, Debug, Default)]
 pub struct NewAsset {
     pub original_filename: Option<String>,
