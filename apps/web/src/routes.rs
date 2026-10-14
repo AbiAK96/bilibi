@@ -278,10 +278,14 @@ async fn dispatch(
 
 /// Resolve the same discovered GET routes as HTTP, with literal siblings first.
 pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, String>)> {
-    if !path.starts_with('/') || path.contains(['?', '#', '%', '\\']) || path.contains("//") {
+    if !path.starts_with('/')
+        || path.len() > 2048
+        || path.contains(['?', '#', '\\'])
+        || path.contains("//")
+    {
         return Err(Error::Invalid);
     }
-    let segments: Vec<_> = path.split('/').collect();
+    let segments: Vec<_> = path.split('/').map(decode_segment).collect::<Result<_>>()?;
     let mut matches = Vec::new();
     for bound in app.routes.iter().filter(|b| b.route.method == Method::Get) {
         let pattern: Vec<_> = bound.route.path.split('/').collect();
@@ -293,12 +297,12 @@ pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, Str
         let mut valid = true;
         for (pattern, value) in pattern.into_iter().zip(&segments) {
             if parameter(pattern) {
-                if value.is_empty() || [".", ".."].contains(value) {
+                if value.is_empty() || [".", ".."].contains(&value.as_str()) {
                     valid = false;
                     break;
                 }
-                params.insert(pattern[1..pattern.len() - 1].into(), (*value).into());
-            } else if pattern == *value {
+                params.insert(pattern[1..pattern.len() - 1].into(), value.clone());
+            } else if pattern == value {
                 specificity += 1;
             } else {
                 valid = false;
@@ -314,4 +318,29 @@ pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, Str
         .max_by_key(|(score, _, _)| *score)
         .map(|(_, bound, params)| (bound, params))
         .ok_or(Error::NotFound)
+}
+
+fn decode_segment(segment: &str) -> Result<String> {
+    let mut bytes = Vec::with_capacity(segment.len());
+    let mut input = segment.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = input
+                .next()
+                .and_then(|v| (v as char).to_digit(16))
+                .ok_or(Error::Invalid)?;
+            let low = input
+                .next()
+                .and_then(|v| (v as char).to_digit(16))
+                .ok_or(Error::Invalid)?;
+            bytes.push((high * 16 + low) as u8);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    let value = String::from_utf8(bytes).map_err(|_| Error::Invalid)?;
+    if value.contains(['/', '\\']) || value.chars().any(char::is_control) {
+        return Err(Error::Invalid);
+    }
+    Ok(value)
 }

@@ -75,7 +75,9 @@
         submittedField = null;
         if (message.clear) {
           if (message.target && message.target !== 'app' && message.target !== 'page' && message.target !== 'shell') {
-            document.getElementById(message.target)?.remove();
+            const placeholder = document.createElement('div');
+            placeholder.id = message.target;
+            document.getElementById(message.target)?.replaceWith(placeholder);
             return;
           }
           document.getElementById('app')?.remove();
