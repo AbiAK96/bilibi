@@ -190,14 +190,14 @@ impl Catalog {
             }
             Ok(())
         };
-        for entry in self.entries::<Route>(ROUTES)? {
+        for entry in self.entries.get(ROUTES).into_iter().flatten() {
             check(entry, entry.get::<Route>()?.service)?;
         }
-        for entry in self.entries::<Embed>(EMBEDS)? {
+        for entry in self.entries.get(EMBEDS).into_iter().flatten() {
             check(entry, entry.get::<Embed>()?.service)?;
         }
         let mut versions = BTreeSet::new();
-        for entry in self.entries::<Seed>(SEEDS)? {
+        for entry in self.entries.get(SEEDS).into_iter().flatten() {
             let seed = entry.get::<Seed>()?;
             if seed.version.is_empty() || !versions.insert(seed.version) {
                 return Err(invalid(format!(
