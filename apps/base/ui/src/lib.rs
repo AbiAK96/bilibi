@@ -1,5 +1,25 @@
-//! Shared compact ledger shell. Only server-rendered fragments may use `safe`.
+//! Shared UI: document/shell templates, the component primitives in
+//! `templates/components.html` with their typed models, the icon registry and
+//! the vendored asset allowlist. Only shared fragments may use `safe`.
 use askama::Template;
+
+// Lets the shared macro file name this crate's items as `bilibi_ui::...` from
+// inside the crate and from every importing module alike.
+extern crate self as bilibi_ui;
+
+pub mod components;
+mod html;
+pub mod icons;
+mod specimen;
+
+pub use components::{card_flat, card_pads, stat_strip_columns};
+pub use components::{
+    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
+    Fact, Facts, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
+    SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
+};
+pub use html::Html;
+pub use specimen::ComponentsSpecimen;
 
 #[derive(Template)]
 #[template(path = "shell.html")]

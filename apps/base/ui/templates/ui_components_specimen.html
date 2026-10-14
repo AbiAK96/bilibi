@@ -1,0 +1,111 @@
+{%- import "components.html" as ui -%}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi component specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"></head>
+<body class="bg-canvas text-ink"><main class="mx-auto max-w-5xl space-y-6 p-8">
+<header class="space-y-1"><h1 class="text-2xl font-semibold text-ink-strong">UI component specimen</h1><p class="text-sm text-ink-muted">Page, header, section heading, card, facts, stat strip, buttons, links, badges and icons</p></header>
+{% call ui::card(id="specimen-page", title="Page widths", inner_class="space-y-2 p-4") %}
+<div class="overflow-x-auto"><div class="w-[1280px] space-y-3">
+{% call ui::page(id="specimen-page-list", variant=PageVariant::List, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">List — wide for filters and tables</p>{% endcall %}
+{% call ui::page(id="specimen-page-detail", variant=PageVariant::Detail, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Detail — the list width, for a record or dashboard</p>{% endcall %}
+{% call ui::page(id="specimen-page-form", variant=PageVariant::Form, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Form — narrow for focused entry</p>{% endcall %}
+</div></div>
+<p class="text-xs text-ink-muted">Each variant is centered on a 1280px stage at full scale; scroll to follow the widest.</p>
+{% endcall %}
+{% call ui::card(id="specimen-header", title="Page header", inner_class="space-y-5 p-4") %}
+<div id="specimen-header-default"><p class="mb-2 text-xs text-ink-muted">Title, subtitle, and trailing action</p>
+{% call ui::header(subtitle="Manage identity and regional defaults.", actions=header_actions) %}Company settings{% endcall %}
+</div>
+<div id="specimen-header-title-action" class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Title action without a trailing action</p>
+{% call ui::header(title_actions=header_title_actions) %}Company details{% endcall %}
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-section-heading", title="Section heading", inner_class="space-y-5 p-4") %}
+<div><p class="mb-2 text-xs text-ink-muted">Title alone</p>
+{% call ui::section_heading(title="Company Details", class="mb-0") %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Count, title action, description and trailing action</p>
+{% call ui::section_heading(id="specimen-section-heading-location", title="Geographic Location", count=Some(4), class="mb-0", title_actions=section_title_actions, description="Country, division, postcode and locality depend on one another, so they are applied together.", actions=section_actions) %}{% endcall %}
+</div>
+{% endcall %}
+<div class="grid gap-3 lg:grid-cols-2">
+{% call ui::card(id="specimen-card", title="Card", inner_class="space-y-4 p-4") %}
+<div id="specimen-card-titled"><p class="mb-2 text-xs text-ink-muted">With a title</p>
+{{ card_titled }}
+</div>
+<div id="specimen-card-untitled"><p class="mb-2 text-xs text-ink-muted">Without a title</p>
+{{ card_untitled }}
+</div>
+<div id="specimen-card-flat"><p class="mb-2 text-xs text-ink-muted">Flat, framing a table</p>
+{{ card_flat }}
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-facts", title="Record facts", inner_class="space-y-4 px-4") %}
+<div id="specimen-facts-populated"><p class="mb-1 text-xs text-ink-muted">Facts for one record</p>
+{% call ui::facts() %}{% call ui::fact(title="Company") %}Acme Holdings{% endcall %}{% call ui::fact(title="Status") %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% endcall %}{% call ui::fact(title="Jurisdiction") %}Malaysia{% endcall %}{% endcall %}
+</div>
+<div id="specimen-facts-single" class="border-t border-line pt-3"><p class="mb-1 text-xs text-ink-muted">One fact</p>
+{% call ui::facts(id="specimen-facts-single-list") %}{% call ui::fact(title="Company", id="specimen-facts-company") %}Acme Holdings{% endcall %}{% endcall %}
+</div>
+{% endcall %}
+</div>
+{% call ui::card(id="specimen-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}
+<div><p class="mb-2 text-xs text-ink-muted">Linked strip with multiple numeric values</p>
+{% call ui::stat_strip(id="specimen-stat-linked", title="Workspace", href="/system/design-library/components", items=stats_linked) %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Read-only strip with one text value</p>
+{% call ui::stat_strip(id="specimen-stat-unlinked", title="Storage", items=stats_unlinked) %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Three values</p>
+{% call ui::stat_strip(id="specimen-stat-three", title="Companies", items=stats_three) %}{% endcall %}
+</div>
+{% endcall %}
+<div id="specimen-buttons" class="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::button() %}Secondary{% endcall %}{% call ui::button(variant=ButtonVariant::Primary) %}Primary{% endcall %}{% call ui::button(variant=ButtonVariant::Danger) %}Danger{% endcall %}{% call ui::button(disabled=true) %}Disabled{% endcall %}{% call ui::button(href="/system/design-library") %}Navigation{% endcall %}{% call ui::button(variant=ButtonVariant::Primary, busy=true) %}Saving…{% endcall %}
+</div>
+<div id="specimen-button-icons" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::button() %}{% call ui::icon(name="create") %}{% endcall %} Add{% endcall %}
+{% call ui::button() %}{% call ui::icon(name="edit") %}{% endcall %} Edit{% endcall %}
+{% call ui::button() %}{% call ui::icon(name="search") %}{% endcall %} Search{% endcall %}
+{% call ui::button(variant=ButtonVariant::Danger) %}{% call ui::icon(name="delete") %}{% endcall %} Delete{% endcall %}
+</div>
+{% call ui::card(id="specimen-icon-button", title="Compact icon actions", inner_class="p-4") %}
+<div class="flex flex-wrap items-center gap-4">
+<div class="flex items-center gap-2 text-sm text-ink-muted">Inline {% call ui::icon_button(icon="bilimbi-pin", label="Pin Design Library", context=IconContext::Inline) %}{% endcall %}</div>
+<div class="flex items-center gap-2 text-sm text-ink-muted">Table {% call ui::icon_button(icon="edit", label="Edit company") %}{% endcall %} {% call ui::icon_button(icon="delete", label="Delete company", kind=IconKind::Danger) %}{% endcall %}</div>
+<div class="flex items-center gap-2 text-sm text-ink-muted">Disabled {% call ui::icon_button(id="specimen-icon-button-disabled", icon="bilimbi-impersonate", label="Impersonate user", disabled=true) %}{% endcall %}</div>
+<div class="flex items-center gap-2 text-sm text-ink-muted">Busy {% call ui::icon_button(id="specimen-icon-button-busy", icon="export", label="Export companies", busy=true) %}{% endcall %}</div>
+<div class="flex items-center gap-2 text-sm text-ink-muted">Nav chrome {% call ui::icon_button(icon="bilimbi-pin", label="Pin a page", chrome=Chrome::Nav) %}{% endcall %}</div>
+<div class="flex items-center gap-2 text-sm text-ink-muted">Link {% call ui::icon_button(id="specimen-icon-button-link", icon="view", label="View company", href="/companies/1") %}{% endcall %}</div>
+</div>
+{% endcall %}
+<div class="grid gap-3 lg:grid-cols-2">
+{% call ui::card(id="specimen-back-link", title="Back link", inner_class="p-3") %}
+<p class="mb-2 text-xs text-ink-muted">Returning is a secondary action, so it is a plain link, never a button.</p>
+<div class="flex flex-wrap items-center gap-6">{% call ui::back_link(id="specimen-back-link-plain", href="/system/design-library") %}{% endcall %}{% call ui::back_link(id="specimen-back-link-titled", href="/system/design-library", title="Back to Design Library") %}{% endcall %}</div>
+{% endcall %}
+{% call ui::card(id="specimen-action-link", title="Action link", inner_class="p-3") %}
+<p class="mb-2 text-xs text-ink-muted">Reaching a related workflow is a secondary action, so it is a plain link, never a button.</p>
+<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
+{% endcall %}
+</div>
+<div id="specimen-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::badge() %}Archived{% endcall %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% call ui::badge(kind=BadgeKind::Warning) %}Pending{% endcall %}{% call ui::badge(kind=BadgeKind::Danger) %}Suspended{% endcall %}{% call ui::badge(dot=false) %}Manager{% endcall %}
+</div>
+<div id="specimen-create-button" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
+</div>
+<div id="specimen-icons" class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Bilimbi-specific icons</h3><div class="flex flex-wrap gap-5">
+<div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span></div><div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span></div>
+</div></div>
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Navigation</h3><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+<div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-building-office-2", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Companies</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-users", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Users</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-shield-check", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Authorization</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-cog-6-tooth", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">System</span></div>
+</div></div>
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Status</h3><div class="flex flex-wrap gap-5">
+<div class="flex items-center gap-2 text-success-ink">{% call ui::icon(name="success", class="size-5") %}{% endcall %}<span class="text-sm">Completed</span></div><div class="flex items-center gap-2 text-warning-ink">{% call ui::icon(name="warning", class="size-5") %}{% endcall %}<span class="text-sm">Attention</span></div><div class="flex items-center gap-2 text-danger-ink">{% call ui::icon(name="error", class="size-5") %}{% endcall %}<span class="text-sm">Failed</span></div><div class="flex items-center gap-2 text-ink-muted">{% call ui::icon(name="information", class="size-5") %}{% endcall %}<span class="text-sm">Information</span></div>
+</div></div>
+<div id="specimen-icon-variants" class="border-t border-line pt-4"><h3 class="mb-2 text-sm font-semibold text-ink">Icon treatments</h3><div class="flex flex-wrap items-end gap-6">
+<div class="text-center">{% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Outline — the default</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Solid</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Mini</p></div>
+</div></div>
+</div>
+</main></body></html>
