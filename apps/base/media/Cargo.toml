@@ -19,6 +19,7 @@ inventory.workspace = true
 hmac = "0.13.0"
 sha2 = "0.11.1"
 libc = "0.2.190"
+ulid = "3.0.0"
 
 [dev-dependencies]
 bilibi-base = { path = ".." }

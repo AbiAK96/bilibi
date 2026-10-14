@@ -1,5 +1,5 @@
-//! Media: private asset storage, content-checked uploads, signed streams and
-//! the trusted subject-owner seam. Owners call this API after authorizing their
+//! Media: private asset storage, content-checked uploads, signed streams, the
+//! trusted subject-owner seam and private subject attachments. Owners call this API after authorizing their
 //! own workflow; it is not a browser endpoint. Read `README.md` before use.
 //!
 //! Bytes live on operator-mapped private disks and metadata in
@@ -9,6 +9,7 @@
 //! write in a transaction they might roll back. `register_*` only records
 //! metadata for bytes an owner already produced, and composes into the owner's
 //! `MutationTransaction`.
+mod attachments;
 mod contributions;
 mod owner;
 mod response;
@@ -16,6 +17,7 @@ mod signing;
 mod storage;
 mod upload;
 
+pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup};
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
 pub use response::{Delivery, StreamFile};
 pub use signing::Signer;
@@ -80,6 +82,14 @@ pub enum Error {
     CleanupFailed,
     #[error("No registered owner for this subject")]
     UnknownSubject,
+    #[error("One or more attachments are unavailable")]
+    AttachmentUnavailable,
+    #[error("The attachments belong to a different subject")]
+    WrongSubject,
+    #[error("Submitted attachments cannot be changed or removed")]
+    ImmutableAttachment,
+    #[error("Only the uploader may discard a draft")]
+    NotUploader,
     #[error(transparent)]
     Database(#[from] bilibi_database::Error),
     #[error("Database unavailable")]
@@ -697,7 +707,10 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/audit", "base/database", "base/settings", "base/tenancy"],
-        migrations: &[("base-media-001", include_str!("../migrations/001-media.sql"))],
+        migrations: &[
+            ("base-media-001", include_str!("../migrations/001-media.sql")),
+            ("base-media-002", include_str!("../migrations/002-attachments.sql")),
+        ],
         services: &[Service { id: "base/media.store", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
             let catalog = Catalog::discover(&modules)?;
