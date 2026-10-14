@@ -22,3 +22,23 @@ pub async fn seed(db: &Db, password: &str) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
+
+/// Execute only module-contributed production seeds, in dependency order.
+pub async fn production(db: &Db) -> Result<()> {
+    let app = crate::App::new(db.clone(), "http://localhost")?;
+    let modules = crate::modules()?;
+    for run in
+        bilibi_database::seeds::run(db, &modules, app.services.catalog()?, &app.services).await?
+    {
+        println!(
+            "{} {}",
+            run.version,
+            if run.applied {
+                "applied"
+            } else {
+                "already applied"
+            }
+        );
+    }
+    Ok(())
+}

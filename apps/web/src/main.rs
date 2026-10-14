@@ -5,6 +5,7 @@ async fn main() -> Result<()> {
     let db = pool(&url)?;
     match std::env::args().nth(1).as_deref() {
         Some("migrate") => bilibi_web::migrate(&db).await?,
+        Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;
         }

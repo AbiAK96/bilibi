@@ -1,7 +1,12 @@
 //! Shared PostgreSQL pool, errors, migration runner, and transactional mutation capture.
+pub mod seeds;
+mod transaction;
+pub use transaction::{
+    Capture, CaptureFuture, Change, Context, DemoCapture, MutationTransaction, Principal,
+};
+
 use deadpool_postgres::{Manager, Pool};
-use serde_json::Value;
-use tokio_postgres::{GenericClient, NoTls};
+use tokio_postgres::NoTls;
 
 pub use deadpool_postgres::Pool as Db;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -24,6 +29,8 @@ pub enum Error {
     Pool(#[from] deadpool_postgres::PoolError),
     #[error(transparent)]
     Registry(#[from] bilibi_module_registry::RegistryError),
+    #[error("Applied production seed definition changed: {0}; publish a new version")]
+    SeedDefinition(String),
     #[error("Internal error")]
     Internal,
 }
@@ -65,28 +72,14 @@ pub async fn migrate(db: &Db, migrations: &[(&str, &str)]) -> Result<()> {
     Ok(())
 }
 
-pub struct Mutation<'a> {
-    pub tenant: i64,
-    pub actor: i64,
-    pub kind: &'a str,
-    pub id: i64,
-    pub old: Value,
-    pub new: Value,
-}
-
-/// Call only inside the transaction performing the corresponding business write.
-pub async fn audit(tx: &impl GenericClient, mutation: Mutation<'_>) -> Result<()> {
-    tx.execute("INSERT INTO audit_mutations(tenant_id,actor_id,auditable_type,auditable_id,old_values,new_values,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7)",
-        &[&mutation.tenant,&mutation.actor,&mutation.kind,&mutation.id,&mutation.old,&mutation.new,&uuid::Uuid::new_v4().to_string()]).await?;
-    Ok(())
-}
-
+// Frozen historical bootstrap: future tenancy/session/authz/audit migrations
+// belong to their owning module descriptors, never a replay of this version.
 pub const MIGRATION: (&str, &str) = ("001-base", include_str!("../migrations/001.sql"));
 
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/database", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry"], migrations: &[MIGRATION],
+        dependencies: &["base/module_registry"], migrations: &[MIGRATION, ("004-database-boundary", include_str!("../migrations/004-boundary.sql"))],
         services: &[bilibi_module_registry::Service {id:"base/database.pool", factory: |services| services.get::<Db>("bootstrap.database").map(|value|value as bilibi_module_registry::Value) }],
     }
 }

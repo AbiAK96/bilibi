@@ -1,19 +1,18 @@
 //! Notification boundary only: Core User owns persistence and delivery. A
 //! business owner records in its own transaction, then publishes after commit.
-use bilibi_database::Result;
+use bilibi_database::{MutationTransaction, Result};
 use bilibi_security::Scope;
 use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, OnceLock},
 };
-use tokio_postgres::Transaction;
 
 pub type RecordFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 pub trait NotificationSink: Send + Sync {
     fn record<'a>(
         &'a self,
-        tx: &'a Transaction<'_>,
+        tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         message: &'a str,
     ) -> RecordFuture<'a>;
@@ -39,11 +38,18 @@ impl NotificationBoundary {
             bilibi_module_registry::RegistryError::Service("unbound notification sink".into())
         })
     }
-    pub async fn record(&self, tx: &Transaction<'_>, scope: &Scope, message: &str) -> Result<()> {
-        self.sink()?.record(tx, scope, message).await
-    }
-    pub fn committed(&self, scope: &Scope) -> Result<()> {
-        self.sink()?.committed(scope);
+    pub async fn record(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        message: &str,
+    ) -> Result<()> {
+        let sink = self.sink.get().cloned().ok_or_else(|| {
+            bilibi_module_registry::RegistryError::Service("unbound notification sink".into())
+        })?;
+        sink.record(tx, scope, message).await?;
+        let scope = scope.clone();
+        tx.after_commit(move || sink.committed(&scope));
         Ok(())
     }
 }

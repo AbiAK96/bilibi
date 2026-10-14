@@ -1,7 +1,7 @@
 //! Tenant-scoped company reads and atomic, audited inline edits.
 mod contributions;
 
-use bilibi_database::{audit, Db, Error, Mutation, Result};
+use bilibi_database::{Change, Context, Db, Error, MutationTransaction, Result};
 use bilibi_notifications::NotificationBoundary;
 use bilibi_security::{authorize, guard, restrictions, Capability, Scope};
 use serde::{Deserialize, Serialize};
@@ -190,53 +190,39 @@ pub async fn save(
     edit.validate()?;
     let mut client = db.get().await?;
     let scope = guard(&**client, token).await?;
-    authorize(&**client, &scope, Capability::CompaniesUpdate).await?;
-    if restrictions(&**client, &scope).await?.contains(&edit.field) {
-        return Err(Error::Forbidden);
-    }
-    let tx = client.transaction().await?;
-    let row = tx.query_opt(&format!("SELECT {},version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",edit.field), &[&scope.tenant(),&edit.id]).await?.ok_or(Error::NotFound)?;
-    if row.get::<_, i64>(1) != edit.version {
-        return Err(Error::Conflict);
-    }
-    if row.get::<_, String>(2) == "archived" {
-        return Err(Error::Forbidden);
-    }
-    let (old, new) = if edit.field == "revenue" {
-        let value = edit.value.parse::<i64>().map_err(|_| Error::Invalid)?;
-        tx.execute(
-            "UPDATE companies SET revenue=$1,version=version+1 WHERE tenant_id=$2 AND id=$3",
-            &[&value, &scope.tenant(), &edit.id],
-        )
-        .await?;
-        (json!(row.get::<_, i64>(0)), json!(value))
-    } else {
-        tx.execute(
-            &format!(
-                "UPDATE companies SET {}=$1,version=version+1 WHERE tenant_id=$2 AND id=$3",
-                edit.field
-            ),
-            &[&edit.value, &scope.tenant(), &edit.id],
-        )
-        .await?;
-        (json!(row.get::<_, String>(0)), json!(edit.value))
-    };
-    audit(
-        &*tx,
-        Mutation {
-            tenant: scope.tenant(),
-            actor: scope.user(),
-            kind: "company",
-            id: edit.id,
-            old: json!({&edit.field:old}),
-            new: json!({&edit.field:new}),
-        },
+    let mut tx = MutationTransaction::begin(
+        &mut client,
+        Context::user(scope.tenant(), scope.user(), "company.update"),
     )
     .await?;
-    notifications.record(&tx, &scope, "Company updated").await?;
-    tx.commit().await?;
-    notifications.committed(&scope)?;
-    Ok(())
+    let scope = guard(tx.sql(), token).await?;
+    authorize(tx.sql(), &scope, Capability::CompaniesUpdate).await?;
+    if restrictions(tx.sql(), &scope).await?.contains(&edit.field) {
+        return Err(Error::Forbidden);
+    }
+    let id = edit.id;
+    let version = edit.version;
+    let field = edit.field.clone();
+    let value = edit.value.clone();
+    let tenant = scope.tenant();
+    tx.mutate(move |sql| Box::pin(async move {
+        let row = sql.query_opt(&format!("SELECT {},version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",field), &[&tenant,&id]).await?.ok_or(Error::NotFound)?;
+        if row.get::<_, i64>(1) != version { return Err(Error::Conflict); }
+        if row.get::<_, String>(2) == "archived" { return Err(Error::Forbidden); }
+        let (old, new) = if field == "revenue" {
+            let value = value.parse::<i64>().map_err(|_| Error::Invalid)?;
+            sql.execute("UPDATE companies SET revenue=$1,version=version+1 WHERE tenant_id=$2 AND id=$3", &[&value,&tenant,&id]).await?;
+            (json!(row.get::<_, i64>(0)), json!(value))
+        } else {
+            sql.execute(&format!("UPDATE companies SET {}=$1,version=version+1 WHERE tenant_id=$2 AND id=$3",field), &[&value,&tenant,&id]).await?;
+            (json!(row.get::<_, String>(0)), json!(value))
+        };
+        Ok(((), vec![Change { kind: "company".into(), id, old: json!({&field:old}), new: json!({&field:new}) }]))
+    })).await?;
+    notifications
+        .record(&mut tx, &scope, "Company updated")
+        .await?;
+    tx.commit().await
 }
 
 pub mod web;

@@ -5,7 +5,7 @@ use argon2::{
     password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
-use bilibi_database::{audit, Db, Error, Mutation, Result};
+use bilibi_database::{Change, Context, Db, Error, MutationTransaction, Result};
 use bilibi_security::{authorize, guard, Capability, Scope};
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -94,59 +94,62 @@ pub async fn unread(client: &impl GenericClient, scope: &Scope) -> Result<i64> {
 
 /// Used by a business transaction; the bell is published only after commit.
 pub async fn saved_notification(
-    tx: &impl GenericClient,
+    tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     message: &str,
 ) -> Result<()> {
-    let row = tx
-        .query_one(
+    if tx.context().tenant != scope.tenant()
+        || tx.context().actor.kind != "user"
+        || tx.context().actor.id != scope.user().to_string()
+    {
+        return Err(Error::Forbidden);
+    }
+    let tenant = scope.tenant();
+    let user = scope.user();
+    let message = message.to_owned();
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let row = sql.query_one(
             "INSERT INTO notifications(tenant_id,user_id,message) VALUES($1,$2,$3) RETURNING id",
-            &[&scope.tenant(), &scope.user(), &message],
-        )
-        .await?;
-    audit(
-        tx,
-        Mutation {
-            tenant: scope.tenant(),
-            actor: scope.user(),
-            kind: "notification",
-            id: row.get(0),
-            old: json!({}),
-            new: json!({"message":message}),
-        },
-    )
+            &[&tenant, &user, &message],
+        ).await?;
+            Ok((
+                (),
+                vec![Change {
+                    kind: "notification".into(),
+                    id: row.get(0),
+                    old: json!({}),
+                    new: json!({"message":message}),
+                }],
+            ))
+        })
+    })
     .await
 }
 
 pub async fn mark_read(db: &Db, token: &str, notifications: &Notifications) -> Result<()> {
     let mut client = db.get().await?;
     let scope = guard(&**client, token).await?;
-    authorize(&**client, &scope, Capability::NotificationsUpdate).await?;
-    let tx = client.transaction().await?;
-    let rows = tx.query("SELECT id FROM notifications WHERE tenant_id=$1 AND user_id=$2 AND read_at IS NULL FOR UPDATE", &[&scope.tenant(),&scope.user()]).await?;
+    let mut tx = MutationTransaction::begin(
+        &mut client,
+        Context::user(scope.tenant(), scope.user(), "notifications.mark_read"),
+    )
+    .await?;
+    let scope = guard(tx.sql(), token).await?;
+    authorize(tx.sql(), &scope, Capability::NotificationsUpdate).await?;
+    let rows = tx.sql().query("SELECT id FROM notifications WHERE tenant_id=$1 AND user_id=$2 AND read_at IS NULL FOR UPDATE", &[&scope.tenant(),&scope.user()]).await?;
     for row in rows {
         let id: i64 = row.get(0);
-        tx.execute(
-            "UPDATE notifications SET read_at=now() WHERE tenant_id=$1 AND user_id=$2 AND id=$3",
-            &[&scope.tenant(), &scope.user(), &id],
-        )
-        .await?;
-        audit(
-            &*tx,
-            Mutation {
-                tenant: scope.tenant(),
-                actor: scope.user(),
-                kind: "notification",
-                id,
-                old: json!({"read":false}),
-                new: json!({"read":true}),
-            },
-        )
-        .await?;
+        let tenant = scope.tenant();
+        let user = scope.user();
+        tx.mutate(move |sql| Box::pin(async move {
+            sql.execute("UPDATE notifications SET read_at=now() WHERE tenant_id=$1 AND user_id=$2 AND id=$3", &[&tenant,&user,&id]).await?;
+            Ok(((), vec![Change { kind: "notification".into(), id, old: json!({"read":false}), new: json!({"read":true}) }]))
+        })).await?;
     }
-    tx.commit().await?;
-    notifications.changed(&scope);
-    Ok(())
+    let notifications = notifications.clone();
+    tx.after_commit(move || notifications.changed(&scope));
+    tx.commit().await
 }
 
 pub async fn logout(db: &Db, token: &str, csrf: &str) -> Result<()> {
@@ -196,7 +199,7 @@ impl UserService {
 impl bilibi_notifications::NotificationSink for Notifications {
     fn record<'a>(
         &'a self,
-        tx: &'a tokio_postgres::Transaction<'_>,
+        tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         message: &'a str,
     ) -> bilibi_notifications::RecordFuture<'a> {
