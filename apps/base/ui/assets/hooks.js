@@ -19,10 +19,14 @@
       this.boxes = [...this.el.querySelectorAll("[data-code-index]")]
       this.length = Number(this.el.dataset.codeLength)
       this.normalize = value => value.toUpperCase().replace(/[\s-]/g, "").slice(0, this.length)
+      // Writes only what changed: the runtime reports a child mutation inside
+      // the control as an update, and rewriting an unchanged text node would
+      // report another.
       this.paint = () => {
         const active = Math.min(this.input.selectionStart ?? 0, this.length - 1)
         this.boxes.forEach((box, index) => {
-          box.textContent = this.input.value[index] || ""
+          const text = this.input.value[index] || ""
+          if (box.textContent !== text) box.textContent = text
           box.toggleAttribute("data-active", document.activeElement === this.input && index === active)
         })
       }
