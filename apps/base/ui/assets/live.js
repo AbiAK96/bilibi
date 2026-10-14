@@ -19,6 +19,7 @@
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
     socket.onopen = () => {
+      window.dispatchEvent(new CustomEvent('bilibi:connected'));
       if (reconnecting) { location.reload(); return; }
       retryDelay = 500;
       send({type:'mount', path: location.pathname, params: Object.fromEntries(new URLSearchParams(location.search))});
@@ -72,6 +73,8 @@
     socket.onclose = () => {
       pending = false;
       if (!document.getElementById('app')) return;
+      // The shared connection banners reveal themselves from this event.
+      window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: devReload ? 'server' : 'client'}}));
       if (!devReload) { feedback.textContent = 'Live connection closed. Reload to reconnect.'; return; }
       reconnecting = true;
       feedback.textContent = 'Rebuilding…';

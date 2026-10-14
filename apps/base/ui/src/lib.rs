@@ -1,5 +1,6 @@
 //! Shared UI: document/shell templates, the component primitives in
-//! `templates/components.html` with their typed models, the icon registry and
+//! `templates/components.html` with their typed models, the feedback, dialog
+//! and tab components (`feedback.rs`), the icon registry and
 //! the vendored asset allowlist. Only shared fragments may use `safe`.
 use askama::Template;
 pub mod page;
@@ -16,6 +17,8 @@ pub struct Framed<'a> {
 extern crate self as bilibi_ui;
 
 pub mod components;
+mod feedback;
+mod feedback_specimen;
 mod html;
 pub mod icons;
 mod specimen;
@@ -26,6 +29,11 @@ pub use components::{
     Fact, Facts, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
     SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
 };
+pub use feedback::{
+    Alert, ConfirmDialog, ConnectionBanners, Flash, FlashGroup, FlashMap, Modal, ModalWidth,
+    NoticeKind, PanelNotice, Revealed, StatusKind, Tab, Tabs, AUTO_DISMISS_MS, NO_FLASH,
+};
+pub use feedback_specimen::FeedbackSpecimen;
 pub use html::Html;
 pub use specimen::ComponentsSpecimen;
 
@@ -55,6 +63,8 @@ pub struct Login<'a> {
 
 pub const CSS: &str = include_str!("../assets/app.css");
 pub const JS: &str = include_str!("../assets/live.js");
+/// The hook controllers of the feedback, dialog and tab components.
+pub const UI_JS: &str = include_str!("../assets/ui.js");
 
 /// Vendored public assets. Keep this allowlist bounded: never resolve a
 /// request path on disk, and never make font loading depend on authentication.
@@ -80,6 +90,10 @@ pub fn static_asset(name: &str) -> Option<StaticAsset> {
         "ui-specimen.html" => (
             "text/html; charset=utf-8",
             include_bytes!("../assets/static/ui-specimen.html"),
+        ),
+        "ui-feedback-demo.js" => (
+            "text/javascript",
+            include_bytes!("../assets/static/ui-feedback-demo.js"),
         ),
         "favicon.svg" => (
             "image/svg+xml",

@@ -1,0 +1,54 @@
+{#- Feedback: flash, the connection banners, the flash group, inline alert and
+    panel notice. Classes, ARIA and anatomy mirror Bilimbi
+    apps/base/ui/lib/ui/components.ex (`flash`, `connection_banners`, `alert`,
+    `panel_notice`) and layouts.ex (`flash_group`) at the pinned source. The
+    browser half is assets/ui.js: [data-flash] dismisses on click,
+    data-hook="FlashAutoDismiss" times a success out, and [data-connection]
+    banners reveal on bilibi:disconnected. Typed kinds live in src/feedback.rs. -#}
+{% import "components.html" as c %}
+
+{#- One page-level message; nothing renders while message is empty. Clicking it
+    dismisses it and raises clear-flash with data-value-key. spinner adds the
+    reconnecting arrow; connection ("client" | "server") binds it to the drop. -#}
+{% macro flash(kind, id="", title="", message="", spinner=false, hidden=false, auto_dismiss=false, connection="") %}
+{%- if !message.is_empty() -%}
+<div id="{% if id.is_empty() %}flash-{{ kind.name() }}{% else %}{{ id }}{% endif %}" data-flash data-event="clear-flash" data-value-key="{{ kind.name() }}" role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="w-full"{% if hidden %} hidden{% endif %}{% if !connection.is_empty() %} data-connection="{{ connection }}"{% endif %}{% if auto_dismiss %} data-hook="FlashAutoDismiss" data-auto-dismiss-ms="{{ bilibi_ui::AUTO_DISMISS_MS }}"{% endif %}><div class="flex items-start gap-3 rounded-2xl border p-4 text-sm shadow-xl shadow-ink/[0.08] backdrop-blur {{ kind.flash_class() }}">{% call c::icon(name=kind.icon(), class="size-5 shrink-0") %}{% endcall %}<div>{% if !title.is_empty() %}<p class="font-semibold">{{ title }}</p>{% endif %}<p>{{ message }}{% if spinner %}{% call c::icon(name="hero-arrow-path", class="ml-1 size-3 animate-spin") %}{% endcall %}{% endif %}</p></div><div class="flex-1"></div><button type="button" class="group self-start cursor-pointer" aria-label="close">{% call c::icon(name="close", class="size-5 opacity-40 group-hover:opacity-70") %}{% endcall %}</button></div></div>
+{%- endif -%}
+{% endmacro %}
+
+{#- The two banners for one container, hidden until the browser reveals them.
+    Both ids derive from id. revealed renders only that banner, already shown
+    and bound to no connection event, for presentation. An open modal dialog
+    makes the page behind inert, so modal renders a pair of its own. -#}
+{% macro connection_banners(id, revealed=bilibi_ui::Revealed::None) %}
+{%- if !revealed.is_server() -%}
+{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-client-error"|format(id), title="Connection interrupted", message="Reconnecting…", hidden=!revealed.is_client(), connection=revealed.binding("client")) %}{% endcall %}
+{%- endif -%}
+{%- if !revealed.is_client() -%}
+{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-server-error"|format(id), title="Server unavailable", message="Attempting to reconnect", spinner=true, hidden=!revealed.is_server(), connection=revealed.binding("server")) %}{% endcall %}
+{%- endif -%}
+{% endmacro %}
+
+{#- The layout's flash outlet: a permanent polite live region stacking the
+    messages most severe first. Only a success times out. -#}
+{% macro flash_group(id="flash-group", messages=bilibi_ui::NO_FLASH) %}
+<div id="{{ id }}" aria-live="polite" class="fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+{% call flash(kind=bilibi_ui::StatusKind::Error, message=messages.error) %}{% endcall %}
+{% call flash(kind=bilibi_ui::StatusKind::Warning, message=messages.warning) %}{% endcall %}
+{% call flash(kind=bilibi_ui::StatusKind::Success, message=messages.success, auto_dismiss=true) %}{% endcall %}
+{% call flash(kind=bilibi_ui::StatusKind::Info, message=messages.info) %}{% endcall %}
+{% call connection_banners(id="connection") %}{% endcall %}
+</div>
+{% endmacro %}
+
+{#- An inline status alert. -#}
+{% macro alert(kind=bilibi_ui::StatusKind::Info, id="", class="") %}
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm {{ kind.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0">{{ caller() }}</div></div>
+{% endmacro %}
+
+{#- A panel's outcome notice: what the last action on a panel did, above its
+    table or inside its open dialog. The Dismiss control raises dismiss_event. -#}
+{% macro panel_notice(id, kind=bilibi_ui::NoticeKind::Info, dismiss_event="", class="") %}
+{%- let status = kind.status() -%}
+<div id="{{ id }}" role="{{ status.role() }}" aria-live="{{ status.live() }}" data-kind="{{ status.name() }}" class="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm {{ status.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=status.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1">{{ caller() }}</span>{% call c::icon_button(id="{}-dismiss"|format(id), icon="close", label="Dismiss notice", context=bilibi_ui::IconContext::Inline, class="-my-0.5", event=dismiss_event) %}{% endcall %}</div>
+{% endmacro %}

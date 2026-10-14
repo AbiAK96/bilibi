@@ -1,0 +1,25 @@
+{#- Tab strip for sibling views of one page; mirrors Bilimbi
+    apps/base/ui/lib/ui/components.ex `tabs` at the pinned source. The labels
+    stay on one line and what does not fit scrolls inside the strip: the strip's
+    inline size ignores its labels (contain-inline-size), and data-hook="TabStrip"
+    in assets/ui.js shows an edge control only while a tab sits outside it. A tab
+    with an href is a link; one without is a button that raises its event with
+    data-value-tab. Horizontal overflow makes the other axis auto in CSS, so
+    overflow-y is clipped: the tab underline overlaps the border by 1px. -#}
+{% import "components.html" as c %}
+
+{% macro tabs(id, items, label="", class="") %}
+<nav id="{{ id }}"{% if !label.is_empty() %} aria-label="{{ label }}"{% endif %} class="relative w-full min-w-0 max-w-full contain-inline-size{% if !class.is_empty() %} {{ class }}{% endif %}" data-hook="TabStrip">
+<div id="{{ id }}-scroller" data-tab-scroller class="flex w-full min-w-0 max-w-full flex-nowrap gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-px-8 border-b border-line [scrollbar-width:thin]">
+{%- for tab in items -%}
+{%- if !tab.href.is_empty() -%}
+<a href="{{ tab.href }}"{% if !tab.id.is_empty() %} id="{{ tab.id }}"{% endif %} data-tab class="{{ tab.class() }}"{% if tab.current %} aria-current="page"{% endif %}>{{ tab.label|safe }}</a>
+{%- else -%}
+<button type="button"{% if !tab.id.is_empty() %} id="{{ tab.id }}"{% endif %} data-tab class="{{ tab.class() }}"{% if tab.current %} aria-current="page"{% endif %}{% if !tab.event.is_empty() %} data-event="{{ tab.event }}"{% endif %}{% if !tab.value.is_empty() %} data-value-tab="{{ tab.value }}"{% endif %}>{{ tab.label|safe }}</button>
+{%- endif -%}
+{%- endfor -%}
+</div>
+<button type="button" id="{{ id }}-scroll-start" data-tab-scroll="start" tabindex="-1" hidden aria-label="Show earlier tabs" class="absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="hero-chevron-left", class="size-4") %}{% endcall %}</button>
+<button type="button" id="{{ id }}-scroll-end" data-tab-scroll="end" tabindex="-1" hidden aria-label="Show later tabs" class="absolute top-1/2 right-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="hero-chevron-right", class="size-4") %}{% endcall %}</button>
+</nav>
+{% endmacro %}

@@ -274,10 +274,11 @@ impl Badge<'_> {
 
 /// A button, or the same control as a link when `href` is set. `busy` renders
 /// `aria-busy` and disables the control; a link ignores it. `event` is the
-/// browser adapter's `data-event` name.
+/// browser adapter's `data-event` name; `working` is the label the browser
+/// shows while the click's round trip is in flight.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, event=event) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, event=event, working=working) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Button<'a> {
@@ -291,6 +292,7 @@ pub struct Button<'a> {
     pub disabled: bool,
     pub busy: bool,
     pub event: &'a str,
+    pub working: &'a str,
     pub body: Html,
 }
 

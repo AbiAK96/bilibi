@@ -101,6 +101,20 @@ pub fn router(app: App) -> Router {
             get(|| async { asset_response("ui-specimen.html") }),
         )
         .route("/assets/ui-components.html", get(components_specimen))
+        .route("/assets/ui-feedback.html", get(feedback_specimen))
+        .route(
+            "/assets/ui-feedback-demo.js",
+            get(|| async { asset_response("ui-feedback-demo.js") }),
+        )
+        .route(
+            "/assets/ui.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    bilibi_ui::UI_JS,
+                )
+            }),
+        )
         .route(
             "/favicon.svg",
             get(|| async { asset_response("favicon.svg") }),
@@ -137,6 +151,12 @@ pub fn router(app: App) -> Router {
 async fn components_specimen() -> std::result::Result<Html<String>, HttpError> {
     let specimen = bilibi_ui::ComponentsSpecimen::new().map_err(|_| Error::Internal)?;
     Ok(Html(render(specimen)?))
+}
+
+/// The feedback, dialog and tab specimen: the screenshot baseline for those
+/// components, served beside the primitives specimen.
+async fn feedback_specimen() -> std::result::Result<Html<String>, HttpError> {
+    Ok(Html(render(bilibi_ui::FeedbackSpecimen::new())?))
 }
 
 fn asset_response(name: &str) -> Response {

@@ -13,6 +13,14 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Name icons through `src/icons.rs` action names (`"edit"`, `"manage"`) or `hero-*`; an unregistered name panics on purpose, and names from stored data pass `icons::renderable` first.
 - `/assets/ui-components.html` (`src/specimen.rs`) is the screenshot baseline for every primitive and variant; extend it when a primitive or variant is added, and keep its content mirrored in the Bilimbi reference renderer kept with the task evidence, not in this repo.
 
+## Feedback, dialogs and tabs
+
+- Use `templates/feedback.html` (flash, `flash_group`, `connection_banners`, `alert`, `panel_notice`), `templates/dialog.html` (`modal`, `confirm_dialog`) and `templates/tabs.html` (`tabs`), or their typed models in `src/feedback.rs`, not hand-written `<dialog>`, banner or tab markup: the DOM mirrors Bilimbi `components.ex`, and `assets/css/app.css` selectors (`body:has(dialog:modal[data-owns-flash])`, the `#connection-*` ids) depend on it.
+- Never use `window.confirm` or a `data-confirm` attribute; an irreversible action renders `ConfirmDialog` while its request is pending and stops rendering it whatever the outcome. The server owns whether a dialog exists, so Escape and Cancel only raise the cancel event.
+- Browser behaviour is `assets/ui.js`: a component names its controller with `data-hook`, and a controller reports intent with a bubbling `bilibi:event` CustomEvent (`detail.event` plus values), which the transport turns into a server event. The transport reports the socket with `bilibi:disconnected` (`detail.kind` `client`/`server`) and `bilibi:connected` on `window`; new controllers register with `BilibiUI.registerHook`. Do not ship Phoenix hooks (`pushEvent`, `mounted`-only lifecycles) unchanged.
+- Pick a message kind by what it does: a completed write is `Success` (times out), a refusal or failure is `Error`, `Info` informs without confirming a write; only success carries auto-dismiss.
+- `/assets/ui-feedback.html` (`src/feedback_specimen.rs`) is the screenshot baseline for these; its `static/ui-feedback-demo.js` stands in for the server, so extend both when adding a variant.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

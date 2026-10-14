@@ -1,0 +1,39 @@
+{#- Dialogs: modal and confirm_dialog. Anatomy, classes and ARIA mirror Bilimbi
+    apps/base/ui/lib/ui/components.ex (`modal`, `confirm_dialog`) at the pinned
+    source. The server decides whether a dialog exists; assets/ui.js promotes
+    each [data-hook="Modal"] to a real modal on insertion (top layer, inert page,
+    focus containment), raises data-cancel on Escape, and returns focus to the
+    opener once the server removes it. Typed variants live in src/feedback.rs. -#}
+{% import "components.html" as c %}
+{% import "feedback.html" as f %}
+
+{#- The dialog is the rounded surface and never scrolls; #<id>-body inside it
+    does, so a scrollbar never squares off the rounded corners. owns_flash marks
+    a dialog that renders the page's flash itself (the layout copy is hidden by
+    app.css while it is open). role is "alertdialog" for a confirmation. -#}
+{% macro modal(id, title, cancel_event, width=bilibi_ui::ModalWidth::Narrow, description="", role="", owns_flash=false, messages=bilibi_ui::NO_FLASH) %}
+<dialog id="{{ id }}" open data-hook="Modal" data-cancel="{{ cancel_event }}"{% if owns_flash %} data-owns-flash="true"{% endif %} aria-modal="true" aria-labelledby="{{ id }}-title"{% if !description.is_empty() %} aria-describedby="{{ id }}-description"{% endif %} tabindex="-1"{% if !role.is_empty() %} role="{{ role }}"{% endif %} class="mx-auto mt-16 mb-4 max-h-[calc(100%-5rem)] w-[calc(100%-2rem)] flex-col overflow-hidden open:flex rounded-xl border border-line bg-surface py-3 text-ink shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 backdrop:bg-ink/40 {{ width.class() }}">
+<div id="{{ id }}-body" class="min-h-0 overflow-y-auto px-6 py-3"><h2 id="{{ id }}-title" class="text-lg font-medium tracking-tight text-ink-strong">{{ title }}</h2>
+{%- if owns_flash -%}
+{% call f::flash(kind=bilibi_ui::StatusKind::Error, id="{}-flash-error"|format(id), message=messages.error) %}{% endcall %}
+{% call f::flash(kind=bilibi_ui::StatusKind::Info, id="{}-flash-info"|format(id), message=messages.info) %}{% endcall %}
+{%- endif -%}
+{% call f::connection_banners(id=id) %}{% endcall %}
+{%- if !description.is_empty() -%}
+<p id="{{ id }}-description" class="mt-1 text-xs text-ink-subtle">{{ description }}</p>
+{%- endif -%}
+{{ caller() }}</div></dialog>
+{% endmacro %}
+
+{#- A confirmation that leads with the consequence. Two actions only: Cancel
+    first (it takes focus; Enter, Escape and Cancel all keep the data), then a
+    calm danger confirm named by the verb alone. working is the confirm's label
+    while the round trip is in flight. -#}
+{% macro confirm_dialog(id, consequence, detail, confirm, working, confirm_event, cancel_event) %}
+{% call modal(id=id, title=consequence, cancel_event=cancel_event, width=bilibi_ui::ModalWidth::Compact, description=detail, role="alertdialog") %}
+<div class="mt-5 flex flex-wrap justify-end gap-2">
+{% call c::button(id="{}-cancel"|format(id), button_type="button", event=cancel_event) %}Cancel{% endcall %}
+{% call c::button(id="{}-confirm"|format(id), button_type="button", variant=bilibi_ui::ButtonVariant::Danger, event=confirm_event, working=working) %}{{ confirm }}{% endcall %}
+</div>
+{% endcall %}
+{% endmacro %}
