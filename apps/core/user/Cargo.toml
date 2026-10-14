@@ -1,0 +1,18 @@
+[package]
+name = "bilibi-user"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+bilibi-security.workspace = true
+tokio-postgres.workspace = true
+tokio.workspace = true
+argon2.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+rand_core = { version = "0.6", features = ["getrandom"] }
+bilibi-module-registry.workspace = true
+inventory.workspace = true

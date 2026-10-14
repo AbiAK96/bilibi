@@ -1,0 +1,3 @@
+[alias]
+# The executable is useful directly once scripts/start-app.sh has prepared HTTPS.
+server = "run -p bilibi-web -- run"

@@ -1,0 +1,15 @@
+[package]
+name = "bilibi-database"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+deadpool-postgres.workspace = true
+tokio-postgres.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+bilibi-module-registry.workspace = true
+inventory.workspace = true

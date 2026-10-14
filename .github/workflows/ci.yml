@@ -1,0 +1,36 @@
+name: Rust
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bilibi
+          POSTGRES_PASSWORD: bilibi
+          POSTGRES_DB: bilibi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bilibi -d bilibi_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: python3 scripts/discover-modules.py --check
+      - run: python3 scripts/test-dev.py
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked

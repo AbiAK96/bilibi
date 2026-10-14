@@ -1,0 +1,33 @@
+[workspace]
+members = ["apps/base", "apps/core", "apps/domains", "apps/extensions", "apps/web"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+license = "MIT"
+
+[workspace.dependencies]
+axum = { version = "0.8", features = ["ws", "form"] }
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+deadpool-postgres = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+argon2 = "0.5"
+askama = "0.14"
+bilibi-database = { path = "apps/base/database" }
+bilibi-security = { path = "apps/base/security" }
+bilibi-ui = { path = "apps/base/ui" }
+bilibi-user = { path = "apps/core/user" }
+bilibi-company = { path = "apps/core/company" }
+
+inventory = "0.3"
+bilibi-module-registry = { path = "apps/base/module_registry" }
+bilibi-base = { path = "apps/base" }
+bilibi-core = { path = "apps/core" }
+bilibi-domains = { path = "apps/domains" }
+bilibi-extensions = { path = "apps/extensions" }
