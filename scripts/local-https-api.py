@@ -126,13 +126,43 @@ def allowed_clients():
     return clients
 
 
+def report_missing_certificate_files(config, servers):
+    certificates = config.get("load_files", [])
+    hosts_by_tag = {}
+    for server in servers.values():
+        for policy in server.get("tls_connection_policies", []):
+            hosts = (policy.get("match") or {}).get("sni", [])
+            tags = (policy.get("certificate_selection") or {}).get("any_tag", [])
+            for tag in tags:
+                hosts_by_tag.setdefault(tag, set()).update(hosts)
+
+    missing = []
+    for certificate in certificates:
+        absent = [
+            path for path in (certificate.get("certificate"), certificate.get("key"))
+            if path and not Path(path).is_file()
+        ]
+        if absent:
+            hosts = sorted({
+                host
+                for tag in certificate.get("tags", [])
+                for host in hosts_by_tag.get(tag, set())
+            })
+            label = ", ".join(hosts) if hosts else ", ".join(certificate.get("tags", [])) or "unknown site"
+            missing.append(f"{label}: {', '.join(absent)}")
+    if missing:
+        print("Caddy config references missing certificate files; HTTPS may not reload: " + "; ".join(missing), file=sys.stderr)
+
+
 def main():
     if len(sys.argv) != 5:
         raise RuntimeError("usage: local-https-api.py HOST PORT CERTIFICATE KEY")
     host, requested_port = sys.argv[1], int(sys.argv[2])
     certificate = Path(sys.argv[3]).read_text()
     private_key = Path(sys.argv[4]).read_text()
+    tls_config = request("GET", "/config/apps/tls/certificates") or {}
     config = request("GET", "/config/apps/http/servers")
+    report_missing_certificate_files(tls_config, config)
     candidates = [
         (name, server)
         for name, server in config.items()
@@ -204,7 +234,7 @@ def main():
         "terminal": True,
     }
     if own_route is None:
-        request("POST", server_path + "/routes", [route_config])
+        request("POST", server_path + "/routes", route_config)
     else:
         request("PATCH", "/id/" + quote(ROUTE_ID, safe=""), route_config)
     print(port)
