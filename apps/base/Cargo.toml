@@ -12,6 +12,7 @@ bilibi-authz = { path = "authz" }
 bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }
 bilibi-locale = { path = "locale" }
+bilibi-media = { path = "media" }
 bilibi-menu = { path = "menu" }
 bilibi-module-registry = { path = "module_registry" }
 bilibi-notifications = { path = "notifications" }

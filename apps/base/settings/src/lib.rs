@@ -237,6 +237,29 @@ impl Settings {
             .remove(key)
             .ok_or(Error::Internal)
     }
+    /// Ambient read of one non-secret, global-scope value for consumers that
+    /// have no session, such as signed links and workers. Encrypted definitions,
+    /// runtime claims and keys that cannot hold a global value refuse: a secret
+    /// needs an explicit, authorized `get`.
+    pub async fn get_global(
+        &self,
+        client: &(impl GenericClient + Sync),
+        key: &str,
+    ) -> Result<Value> {
+        let definition = match self.definitions.lookup(key)?.setting {
+            Setting::Definition(d) if !d.encrypted && d.scopes.contains(&ScopeKind::Global) => d,
+            _ => return Err(Error::Invalid),
+        };
+        let row = client.query_opt("SELECT value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=0 AND scope_type='global' AND scope_id=0", &[&key]).await?;
+        let Some(row) = row else {
+            return Ok((definition.default)());
+        };
+        let value: Value = row.get("value");
+        if row.get::<_, bool>("is_encrypted") || definition.validate(&value).is_err() {
+            return Err(Error::Invalid);
+        }
+        Ok(value)
+    }
     /// The caller owns the surrounding transaction. Missing/invalid encryption
     /// keys refuse the write before SQL; secret values never enter audit data.
     pub async fn put(

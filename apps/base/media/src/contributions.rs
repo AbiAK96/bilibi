@@ -1,0 +1,53 @@
+//! Operator settings Media owns (Administration → Settings → Operator, P3).
+use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
+use serde_json::{json, Value};
+
+const MANAGE: &str = "admin.system.media.manage";
+macro_rules! provenance {
+    () => {
+        Provenance {
+            module: "base/media",
+            source: file!(),
+            line: line!(),
+        }
+    };
+}
+const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
+const ALLOWED: [&str; 11] = [
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+    "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+];
+
+inventory::submit! { Contribution::new(DEFINITIONS, "media.disks", provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Array, scopes: GLOBAL, default: || json!({}), nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value| value.as_object().is_some_and(|disks| disks.len() <= 64 && disks.iter().all(|(name, root)| !name.is_empty() && name.len() <= 255 && name != "external" && root.as_str().is_some_and(|root| root.starts_with('/') && root.len() <= 1024))), message: "Map each disk name (not \"external\") to an absolute directory path" }),
+    editor: Some(Editor { group: "Media", label: "Media storage disks", help: "JSON object of disk names and existing absolute private directories. Roots must have permissions 0700 and remain stable while their assets exist.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_disk", provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!("local"), nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value| value.as_str().is_some_and(|disk| !disk.is_empty() && disk.len() <= 255 && disk != "external"), message: "Name a configured disk" }),
+    editor: Some(Editor { group: "Media", label: "Private attachment disk", help: "Configured disk used for new attachments.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, "media.max_bytes", provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(10_485_760), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(536_870_912.0), validator: None,
+    editor: Some(Editor { group: "Media", label: "Maximum upload bytes", help: "Maximum size of new media uploads and attachments, up to 512 MiB.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_allowed_types", provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Array, scopes: GLOBAL, default: || Value::from(ALLOWED.to_vec()), nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value| value.as_array().is_some_and(|types| types.len() <= 200 && types.iter().all(|kind| kind.as_str().is_some_and(|kind| kind.len() <= 255 && kind.contains('/')))), message: "Provide a JSON array of MIME types" }),
+    editor: Some(Editor { group: "Media", label: "Attachment file types", help: "JSON array of allowed detected MIME types. Active markup is always refused.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, "media.stream_ttl_seconds", provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(300), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(86_400.0), validator: None,
+    editor: Some(Editor { group: "Media", label: "Asset link lifetime", help: "Seconds a newly issued signed asset stream link remains valid.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }

@@ -231,6 +231,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-locale",
+ "bilibi-media",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",
@@ -321,6 +322,27 @@ dependencies = [
  "inventory",
  "serde_json",
  "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-media"
+version = "0.1.0"
+dependencies = [
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "hmac",
+ "inventory",
+ "libc",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]

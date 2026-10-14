@@ -1,0 +1,25 @@
+[package]
+name = "bilibi-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-settings = { path = "../settings" }
+bilibi-tenancy = { path = "../tenancy" }
+tokio-postgres.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+inventory.workspace = true
+hmac = "0.13.0"
+sha2 = "0.11.1"
+libc = "0.2.190"
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }

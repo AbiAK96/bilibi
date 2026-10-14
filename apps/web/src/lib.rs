@@ -1,4 +1,5 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+mod media;
 mod routes;
 use askama::Template;
 use axum::{
@@ -95,6 +96,7 @@ pub fn router(app: App) -> Router {
         .route("/login", get(login_page).post(login))
         .route("/logout", post(logout))
         .route("/live", get(upgrade))
+        .route(media::STREAM, get(media::stream))
         .route("/fonts/{name}", get(font_asset))
         .route(
             "/assets/ui-specimen.html",
@@ -170,6 +172,8 @@ async fn font_asset(Path(name): Path<String>) -> Response {
     asset_response(&name)
 }
 
+/// Defaults only: a handler that sets its own policy, as signed media streams
+/// do with a sandboxing CSP, keeps it.
 async fn response_headers(request: axum::extract::Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     for (key,value) in [
@@ -177,7 +181,7 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
         ("x-content-type-options","nosniff"),
         ("referrer-policy","same-origin"),
         ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'none'"),
-    ] { response.headers_mut().insert(axum::http::HeaderName::from_static(key),HeaderValue::from_static(value)); }
+    ] { response.headers_mut().entry(axum::http::HeaderName::from_static(key)).or_insert(HeaderValue::from_static(value)); }
     response
 }
 
