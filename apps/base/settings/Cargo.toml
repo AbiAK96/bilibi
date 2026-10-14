@@ -1,0 +1,21 @@
+[package]
+name = "bilibi-settings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-tenancy = { path = "../tenancy" }
+bilibi-party-ids = { path = "../party_ids" }
+tokio-postgres.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+inventory.workspace = true
+aes-gcm = { version = "0.11.1", features = ["zeroize"] }
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
