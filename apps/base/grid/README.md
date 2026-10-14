@@ -1,11 +1,11 @@
-# Grid catalog (G1)
+# Grid catalog and page projections (G1–G2)
 
 Grid owns flexible columns on list pages: the catalog every module declares its
 tables into, the paths a person walks through it to pick columns without writing
-a join, and (in later slices) the one statement that answers them for the rows a
+a join, and the one projection statement that answers them for the rows a
 list already shows. It has no page of its own. G1 is the catalog, the scoped view
-of it, and the bounded column-path parser. Query/rollups (G2), lenses (G3) and
-per-page arrangement (G4, including the `ui.grid.page_columns` setting) build on it.
+of it, and the bounded column-path parser. Query/rollups are implemented by G2; lenses (G3) and
+per-page arrangement (G4, including the `ui.grid.page_columns` setting) build on these contracts.
 
 ## Contributing a table
 
@@ -97,3 +97,56 @@ direct deny, platform gating and role revocation; resolves valid and refused pat
 revoked live) and shows a stale restriction on a protected field is inert; runs
 the source with `$1` for two tenants; and installs deliberately defective
 contributions to show discovery refuses each. It removes what it added.
+
+## Page projections (G2)
+
+Call `bilibi_grid::project(&db, &scope, "reference_items", &ids, &specs)` after
+paging through the owner's list API. IDs are JSON number/string values; specs
+are paths such as `group.name` or `movements.delta:sum`. Do not build SQL or pass
+previously resolved `Column`s: `project` builds a fresh catalog and resolves specs
+in its own read-only, repeatable-read transaction. Owner sources on the root,
+every link target and every edge receive the same tenant/user bindings. The host
+still validates the live session/actor before calling the module API.
+
+The result has resolved typed `columns`, page-ordered `rows` (`key` plus `cells`
+keyed by column DOM id), and PostgreSQL's `estimated_cost`. Duplicate IDs/specs
+collapse in first-seen order; missing and unauthorized roots disappear. IDs are
+cast to the server-described native key type, preserving indexed lookups and
+supporting bigint, UUID and text owners without request-derived SQL identifiers.
+Numbers and booleans remain JSON numbers and booleans. Dates/datetimes are ISO
+strings paired with the column's `FieldType`. Missing fields are JSON null;
+counts over empty paths are zero; other empty aggregates are null. `latest`
+orders by date descending, null dates last, then key descending for stable ties.
+`list` sorts distinct text values and caps the cell at 300 characters.
+
+Each column uses a correlated scalar subquery rather than multiplying root rows
+across independent many-links. One-links enforce at-most-one visible target:
+a broken declaration fails the whole read, including inside aggregates. Edges
+use set membership so duplicate edge pairs cannot inflate counts. Tail one-links
+retain a many row whose target is absent, matching LEFT JOIN semantics.
+
+Bounds are 100 page IDs (each scalar at most 256 encoded bytes), 32 input specs,
+128 total hops and the G1 parser's depth/length limits. An `EXPLAIN (FORMAT JSON)`
+checks total estimated cost against 100,000 before the projection executes.
+Every statement runs with a transaction-local 2-second statement timeout and
+500ms lock timeout; commit/rollback restores the pooled connection's settings.
+The estimate is an admission check, not a promise about runtime; the timeout is
+the execution backstop. Owners must still index their sources and join keys.
+
+The query returns typed `QueryError`s and converts to the shared database error
+for page handlers. It does not sort/filter walked columns, scan a whole table for
+lens ranges, persist layouts or provide monthly lens series (G3/G4).
+
+Run the live projection walkthrough against a **disposable** migrated/seeded
+PostgreSQL database:
+
+```sh
+BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g2-grid
+```
+
+It replaces the non-business reference fixture, prints real projections for all
+seven aggregates, one-links, many-links and tails, two actor scopes, cross-tenant
+IDs and an empty group; applies/revokes restrictions and grants; exercises scoped
+edges and global text keys; then demonstrates cardinality refusal, input bounds,
+cost rejection, timeout and a successful projection after failure. It removes its
+reference rows on success. No unit tests or test runner are involved.

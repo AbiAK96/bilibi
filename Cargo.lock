@@ -343,6 +343,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-tenancy",
  "inventory",
+ "serde_json",
  "tokio-postgres",
 ]
 

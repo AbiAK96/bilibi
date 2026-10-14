@@ -1,11 +1,12 @@
-//! Grid catalog (G1): the tables, fields, links and sources every module declares,
-//! the scoped catalog an account may read, and the bounded column-path parser.
-//! There is no Grid page. Query, lenses and persisted arrangements build on this
-//! catalog in later slices; see `README.md`.
+//! Grid table/field/link catalog, scoped paths and bounded page projections.
+//! There is no Grid page. Lenses and persisted arrangements build on this
+//! contract; see `README.md`.
 pub mod catalog;
 pub mod column;
 pub mod model;
+pub mod query;
 mod reference;
+pub use query::{project, Projection, QueryError, Row};
 
 use bilibi_module_registry::{Consumer, Layer, Module, RegistryError, Result};
 use std::sync::OnceLock;
