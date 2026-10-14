@@ -54,3 +54,20 @@ rollbacks publish nothing, and other processes read committed changes directly.
 subscribers must reload. Cross-process consumers can LISTEN on
 `bilibi_settings_changed`; PostgreSQL releases those identity-only notifications
 at commit. These notifications are refresh hints, not a durable work queue.
+
+## Manual walkthrough
+
+On a disposable database, run the host's `migrate` and `seed` commands first.
+Explicitly appoint fixture tenant 1 with
+`INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1)`; the
+production migration deliberately appoints nobody. Set `DATABASE_URL`,
+`BILIBI_DISPOSABLE_SETTINGS_DEMO=yes`, and a specimen `BILIBI_SETTINGS_KEY`, then
+run `cargo run -p bilibi-settings --locked --example settings-walkthrough`.
+The command prints inheritance, override/delete fallback, own-transaction reads,
+rollback/commit notifications, ciphertext metadata, invalid-key/type refusals,
+company-provider revocation, tenant isolation, and nonoperator refusal. It uses
+only `walkthrough.*` keys and never prints the stored secret. It binds its own
+fixture-only Company proof provider; there is no production Company binding.
+Run again with `-- inspect` to read persisted state from a separate process.
+This is an opt-in service demonstration, with no test harness or assertions.
+The example's contributions are linked only into the example executable.

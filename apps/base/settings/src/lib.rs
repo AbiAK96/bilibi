@@ -317,14 +317,25 @@ impl Settings {
                 &[&lock],
             )
             .await?;
-        if stored.is_none() && tx.sql().query_opt(
-            "SELECT id FROM base_settings WHERE key=$1 AND tenant_id=$2 AND scope_type=$3 AND scope_id=$4",
+        let previous = tx.sql().query_opt(
+            "SELECT id,value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=$2 AND scope_type=$3 AND scope_id=$4 FOR UPDATE",
             &[&key,&scope.tenant,&scope.kind.as_str(),&scope.id],
-        ).await?.is_none() {
+        ).await?;
+        if stored.is_none() && previous.is_none() {
             return Ok(());
         }
+        // A syntactically valid but wrong key must not overwrite an existing
+        // secret. Authenticate old ciphertext before replacing it. Delete
+        // deliberately remains available without the key.
+        if stored.is_some() {
+            if let Some(row) = &previous {
+                if encrypted || row.get::<_, bool>("is_encrypted") {
+                    self.decode(&key, scope, row, encrypted)?;
+                }
+            }
+        }
         tx.mutate(move |sql| Box::pin(async move {
-            let old = sql.query_opt("SELECT id,value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=$2 AND scope_type=$3 AND scope_id=$4 FOR UPDATE", &[&key,&scope.tenant,&scope.kind.as_str(),&scope.id]).await?;
+            let old = previous;
             let old_audit = old.as_ref().map(|row| audit_value(&key,scope,&row.get("value"),encrypted || row.get::<_,bool>("is_encrypted"))).unwrap_or(Value::Null);
             let (id,new_audit) = if let Some(stored) = stored {
                 let row = sql.query_one("INSERT INTO base_settings(key,tenant_id,scope_type,scope_id,value,is_encrypted) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(key,tenant_id,scope_type,scope_id) DO UPDATE SET value=excluded.value,is_encrypted=excluded.is_encrypted,updated_at=now() RETURNING id", &[&key,&scope.tenant,&scope.kind.as_str(),&scope.id,&stored,&encrypted]).await?;
