@@ -17,6 +17,23 @@ async fn main() -> Result<()> {
         Some("seed") => {
             bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;
         }
+        Some("media-cleanup") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            let parsed: Option<(i64, u64)> =
+                match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+                    ["--tenant", tenant] => tenant.parse().ok().map(|tenant| (tenant, 24)),
+                    ["--tenant", tenant, "--hours", hours] => {
+                        tenant.parse().ok().zip(hours.parse().ok())
+                    }
+                    _ => None,
+                };
+            let Some((tenant, hours)) = parsed.filter(|(tenant, hours)| *tenant > 0 && *hours > 0)
+            else {
+                eprintln!("usage: bilibi-web media-cleanup --tenant ID [--hours POSITIVE_INTEGER]");
+                return Err(Error::Invalid);
+            };
+            bilibi_web::media_cleanup(&db, tenant, hours).await?;
+        }
         None | Some("run") => {
             let origin =
                 std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());

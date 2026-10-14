@@ -90,6 +90,11 @@ pub async fn migrate(db: &Db) -> Result<()> {
     bilibi_database::migrate(db, &migrations).await
 }
 
+/// `media-cleanup` command: one tenant's abandoned private attachment drafts.
+pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
+    media::cleanup(db, tenant, hours).await
+}
+
 pub fn router(app: App) -> Router {
     routes::install(Router::new(), &app.routes)
         .route("/", get(|| async { Redirect::to("/companies") }))
@@ -97,6 +102,7 @@ pub fn router(app: App) -> Router {
         .route("/logout", post(logout))
         .route("/live", get(upgrade))
         .route(media::STREAM, get(media::stream))
+        .route(media::ATTACHMENT, get(media::attachment))
         .route("/fonts/{name}", get(font_asset))
         .route(
             "/assets/ui-specimen.html",

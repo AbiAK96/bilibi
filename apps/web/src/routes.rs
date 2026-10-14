@@ -42,6 +42,7 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             "/favicon.ico",
             "/assets/{name}",
             crate::media::STREAM,
+            crate::media::ATTACHMENT,
         ] {
             if intersects(route.path, reserved) {
                 return Err(invalid(format!(
