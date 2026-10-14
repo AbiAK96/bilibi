@@ -165,26 +165,14 @@ bootstrap and the explicit demo seed/migration commands are the exceptions.
 
 ## Checks
 
-Use a disposable PostgreSQL database: integration tests create and remove an
-isolated schema for each test. They require `TEST_DATABASE_URL` and fail if it
-is absent, rather than silently skipping database checks.
+Bilibi has no unit tests. The checks are the compiler, Clippy and running the app.
 
 ```sh
-export TEST_DATABASE_URL='postgres://bilibi:bilibi@localhost:5433/bilibi'
 python3 scripts/discover-modules.py --check
-python3 scripts/test-dev.py
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo build --workspace --release --locked
 ```
-
-Tests execute PostgreSQL, real HTTP and WebSockets, including allow/deny logs,
-tenant isolation, direct-deny precedence, multi-role redaction, revoked live
-permissions/sessions, pagination/search/sort, escaped HTML, CSRF/Origin checks,
-concurrent saves, audit-failure rollback and user-scoped bell pushes. Registry
-tests prove discovery/service initialization, dependency ordering and invalid-graph
-refusal. The launcher checks exercise module discovery and build/watch
-orchestration. GitHub Actions runs the same checks with a PostgreSQL 18 service.
 
 ## Left out
 
