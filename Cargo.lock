@@ -333,6 +333,7 @@ name = "bilibi-media"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
  "bilibi-database",

@@ -707,7 +707,7 @@ fn safe_external_url(url: &str) -> bool {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/audit", "base/database", "base/settings", "base/tenancy"],
+        dependencies: &["base/audit", "base/authz", "base/database", "base/settings", "base/tenancy"],
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),

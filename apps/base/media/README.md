@@ -12,7 +12,7 @@ Web host mounts at `/media/assets/{id}/stream`.
 
 ## Operator setup
 
-Settings (global scope, editor group Media, capability
+Settings (global scope, editor group Media, platform capability
 `admin.system.media.manage`): `media.disks` maps durable disk names to existing
 absolute directories with mode `0700`, not under a `static`, `public` or
 `assets` path and with no symlink anywhere in the path. `media.max_bytes`

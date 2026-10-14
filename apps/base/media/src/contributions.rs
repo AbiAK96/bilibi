@@ -1,4 +1,5 @@
 //! Operator settings Media owns (Administration → Settings → Operator, P3).
+use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
 use serde_json::{json, Value};
@@ -13,6 +14,15 @@ macro_rules! provenance {
         }
     };
 }
+// Operator settings are platform-only: a grant alone is not enough, the
+// persistent operator identity is required too.
+inventory::submit! { Contribution::new(VOCABULARY, "base/media", provenance!(), &VocabularyContribution {
+    capabilities: &[CapabilityDefinition::platform(MANAGE)],
+    domains: &[],
+    verbs: &[],
+    roles: &[],
+    system_principals: &[],
+}) }
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 const ALLOWED: [&str; 11] = [
     "application/pdf",
