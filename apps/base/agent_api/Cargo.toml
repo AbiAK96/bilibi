@@ -1,0 +1,25 @@
+[package]
+name = "bilibi-agent-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-module-registry.workspace = true
+bilibi-database.workspace = true
+bilibi-authz = { path = "../authz" }
+bilibi-tenancy = { path = "../tenancy" }
+bilibi-settings = { path = "../settings" }
+inventory.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio-postgres.workspace = true
+thiserror.workspace = true
+jiff = "0.2.38"
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
+bilibi-web = { path = "../../web" }
+tokio.workspace = true
