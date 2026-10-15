@@ -64,8 +64,18 @@ pub enum ColumnsOutcome {
 }
 impl ListColumns {
     pub fn mount(id: &str, builtins: Vec<BuiltinColumn>) -> Result<Self, SpecError> {
-        if id.is_empty() || builtins.is_empty() || builtins.len() > 64 {
-            return Err(SpecError("a list needs an id and 1..=64 built-in columns"));
+        Self::bounded(id, builtins, 64)
+    }
+    /// SQL result projections may be wider than an operational list. Keep the
+    /// same arrangement and event contract, with a separate bounded vocabulary.
+    pub fn projection(id: &str, builtins: Vec<BuiltinColumn>) -> Result<Self, SpecError> {
+        Self::bounded(id, builtins, 2048)
+    }
+    fn bounded(id: &str, builtins: Vec<BuiltinColumn>, limit: usize) -> Result<Self, SpecError> {
+        if id.is_empty() || builtins.is_empty() || builtins.len() > limit {
+            return Err(SpecError(
+                "a list needs an id and bounded, nonempty built-in columns",
+            ));
         }
         let mut ids = Vec::new();
         for col in &builtins {
