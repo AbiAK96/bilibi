@@ -250,14 +250,26 @@ History rows are append-only (a trigger refuses UPDATE and DELETE). A transition
 fact's `tat` is the whole seconds since the subject's latest earlier fact that is
 not a `record_comment`; it is null on a first transition and on recorded
 facts. `history(scope, kind, id, after, limit)` returns a keyset page ordered by
-id with `limit` in 1..=500 and `next_cursor` when more rows exist.
+id with `limit` in 1..=500 and `next_cursor` when more rows exist; each fact's
+`transitioned_at` is RFC 3339 UTC, so a page renders it through its display
+context without depending on a session time zone.
+
+`pending_work(scope, &PendingQuery)` is the bounded worklist (Bilimbi
+`Workflow.pending_work/2`): at most `limit` (1..=500) due `available` items of
+running runs in the actor's tenant, narrowed by `subject(kind, id)`, `run_id`,
+`definition_key` or `executor_keys` (an empty set lists nothing), ordered by
+priority, availability and id with a keyset `next_cursor`. Candidates are chosen
+without locks and each run is then read through its owner proof, so owner policy
+may hide some of a page while the cursor still advances; it is a worklist, not an
+owner workbench count, and execution repeats every check.
 
 ## Running proof (no unit tests)
 
 Use an explicitly disposable PostgreSQL database, never the normal development
 database. Migrate and seed the app fixture, then run the private owner example.
 It links a reference subject, guard, action and flow that production never
-contributes.
+contributes (`examples/reference/mod.rs`, shared with the Web fixture
+executable `apps/web/examples/w7-workflow-reference.rs`).
 
 ```sh
 export DATABASE_URL='postgres://.../disposable'
@@ -406,6 +418,60 @@ write rolls back) and `cancel` (the transition future is dropped mid-action and
 the outer commit is refused). Repeat `show` and `history` after each refusal to
 confirm nothing was written. Running `init` again changes nothing.
 
+
+## Reference page and owner integration
+
+`/workflow/reference/{id}` (`src/web.rs`, `templates/reference.html`) is the
+generic action, pending-work and history adapter ported from Bilimbi's
+`ReferenceLive`, and the pattern an owner screen follows:
+
+- Read through the facade only: `available_actions` (the subject version and
+  the offered entries), `history` and `pending_work` narrowed to the subject.
+  The page never queries the owner table, Workflow tables or the request log.
+- Render each offered entry as a form that echoes the `ActionRequest` fields:
+  the action key, the work item for a work-bound entry and an idempotency key
+  the server issued for that rendering (`reference:<uuid>`). The actor, tenant,
+  capability and versions are never client values; the mounted state supplies
+  `expected_subject_version` and `for_entry` the work binding it was shown.
+- Submit through `execute_action` and reload from the facade on success. Map
+  the kernel's refusals to the page's copy (`Failure` in `src/web.rs`): a
+  `Conflict` is "This record changed. Refresh the page and try again.", a
+  `Forbidden` is "Your role does not allow this action.", an entry no longer in
+  the rendered list is "That action is no longer available. Refresh the page.",
+  and a `NotFound`/unregistered subject is "This record is not available."
+  Only `Unauthorized` propagates, so the host clears the page.
+- Two submissions of one rendering (a double-click, a resend after a reconnect)
+  carry the same key: the second replays the first result and the owner effect
+  happens once. A submission against versions another session moved conflicts.
+- The two lists are `ListColumns` over built-in columns through the shared
+  `FlexTable`; the `When` column keeps its typed timestamp.
+
+The route requires `admin.reference.record.approve`, which this module declares
+and grants to no system role; the seeded admin holds it through grant-all. The
+`reference.record` subject is contributed only by the fixture executables, so
+a production install shows "This record is not available." there; do not turn
+the page into a generic workflow administration product.
+
+To run the page against the disposable reference owner, in a fresh disposable
+database after `init` (and optionally `start-human 4 1` for a work-bound
+entry), serve the fixture executable and sign in as the seeded admin:
+
+```sh
+export BILIBI_DISPOSABLE_WORKFLOW_DEMO=yes
+cargo run -p bilibi-workflow --example owner -- init
+cargo run -p bilibi-workflow --example owner -- start-human 4 1
+APP_ORIGIN='http://127.0.0.1:4317' BIND_ADDR='127.0.0.1:4317' \
+cargo run -p bilibi-web --example w7-workflow-reference
+```
+
+`/workflow/reference/1` offers Acknowledge and, for the `review` item, Submit
+review; `/workflow/reference/0` and a missing id answer the address/record copy.
+A viewer (user 2, no route capability) gets 403. Executing in one tab and then
+submitting the same entry in a second tab answers "This record changed"; a
+direct denial of `companies.update` for the admin answers "Your role does not
+allow this action." while the page stays usable; two rapid submissions of one
+rendering raise `action_count` once (`show 4 1`) and one request row.
+`cargo run -p bilibi-web -- run` serves the same route without the owner.
 
 ## Committed transition delivery
 
