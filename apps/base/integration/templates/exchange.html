@@ -1,0 +1,22 @@
+{#- API Exchange detail (Bilimbi `Integration.Web.ShowLive` render): the
+    metadata facts, explicit payload inspection behind its own capability and
+    an audited deletion behind a confirm dialog. The facts, dialog and flash are
+    rendered by src/web.rs through the shared models. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="exchange-detail", variant=bilibi_ui::PageVariant::Detail) %}
+{% call ui::header(subtitle=exchange_id, actions=all_link) %}API Exchange{% endcall %}
+{% call ui::card(id="exchange-summary", inner_class="p-5 sm:p-6") %}
+{% call ui::section_heading(title="Exchange", id="exchange-heading") %}{% endcall %}
+{{ facts|safe }}
+{% endcall %}
+{% call ui::card(id="exchange-payload-card", inner_class="p-5 sm:p-6") %}
+{% call ui::section_heading(title="Retained payload", id="exchange-payload-heading", description="Bodies and headers are omitted by default. Retained structured previews are redacted and expire after the configured retention period.") %}{% endcall %}
+{% if can_payload %}{% call ui::button(id="exchange-view-payload", button_type="button", event="payload") %}Inspect retained payload{% endcall %}{% else %}{% call lists::empty_state(e=payload_restricted) %}{% endcall %}{% endif %}
+{% if let Some(payload) = payload %}<pre id="exchange-payload" class="overflow-x-auto bg-surface-sunken p-2 text-xs">{{ payload }}</pre>{% endif %}
+{% endcall %}
+{% if can_delete %}{% call ui::button(id="exchange-delete", button_type="button", event="confirm_delete") %}Delete exchange{% endcall %}{% else %}{% call lists::empty_state(e=delete_restricted) %}{% endcall %}{% endif %}
+{{ dialog|safe }}
+{% endcall %}

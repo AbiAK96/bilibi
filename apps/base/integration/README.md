@@ -98,8 +98,7 @@ contributed recurrence it runs nothing until an operator enables it on
 (`BILIBI_DISPOSABLE_INTEGRATION_DEMO=yes`, `DATABASE_URL`) with a local fixture
 server: retained/redacted preview, HTTP error, body limit, streamed download,
 connect failure, timeout, tenant and system incoming rows, every visibility and
-capability gate, audited deletion and payload pruning. The API Exchanges pages
-(`/system/api-exchanges`) are slice O2.
+capability gate, audited deletion and payload pruning.
 
 ## Inbound webhooks
 
@@ -122,3 +121,19 @@ verification can be retried unchanged. Its secret is
 Settings releases encrypted values only to an authorized scope; unset, it
 refuses everything. Production owners resolve credentials from their own
 definitions. The host reads the `webhooks.*` limits contributed here.
+
+## API Exchanges pages
+
+`/system/api-exchanges` and `/system/api-exchanges/{id}` (`src/web.rs`,
+`templates/`, service `base/integration.pages`, menu item under System) are
+Bilimbi's `IndexLive`/`ShowLive`. The list runs the shared flexible table
+over the built-in columns, direction tabs, outcome select, one search, page
+sizes 25/50/100/300 and the shared period filter; calendar days follow the
+actor's display mode and, in local mode, the zone the `BrowserTimeZone` hook
+reports, with an unresolvable range listing nothing and saying why. The
+operator scope sees every tenant and the system rows under the same caution
+as Bilimbi. The column arrangement lives with the mounted page until Grid
+`PageColumns` lands. The detail page inspects the retained payload only on an
+explicit click behind `.payload.view`, deletes behind a confirm dialog and
+`.delete`, and returns to the list afterwards; a refusal is a flash. To see
+rows, run the walkthrough above against the app's database.

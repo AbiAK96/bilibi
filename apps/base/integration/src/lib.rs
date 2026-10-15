@@ -7,12 +7,14 @@
 //! `record_incoming_system` are the API adapter seam, called once after
 //! dispatch. Recording is a machine measurement on its own pooled connection,
 //! outside the caller's transaction and outside mutation capture; manual
-//! deletion is an audited mutation.
+//! deletion is an audited mutation. `web` is the API Exchanges list and
+//! detail (`/system/api-exchanges`).
 mod contributions;
 pub mod redaction;
 pub mod reference_webhook;
 mod retention;
 mod transport;
+pub mod web;
 pub mod webhooks;
 pub use contributions::{WebhookLimits, DELETE, LIST, PAYLOAD, RETENTION_DAYS, WEBHOOK_SETTINGS};
 pub use transport::{Failure, Outgoing, Reply, Streamed};
@@ -630,7 +632,7 @@ async fn visible_tenant(
 
 inventory::submit! {
     Module { id: "base/integration", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu"],
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
@@ -639,6 +641,13 @@ inventory::submit! {
             let integration = Integration::new(db, boundary)
                 .map_err(|_| bilibi_module_registry::RegistryError::Service("base/integration HTTP client".into()))?;
             Ok(Arc::new(integration))
+        } }, Service { id: "base/integration.pages", factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                integration: services.get(SERVICE)?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
+            }))))
         } }, Service { id: reference_webhook::SERVICE, factory: |services| {
             Ok(reference_webhook::service(services.get::<Db>("base/database.pool")?.as_ref().clone()))
         } }, Service { id: "base/integration.retention", factory: |services| {
@@ -651,3 +660,32 @@ inventory::submit! {
         } }],
     }
 }
+
+// Bilimbi `priv/web_routes.exs`: both pages behind the list capability. A
+// literal `/system/api-exchanges` beside the `{id}` parameter is the usual
+// list/detail pair; the detail page reads the row through the service, which
+// scopes it to the actor's tenant.
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/integration.exchanges",
+        bilibi_module_registry::Provenance { module: "base/integration", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges",
+            service: "base/integration.pages", operation: "exchanges", access: bilibi_module_registry::contributions::Access::Capability(LIST), framed: true })
+}
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/integration.exchange",
+        bilibi_module_registry::Provenance { module: "base/integration", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges/{id}",
+            service: "base/integration.pages", operation: "exchange", access: bilibi_module_registry::contributions::Access::Capability(LIST), framed: true })
+}
+// Bilimbi `contributions.ex` menu: under System, after Software.
+bilibi_menu::contribute!(
+    "base/integration",
+    bilibi_menu::MenuItem::page(
+        "admin.system.integration",
+        "API Exchanges",
+        "/system/api-exchanges"
+    )
+    .under("admin.system")
+    .requires(bilibi_menu::Requirement::Capability(LIST))
+    .order(45)
+);
