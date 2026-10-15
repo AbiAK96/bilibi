@@ -1,12 +1,14 @@
-//! Grid table/field/link catalog, scoped paths and bounded page projections.
-//! There is no Grid page. Lenses and persisted arrangements build on this
-//! contract; see `README.md`.
+//! Grid table/field/link catalog, scoped paths, bounded page projections and
+//! the lenses that turn them into FlexTable cells. There is no Grid page.
+//! Persisted arrangements build on this contract; see `README.md`.
 pub mod catalog;
 pub mod column;
+pub mod lens;
 pub mod model;
 pub mod query;
 mod reference;
-pub use query::{project, Projection, QueryError, Row};
+pub use lens::{Lens, Range};
+pub use query::{project, project_lenses, stats, Lenses, Projection, QueryError, Row, Stats};
 
 use bilibi_module_registry::{Consumer, Layer, Module, RegistryError, Result};
 use std::sync::OnceLock;
@@ -115,7 +117,7 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime"],
         migrations: &[("base-grid-001", include_str!("../migrations/001-reference.sql"))],
         services: &[],
     }

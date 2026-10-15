@@ -10,6 +10,9 @@ bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-authz = { path = "../authz" }
+bilibi-datetime = { path = "../datetime" }
+bilibi-ui.workspace = true
+jiff = "0.2.38"
 tokio-postgres.workspace = true
 inventory.workspace = true
 serde_json.workspace = true

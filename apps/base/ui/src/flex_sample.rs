@@ -6,9 +6,9 @@
 //! Nothing is simulated: every gesture changes what the specimen shows.
 //!
 //! The component specimen page renders it statically and the `flex-reference`
-//! example (apps/web/examples) runs it live. Categorical bands come from a
-//! small FNV hash of the value instead of Erlang's `phash2`, so which colour a
-//! region wears differs from Bilimbi's while the encoding is the same.
+//! example (apps/web/examples) runs it live. Categorical bands come from
+//! [`flex_table::category`] (Erlang's `phash2`), so each region wears the
+//! colour it wears in Bilimbi.
 use crate::flex_table::{
     Cell, ColumnKind, ColumnType, Cost, ExpansionRow, FlexColumn, FlexRow, FlexTable, Instant,
     Lens, Plain, RowMode, Scale, DEFAULT_ZOOM,
@@ -215,58 +215,6 @@ fn civil(days: i64) -> (i64, i64, i64) {
 fn iso_date(days: i64) -> String {
     let (year, month, day) = civil(days);
     format!("{year:04}-{month:02}-{day:02}")
-}
-
-/// Deterministic categorical position in 0..=1 over eight slots: Bilimbi's
-/// `:erlang.phash2(text, 8) / 7`, so each category paints the source's band.
-fn category(text: &str) -> f64 {
-    f64::from(phash2(text.as_bytes()) % 8) / 7.0
-}
-
-/// `erlang:phash2/1` of a binary: Bob Jenkins' lookup2 block hash seeded with
-/// erts' `HCONST_13`.
-fn phash2(bytes: &[u8]) -> u32 {
-    const GOLDEN: u32 = 0x9e37_79b9;
-    fn mix([mut a, mut b, mut c]: [u32; 3]) -> [u32; 3] {
-        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 13);
-        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 8);
-        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 13);
-        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 12);
-        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 16);
-        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 5);
-        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 3);
-        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 10);
-        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 15);
-        [a, b, c]
-    }
-    // Little-endian words of up to four bytes; a short tail word reads as
-    // lookup2's fall-through switch adds it.
-    let word = |chunk: &[u8]| {
-        chunk
-            .iter()
-            .enumerate()
-            .fold(0u32, |word, (i, byte)| word | u32::from(*byte) << (8 * i))
-    };
-    let mut state = [GOLDEN, GOLDEN, GOLDEN.wrapping_mul(13)];
-    let (blocks, tail) = bytes.as_chunks::<12>();
-    for block in blocks {
-        for (lane, chunk) in state.iter_mut().zip(block.chunks(4)) {
-            *lane = lane.wrapping_add(word(chunk));
-        }
-        state = mix(state);
-    }
-    // The tail fills a and b from its first eight bytes; its last three land
-    // in c above the low byte, which holds the length.
-    state[2] = state[2].wrapping_add(bytes.len() as u32);
-    for (index, chunk) in tail.chunks(4).enumerate() {
-        let added = if index == 2 {
-            word(chunk) << 8
-        } else {
-            word(chunk)
-        };
-        state[index] = state[index].wrapping_add(added);
-    }
-    mix(state)[2]
 }
 
 /// The specimen's state: what a person arranged, sorted and opened.
@@ -571,7 +519,7 @@ fn cell(
                 Scale::Sequential,
             )
         }
-        _ => (category(&value.text()), Scale::Categorical),
+        _ => (flex_table::category(&value.text()), Scale::Categorical),
     };
     let band = if scale == Scale::Sequential {
         ((n * 5.0).trunc() as u8).min(4)

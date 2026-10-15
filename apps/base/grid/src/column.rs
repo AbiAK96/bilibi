@@ -163,6 +163,9 @@ pub struct Column {
     pub field: Option<Field>,
     pub agg: Option<Agg>,
     pub depth: usize,
+    /// The many-link target's time field when the rollup ends on that target
+    /// (no tail): what dates a trend's months and a change-since date.
+    pub time_field: Option<&'static str>,
 }
 impl Column {
     /// Whether values order on a number line (a bar or band scales to it).
@@ -267,6 +270,7 @@ fn build(
             tail: Vec::new(),
             field: Some(field),
             agg: None,
+            time_field: None,
         });
     };
     let agg = agg.ok_or(ColumnError::ManyLinkNeedsAggregate)?;
@@ -323,6 +327,11 @@ fn build(
         depth: links.len(),
         hops,
         many: Some(many),
+        time_field: if tail.is_empty() {
+            table.time_field()
+        } else {
+            None
+        },
         tail,
         field,
         agg: Some(agg),

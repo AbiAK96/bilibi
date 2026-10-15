@@ -463,9 +463,12 @@ version = "0.1.0"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
+ "bilibi-datetime",
  "bilibi-module-registry",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
+ "jiff",
  "serde_json",
  "tokio-postgres",
 ]
