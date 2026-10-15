@@ -2,6 +2,7 @@
 pub use bilibi_agent_api as agent_api;
 pub use bilibi_artifacts as artifacts;
 pub use bilibi_audit as audit;
+pub use bilibi_audit_views as audit_views;
 pub use bilibi_authz as authz;
 pub use bilibi_dashboard as dashboard;
 pub use bilibi_database as database;

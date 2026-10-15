@@ -299,6 +299,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-audit-views"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-dashboard",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-authz"
 version = "0.1.0"
 dependencies = [
@@ -326,6 +350,7 @@ dependencies = [
  "bilibi-agent-api",
  "bilibi-artifacts",
  "bilibi-audit",
+ "bilibi-audit-views",
  "bilibi-authz",
  "bilibi-dashboard",
  "bilibi-database",

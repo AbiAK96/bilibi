@@ -1,0 +1,19 @@
+{#- One Actions cell, mirroring the Bilimbi flex_table `:col` slots in normal
+    row mode. -#}
+{%- import "components.html" as ui -%}
+{%- match cell -%}
+{%- when Cell::Occurred(time) -%}
+<span class="whitespace-nowrap tabular-nums text-xs text-ink-muted">{{ time|safe }}</span>
+{%- when Cell::Actor { label, sub } -%}
+<div class="whitespace-nowrap text-sm font-medium text-ink">{{ label }}</div><div class="font-mono text-xs text-ink-muted">{{ sub }}</div>
+{%- when Cell::Event { summary, source, diagnostic, event } -%}
+<div class="flex flex-wrap items-center gap-1.5"><span class="text-sm font-medium text-ink">{{ summary }}</span>{% call ui::badge() %}{{ source }}{% endcall %}{% if diagnostic %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Warning) %}Diagnostic{% endcall %}{% endif %}</div><div class="mt-0.5 font-mono text-xs text-ink-muted">{{ event }}</div>
+{%- when Cell::Context(context) -%}
+<div class="max-w-xs truncate text-xs text-ink-muted" title="{{ context }}">{{ context }}</div>
+{%- when Cell::Result { kind, label } -%}
+{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}
+{%- when Cell::Trace(trace) -%}
+{% if let Some(trace) = trace %}<span class="font-mono text-xs text-ink-muted">{{ trace }}</span>{% else %}<span class="text-ink-muted">—</span>{% endif %}
+{%- when Cell::Retain { id, retained, can_manage, icon } -%}
+{% if *can_manage %}<button type="button" id="action-retain-{{ id }}" data-event="toggle_retain" name="id" value="{{ id }}" class="rounded p-1 transition-colors hover:bg-surface-sunken focus:outline-none focus:ring-1 focus:ring-brand-strong {% if *retained %}text-brand font-bold{% else %}text-ink-muted hover:text-ink{% endif %}" title="{% if *retained %}Remove retention{% else %}Retain this entry{% endif %}" aria-label="{% if *retained %}Remove retention for action {{ id }}{% else %}Retain action {{ id }}{% endif %}">{% call ui::icon(name=icon, class="size-4") %}{% endcall %}</button>{% else %}<span class="inline-block p-1 text-ink-muted/40 cursor-not-allowed" title="Retention management requires admin.audit.log.manage permission">{% call ui::icon(name=icon, class="size-4") %}{% endcall %}</span>{% endif %}
+{%- endmatch -%}

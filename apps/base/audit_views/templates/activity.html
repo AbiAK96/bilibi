@@ -1,0 +1,17 @@
+{#- The dashboard's Recent Activity panel (Bilimbi
+    `Audit.Web.DashboardActivityPanel` render). The shared card macro takes no
+    ARIA attributes, so the region role rides on the panel's root element. -#}
+{%- import "components.html" as ui -%}
+{%- import "lists.html" as lists -%}
+<div id="{{ id }}" role="region" aria-labelledby="stat-recent-audit-heading">
+{% call ui::card(id="stat-recent-audit", inner_class="p-5 sm:p-6") %}
+{% call ui::section_heading(id="stat-recent-audit-heading", title="Recent Activity", actions=open) %}{% endcall %}
+{% match feed %}
+{% when Feed::Pending %}<div id="stat-recent-audit-pending" class="text-sm text-ink-subtle">—</div>
+{% when Feed::Empty %}{% call lists::empty_state(e=empty) %}{% endcall %}
+{% when Feed::Entries(entries) %}<div class="divide-y divide-line">
+{% for entry in entries %}<div class="flex items-start gap-3 py-2.5 text-sm">{% call ui::icon(name="hero-document-text", class="size-4 shrink-0 text-ink-faint") %}{% endcall %}<div class="min-w-0 flex-1"><span class="font-medium text-ink">{{ entry.event }}</span><span class="ml-2 text-ink-subtle">{{ entry.kind }}</span></div>{{ entry.when|safe }}</div>
+{% endfor %}</div>
+{% endmatch %}
+{% endcall %}
+</div>

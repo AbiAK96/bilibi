@@ -10,6 +10,7 @@ license.workspace = true
 bilibi-agent-api = { path = "agent_api" }
 bilibi-artifacts = { path = "artifacts" }
 bilibi-audit = { path = "audit" }
+bilibi-audit-views = { path = "audit_views" }
 bilibi-authz = { path = "authz" }
 bilibi-dashboard = { path = "dashboard" }
 bilibi-database = { path = "database" }

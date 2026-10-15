@@ -1,0 +1,17 @@
+{#- The Audit Actions screen (Bilimbi `Audit.Web.ActionsLive` render). The
+    toolbar, table and pager are rendered by src/actions.rs through the shared
+    models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page() %}
+{% call ui::header(subtitle="Operational action log, newest first") %}Audit Actions{% endcall %}
+{{ toolbar|safe }}
+{% if hide_diagnostics %}<p class="mt-2 text-xs text-ink-muted">Successful Livewire updates, AI event streams, and media streams are hidden. Failures still appear; switch to Show Diagnostics to inspect transport noise.</p>{% endif %}
+<div class="mt-4">
+{{ table|safe }}
+{{ pagination|safe }}
+</div>
+{% endcall %}
+</div>
