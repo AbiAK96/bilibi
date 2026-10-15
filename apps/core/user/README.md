@@ -185,7 +185,7 @@ The editor keeps SQL, prompt, description and named parameter values in its
 mounted state. Run executes the current draft; result sorting, rows-per-page,
 Back and page navigation retain that draft. A full reload loads saved SQL.
 Parameters bind as PostgreSQL values (a blank input binds NULL). The result
-pager reflects `page` and `page_size` in the URL; periodic refresh does not rerun
+pager of a saved query reflects `page` and `page_size` in the URL; periodic refresh does not rerun
 SQL. Save uses the loaded version, so a competing save is refused without
 replacing the draft. Deletion names the saved query in a shared confirmation
 and checks that same saved version. Result values are escaped text; only column

@@ -350,7 +350,12 @@ impl LiveState<Scope, Error> for Detail {
             }
             Ok(LiveBody {
                 html: view::detail(self, editor)?,
-                query: self.list.to_params(),
+                // Only a saved query has an address that can restore result navigation.
+                query: if self.saved.is_some() {
+                    self.list.to_params()
+                } else {
+                    HashMap::new()
+                },
                 redirect,
                 rows: self.result.as_ref().map_or(0, |result| result.rows.len()),
                 ..LiveBody::default()
