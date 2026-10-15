@@ -334,8 +334,18 @@ async fn main() -> Result<()> {
     run(
         &queries,
         actor,
-        "JSON conversion failure",
-        "SELECT 1e10000::numeric AS huge",
+        "numeric precision",
+        "SELECT 9007199254740993.123456789::numeric AS precise",
+        ConsoleOptions::default(),
+        1,
+        25,
+    )
+    .await?;
+    run(
+        &queries,
+        actor,
+        "large numeric",
+        "SELECT 1e309::numeric AS huge",
         ConsoleOptions::default(),
         1,
         25,

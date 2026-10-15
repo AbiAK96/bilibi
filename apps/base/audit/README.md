@@ -66,9 +66,10 @@ quote parameter values or data raised by a function.
 Its lexical binder skips strings, quoted identifiers, dollar quotes, casts and
 nested comments; values use PostgreSQL's text bind format for the inferred type,
 never string substitution. A missing value binds NULL. The transaction uses a
-repeatable-read snapshot and is explicitly rolled back even on SQL error. Unique
-positional aliases preserve duplicate output names in JSON conversion; paging
-arithmetic is checked. Connection/setup errors also go through the recorder on
+repeatable-read snapshot and is explicitly rolled back even on SQL error.
+Arbitrary-precision JSON numbers preserve PostgreSQL numeric values without
+floating-point rounding. Unique positional aliases preserve duplicate output
+names in JSON conversion; paging arithmetic is checked. Connection/setup errors also go through the recorder on
 a fresh pool checkout. `record_outcome` allows the owning service to record
 capability/actor refusals through this same rows-free payload builder.
 

@@ -150,7 +150,8 @@ interpolation. An absent/None parameter binds NULL. Parameter values never enter
 the audit payload. `ConsoleAnswer` has the outcome, optional result and durable
 action ID; a refused/failed command has no result. The editor passes unsaved SQL
 and retains its draft across result paging. Output sorting is accepted only for
-an exact returned column, and duplicate column names retain separate values.
+an exact returned column, duplicate column names retain separate values, and
+arbitrary-precision JSON numbers preserve exact PostgreSQL numeric output.
 
 The executor uses PostgreSQL `READ ONLY` with a 10-second statement timeout,
 repeatable-read count/page snapshot, at most 1,000 result rows per page and
