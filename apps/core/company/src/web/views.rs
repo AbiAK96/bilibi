@@ -642,6 +642,7 @@ pub(super) async fn detail(
             .status(statuses.get("scope_activities"))
             .placeholder("Add activity");
             field.id_value = id.to_string();
+            field.class = "min-w-56".into();
             field.save_event = "add_activity".into();
             field.editable = editable;
             facts.push(Fact {
@@ -760,10 +761,16 @@ pub(super) async fn detail(
                 crate::lifecycle::Operation::Archive => "archived",
             }
         );
-        let detail=match pending.operation {crate::lifecycle::Operation::Archive=>"Its records are kept. Archiving is final: an archived company cannot be reactivated.",crate::lifecycle::Operation::Suspend=>"Its records are kept. Reactivating the company lifts the suspension.",_=>"The company becomes active. It can be suspended later."};
-        let reason = Field::named("reason")
+        let detail = match pending.operation {
+            crate::lifecycle::Operation::Archive => "Its records are kept. Archiving is final: an archived company cannot be reactivated.",
+            crate::lifecycle::Operation::Suspend => "Its records are kept. Reactivating the company lifts the suspension.",
+            crate::lifecycle::Operation::Activate => "It becomes a working company of this workspace. It can be suspended later.",
+            crate::lifecycle::Operation::Reactivate => "The suspension is lifted and the company is active again.",
+        };
+        let mut reason = Field::named("reason")
             .id("company-lifecycle-reason")
-            .label("Reason (optional)")
+            .label("Reason")
+            .hint("Optional. Recorded with this change in the audit trail.")
             .kind(InputKind::Textarea)
             .value(&pending.reason)
             .attr("maxlength", "500")
@@ -772,6 +779,7 @@ pub(super) async fn detail(
             } else {
                 vec![pending.error.clone()]
             });
+        reason.attrs.autofocus = true;
         let body = render(&LifecycleForm {
             reason: render(&reason)?,
             cancel: render(&Button {
@@ -784,6 +792,12 @@ pub(super) async fn detail(
             confirm: render(&Button {
                 id: "company-lifecycle-confirm",
                 button_type: "submit",
+                working: match pending.operation {
+                    crate::lifecycle::Operation::Activate => "Activating…",
+                    crate::lifecycle::Operation::Reactivate => "Reactivating…",
+                    crate::lifecycle::Operation::Suspend => "Suspending…",
+                    crate::lifecycle::Operation::Archive => "Archiving…",
+                },
                 variant: if pending.operation == crate::lifecycle::Operation::Archive {
                     ButtonVariant::Danger
                 } else {
