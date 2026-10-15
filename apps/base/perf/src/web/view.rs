@@ -248,7 +248,6 @@ pub(super) fn page(
         inner_class: "p-0",
         class: "mb-2",
         body: regression_body,
-        ..Card::default()
     })?);
     body.push(&render(FilterToolbar::new(
         "performance-filters",
@@ -266,7 +265,7 @@ pub(super) fn page(
                 "Kind",
                 &list.filters["kind"],
                 choices(&[
-                    ("All kinds", ""),
+                    ("All", ""),
                     ("Request", "request"),
                     ("Live event", "event"),
                     ("Job", "job"),
@@ -279,7 +278,7 @@ pub(super) fn page(
                 "Outcome",
                 &list.filters["outcome"],
                 choices(&[
-                    ("All outcomes", ""),
+                    ("All", ""),
                     ("OK", "ok"),
                     ("Error", "error"),
                     ("Cancelled", "cancelled"),
