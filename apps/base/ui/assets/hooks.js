@@ -605,3 +605,201 @@
     registry.registerHook(name, hook)
   }
 })()
+
+;(() => {
+  // Graphic's catalogue reports the actual clipboard result. Never claim a
+  // successful copy merely because the tile was clicked.
+  class ClipboardCopy {
+    mounted() {
+      this.onClick = async (event) => {
+        const tile = event.target.closest('[data-copy-text]');
+        if (!tile || !this.el.contains(tile)) return;
+        let copied = false;
+        try { await navigator.clipboard.writeText(tile.dataset.copyText); copied = true; } catch { /* permission refusal is a visible server state */ }
+        this.emit(this.el.dataset.copyEvent || 'icon-copied', {text: tile.dataset.copyText, copied});
+      };
+      this.el.addEventListener('click', this.onClick);
+    }
+    destroyed() { this.el.removeEventListener('click', this.onClick); }
+  }
+  window.BilibiUI.registerHook('ClipboardCopy', ClipboardCopy.prototype);
+})();
+
+;(() => {
+// Keeps every rendered instant on the saved display mode.
+//
+// A mode change has to reach timestamps that are already on screen, including
+// rows a LiveView stream handed to the DOM and never re-renders. So the shell
+// publishes the live mode on #app-shell and this hook re-applies it in place.
+//
+// The server decides `company` and `utc` and writes both strings onto the
+// element, so those two modes are a copy, never a re-format: the browser
+// cannot disagree with the server about a string it did not produce. `local`
+// is the one mode the server cannot decide — it does not know the browser's
+// zone — so it is formatted here, in the reader's own locale and hour cycle.
+const SHELL = "#app-shell"
+
+// Every mounted instant, so one shell change repaints all of them without
+// each element observing the shell separately.
+const instances = new Set()
+
+// One observer for the whole page, armed on the first mount. It re-arms if the
+// shell element is ever replaced rather than patched, so a stale observer
+// cannot leave every timestamp silently frozen on the previous mode.
+let observer = null
+let observed = null
+
+const shell = () => document.querySelector(SHELL)
+
+const liveMode = () => shell()?.dataset.displayMode || null
+
+const observeShell = () => {
+  const el = shell()
+  if (!el || observed === el) return
+  observer?.disconnect()
+  observer = new MutationObserver(() => {
+    for (const hook of instances) hook.renderDateTime()
+  })
+  observer.observe(el, {attributes: true, attributeFilter: ["data-display-mode"]})
+  observed = el
+}
+
+// `local` renders the instant the way the reader's own device would: their
+// locale orders the fields and chooses the hour cycle. The zone is named on
+// `datetime` only, where the label qualifies a full date and time.
+const formatLocal = (value, timeZone, format, precision) => {
+  const options = {timeZone}
+
+  if (format !== "time") {
+    Object.assign(options, {day: "2-digit", month: "2-digit", year: "numeric"})
+  }
+
+  if (format !== "date") {
+    Object.assign(options, {hour: "2-digit", minute: "2-digit"})
+    if (precision === "second") options.second = "2-digit"
+  }
+
+  if (format === "datetime") options.timeZoneName = "short"
+
+  return new Intl.DateTimeFormat(undefined, options).format(value)
+}
+
+const DateTime = {
+  mounted() {
+    instances.add(this)
+    observeShell()
+    this.renderDateTime()
+  },
+
+  updated() {
+    this.renderDateTime()
+  },
+
+  destroyed() {
+    instances.delete(this)
+
+    // With nothing left to repaint, stop observing. Otherwise the observer
+    // keeps a strong reference to a detached #app-shell — the root of the
+    // whole previous page — after navigating to a screen that carries no
+    // instants and so mounts no hook to re-arm it.
+    //
+    // Conditioned on the set being empty rather than on destroyed() alone:
+    // during LiveView navigation the incoming view's hooks mount BEFORE the
+    // outgoing view's are destroyed, so live instances are still registered
+    // here and an observer they depend on is never torn down underneath them.
+    if (instances.size === 0) {
+      observer?.disconnect()
+      observer = null
+      observed = null
+    }
+  },
+
+  renderDateTime() {
+    const value = new Date(this.el.dateTime)
+
+    if (Number.isNaN(value.getTime())) return
+
+    // An instant given an explicit display context follows that context, not
+    // the shell: the caller has already decided what it is showing.
+    const shellMode = this.el.dataset.followShell === "true" ? liveMode() : null
+    const mode = shellMode || this.el.dataset.mode || "local"
+
+    if (mode === "company" || mode === "utc") {
+      // The server already rendered both. Copy, never re-format.
+      const text = mode === "company" ? this.el.dataset.textCompany : this.el.dataset.textUtc
+      this.showServerText(text)
+      return
+    }
+
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+    let text
+
+    try {
+      text = formatLocal(value, timeZone, this.el.dataset.format, this.el.dataset.precision)
+    } catch {
+      // A browser that cannot format this zone falls back to the server's
+      // stored-UTC text. Keeping whatever is there would leave the previous
+      // mode's string under a control that now reports a different mode.
+      this.showServerText(this.el.dataset.textUtc)
+      return
+    }
+
+    if (this.el.textContent !== text) this.el.textContent = text
+    this.el.dataset.timezone = timeZone
+    this.el.title = `Rendered in ${timeZone}`
+  },
+
+  showServerText(text) {
+    if (text && this.el.textContent !== text) this.el.textContent = text
+    delete this.el.dataset.timezone
+    this.el.removeAttribute("title")
+  },
+}
+
+window.BilibiUI.registerHook('DateTime', DateTime)
+
+})();
+;(() => {
+// Reports the browser's own time zone to the view that mounted this.
+//
+// Under the local display mode every instant is formatted in the browser
+// (see `date_time.js`), so only the browser knows which calendar day a row
+// is shown on. A screen whose date filters bound displayed days mounts this
+// on the region that holds them and receives one `browser_timezone` event;
+// the server proves the name against its own time zone database and keeps
+// bounding UTC, the text it rendered itself, when it cannot honor it. The
+// hook reports again when the top-bar clock mode (`data-display-mode` on
+// `#app-shell`) changes, so the screen recomputes its days without a reload.
+//
+// The zone is the same expression `date_time.js` formats with, so the day a
+// row displays on and the day the server bounds are read from one source.
+const BrowserTimeZone = {
+  mounted() {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+    this.reportTimeZone = () => this.emit("browser_timezone", {timezone: timeZone})
+    this.reportTimeZone()
+    this.observeClock()
+  },
+  updated() {
+    this.observeClock()
+  },
+  observeClock() {
+    const shell = document.querySelector("#app-shell")
+    if (this.clockShell === shell) return
+    this.clockObserver?.disconnect()
+    this.clockShell = shell
+    if (!shell) return
+    // A saved top-bar mode changes displayed calendar days as well as labels.
+    // Re-report the browser zone so the host recomputes its range from the
+    // freshly authorized shell preferences, without a reload or a URL change.
+    this.clockObserver = new MutationObserver(() => this.reportTimeZone())
+    this.clockObserver.observe(shell, {attributes: true, attributeFilter: ["data-display-mode"]})
+  },
+  destroyed() {
+    this.clockObserver?.disconnect()
+  },
+}
+
+window.BilibiUI.registerHook('BrowserTimeZone', BrowserTimeZone)
+
+})();

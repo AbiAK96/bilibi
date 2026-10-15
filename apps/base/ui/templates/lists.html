@@ -56,3 +56,8 @@
 {% if let Some(empty) = t.empty %}<tbody><tr id="{{ t.id }}-empty"><td colspan="{{ t.empty_colspan() }}" class="px-2 py-8 text-center text-sm text-ink-muted">{% match empty %}{% when bilibi_ui::lists::TableEmpty::Content(content) %}{{ content|safe }}{% when bilibi_ui::lists::TableEmpty::State(state) %}{% call empty_state(e=state) %}{% endcall %}{% endmatch %}</td></tr></tbody>{% endif %}
 </table></div>
 {% endmacro %}
+
+{# The same record link renders a real link alone and selection intent inside a workspace. #}
+{% macro record_link(workspace, kind, record_id, href, class="") %}
+{% if workspace %}<button type="button" data-event="workspace:select" data-kind="{{ kind }}" data-id="{{ record_id }}" data-path="{{ href }}" data-record-select class="{{ class }} text-left">{{ caller() }}</button>{% else %}<a href="{{ href }}" class="{{ class }}">{{ caller() }}</a>{% endif %}
+{% endmacro %}

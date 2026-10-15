@@ -84,6 +84,29 @@
     if (flash) dismissFlash(flash);
   });
 
+  // A submitting action link uses the same Origin/CSRF boundary as a form.
+  // The owner returns an HTTP redirect; normal navigation then mounts that page.
+  document.addEventListener('click', async (event) => {
+    const link = event.target.closest('a[data-method]');
+    if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (link.getAttribute('aria-busy') === 'true') return;
+    const destination = new URL(link.dataset.to || link.href, location.href);
+    if (destination.origin !== location.origin) return;
+    const csrf = link.closest('[data-csrf]')?.dataset.csrf || document.querySelector('input[name=csrf]')?.value;
+    link.setAttribute('aria-busy', 'true');
+    try {
+      const response = await fetch(destination, {method: link.dataset.method.toUpperCase(), headers: {'X-CSRF-Token': csrf || ''}, credentials: 'same-origin'});
+      if (!response.ok) throw new Error('The request could not be sent. Try again.');
+      location.assign(response.url);
+    } catch (error) {
+      let status = document.getElementById('action-link-status');
+      if (!status) { status = document.createElement('p'); status.id = 'action-link-status'; status.setAttribute('role', 'alert'); link.after(status); }
+      status.textContent = error.message;
+      link.removeAttribute('aria-busy');
+    }
+  });
+
   // A control that names data-working shows that label, disabled and
   // aria-busy, from the click until the server replies (Bilimbi
   // phx-disable-with). Deferred one task so the transport and a form submit

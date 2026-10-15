@@ -20,6 +20,12 @@ pub struct PageBody {
 }
 pub trait Page<Context, Error>: Send + Sync {
     fn render<'a>(&'a self, request: PageRequest<'a, Context>) -> PageFuture<'a, Error>;
+    /// An owner may finish an authorized HTTP action with a 303 redirect.
+    /// The host calls this only after `render` succeeds; live updates use LiveBody.redirect.
+    fn redirect(&self, _operation: &str) -> Option<&'static str> {
+        None
+    }
+
     /// Each mount creates independent state, including for two instances of a panel.
     fn mount<'a>(&'a self, _request: PageRequest<'a, Context>) -> MountFuture<'a, Context, Error> {
         Box::pin(async { Ok(None) })

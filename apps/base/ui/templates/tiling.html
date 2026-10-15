@@ -37,6 +37,6 @@
 </div>
 {% endmacro %}
 
-{% macro split_handle(id, horizontal, label, place, split, rect) %}
-<div id="{{ id }}" role="separator" tabindex="0" aria-orientation="{% if horizontal %}vertical{% else %}horizontal{% endif %}" aria-label="{{ label }}" data-direction="{% if horizontal %}h{% else %}v{% endif %}" data-place="{{ place }}" data-split="{{ split }}" data-rect="{{ rect }}" class="absolute z-10 select-none rounded-sm transition-colors hover:bg-surface-sunken focus-visible:bg-brand-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong {% if horizontal %}w-1.5 -translate-x-1/2 cursor-col-resize{% else %}h-1.5 -translate-y-1/2 cursor-row-resize{% endif %}"></div>
+{% macro split_handle(id, horizontal, label, place, split, rect, class="") %}
+<div id="{{ id }}" role="separator" tabindex="0" aria-orientation="{% if horizontal %}vertical{% else %}horizontal{% endif %}" aria-label="{{ label }}" data-direction="{% if horizontal %}h{% else %}v{% endif %}" data-place="{{ place }}" data-split="{{ split }}" data-rect="{{ rect }}" class="absolute z-10 select-none rounded-sm transition-colors hover:bg-surface-sunken focus-visible:bg-brand-surface focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong {% if horizontal %}w-1.5 -translate-x-1/2 cursor-col-resize{% else %}h-1.5 -translate-y-1/2 cursor-row-resize{% endif %} {{ class }}"></div>
 {% endmacro %}

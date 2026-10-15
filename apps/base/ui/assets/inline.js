@@ -50,6 +50,7 @@
         if (this.choice && this.active && event.target.name === this.el.dataset.field) this.commit(true);
       });
       this.updated();
+      if (this.el.dataset.initialEdit === 'true') this.start(undefined, false, this.el.dataset.autofocus !== 'false');
     },
     destroyed() { this.abort.abort(); },
     editor() { return this.el.querySelector('[data-role="editor"]'); },
@@ -90,7 +91,7 @@
       if (this.pending.size) this.el.setAttribute('aria-busy', 'true');
       this.el.querySelector('[data-role="saving"]')?.classList.toggle('hidden', !this.pending.size);
     },
-    start(value, atEnd = false) {
+    start(value, atEnd = false, autofocus = true) {
       if (this.el.dataset.editable !== 'true' || this.active) return;
       this.active = true;
       // An unsuccessful draft keeps its original version until explicit Escape.
@@ -103,6 +104,7 @@
       const combo = this.editor().querySelector('[data-hook="Combobox"]');
       combo?.dispatchEvent(new CustomEvent('bilibi:choice-value', {detail: {value: input.value}}));
       this.updated();
+      if (!autofocus) return;
       const focus = this.editor().querySelector('[role="combobox"]') || input;
       focus.focus();
       if (focus.select) {

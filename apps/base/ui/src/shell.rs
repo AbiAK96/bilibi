@@ -59,19 +59,30 @@ impl NavNode {
     fn contains_active(&self) -> bool {
         self.active || self.children.iter().any(Self::contains_active)
     }
-    fn render(&self, tileable: bool) -> askama::Result<Html> {
-        let children = navigation(&self.children, tileable)?;
+    fn render(&self, tileable: bool, pinnable: bool) -> askama::Result<Html> {
+        let children = navigation_options(&self.children, tileable, pinnable)?;
         Html::render(&NavBranch {
             node: self,
             dom_id: self.id.replace('.', "-"),
             expanded: self.contains_active(),
             children,
+            pinnable,
             tileable: tileable && self.route.as_deref() != Some("/workspace"),
         })
     }
 }
 pub fn navigation(nodes: &[NavNode], tileable: bool) -> askama::Result<Html> {
-    nodes.iter().map(|node| node.render(tileable)).collect()
+    navigation_options(nodes, tileable, true)
+}
+/// The shell's own rows without sidebar-only pin/tile controls, for specimens.
+pub fn navigation_unpinned(nodes: &[NavNode]) -> askama::Result<Html> {
+    navigation_options(nodes, false, false)
+}
+fn navigation_options(nodes: &[NavNode], tileable: bool, pinnable: bool) -> askama::Result<Html> {
+    nodes
+        .iter()
+        .map(|node| node.render(tileable, pinnable))
+        .collect()
 }
 #[derive(Template)]
 #[template(path = "navigation.html")]
@@ -81,6 +92,7 @@ struct NavBranch<'a> {
     expanded: bool,
     children: Html,
     tileable: bool,
+    pinnable: bool,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit

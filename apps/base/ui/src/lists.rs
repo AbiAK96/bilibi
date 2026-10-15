@@ -432,3 +432,19 @@ impl EmptyState {
         }
     }
 }
+
+/// A record opens directly alone and raises `workspace:select` when embedded.
+/// The owning workspace validates the destination and decides follow/navigation.
+#[derive(Template, Debug)]
+#[template(
+    source = r#"{% import "lists.html" as list %}{% call list::record_link(workspace=workspace, kind=kind, record_id=record_id, href=href, class=class) %}{{ body }}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct RecordLink<'a> {
+    pub workspace: bool,
+    pub kind: &'a str,
+    pub record_id: &'a str,
+    pub href: &'a str,
+    pub class: &'a str,
+    pub body: Html,
+}

@@ -10,7 +10,11 @@
     "apps/web/priv/static/favicon.ico": "01723aeae3ce3b5195a8f42e3eb6e9018a8c08b7acda4ed382b31341811f0a8a",
     "apps/web/priv/static/fonts/OFL.txt": "bc29b497c4e8316b2d248322a9cea670c2f0afc24ae0eb7bbaa54e02e00eebab",
     "apps/web/priv/static/fonts/instrument-sans-variable.woff2": "aa72922aafcc0dc18f36ec1d805b0212057dabe8b9d5b8b57f67035aea1b826d",
-    "apps/web/priv/static/fonts/instrument-sans-variable-italic.woff2": "e958f71ffb2d576dd6a9499bd9bb336ad060ab48e1920b2444d68919dee29ba5"
+    "apps/web/priv/static/fonts/instrument-sans-variable-italic.woff2": "e958f71ffb2d576dd6a9499bd9bb336ad060ab48e1920b2444d68919dee29ba5",
+    "apps/web/priv/static/images/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03",
+    "apps/web/assets/js/date_time.js": "0a5d376009abda3226d84ba003ae56d42c43aa37a7dcc87fdeebf524a24be09a",
+    "apps/web/assets/js/browser_time_zone.js": "dcb73224ba5dabd9b1dba9ddb7540c8fb8c74de7474d463c691e3e531d0ea7af",
+    "apps/web/assets/js/clipboard_copy.js": "50ce380c08b3cac0bb823b6de3b0688d2b9e5b070a51d70c563924ce3d7ff944"
   },
   "vendored_sha256": {
     "static/favicon.ico": "01723aeae3ce3b5195a8f42e3eb6e9018a8c08b7acda4ed382b31341811f0a8a",
@@ -1322,6 +1326,7 @@
     "vendor/product-icons/rows-compact.svg": "d1ce7969d7f2e11d9c674d8eee6e8914c7402f821d6c1dd906459f752bc21eee",
     "vendor/product-icons/rows-normal.svg": "274d038726857ec9e42f5c58011145feae4b182d91c1357fa3d2e54becf0a43d",
     "vendor/product-icons/text-indent-left.svg": "1b202a0e4d4b857a9960681eda617f1aea326245e038c666f63b04164b088a8e",
-    "vendor/product-icons/text-indent-right.svg": "77a8cf495f87a0ffd31b6dfe60491d80e197b2c87fa7d0bf95b7f8f958eb920a"
+    "vendor/product-icons/text-indent-right.svg": "77a8cf495f87a0ffd31b6dfe60491d80e197b2c87fa7d0bf95b7f8f958eb920a",
+    "static/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03"
   }
 }

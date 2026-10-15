@@ -27,7 +27,9 @@ pub mod params;
 mod section;
 mod shell;
 mod specimen;
-pub use shell::{navigation, AppShell, DisplayPreferences, Framed, NavNode, ShellContext};
+pub use shell::{
+    navigation, navigation_unpinned, AppShell, DisplayPreferences, Framed, NavNode, ShellContext,
+};
 
 pub use auth::{
     AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, ResetForm, ResetPasswordPage,
@@ -62,7 +64,8 @@ pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
 pub use list_columns::{BuiltinColumn, ColumnsOutcome, ListColumns};
 pub use list_state::{Filter, ListSpec, ListState, PageCounts, SortDir};
 pub use lists::{
-    Column, EmptyState, FilterToolbar, Pagination, Row, SortView, Table, TableEmpty, ToolbarControl,
+    Column, EmptyState, FilterToolbar, Pagination, RecordLink, Row, SortView, Table, TableEmpty,
+    ToolbarControl,
 };
 pub use specimen::ComponentsSpecimen;
 
@@ -130,6 +133,7 @@ pub fn static_asset(name: &str) -> Option<StaticAsset> {
             "text/javascript",
             include_bytes!("../assets/static/ui-feedback-demo.js"),
         ),
+        "logo.svg" => ("image/svg+xml", include_bytes!("../assets/static/logo.svg")),
         "favicon.svg" => (
             "image/svg+xml",
             include_bytes!("../assets/static/favicon.svg"),

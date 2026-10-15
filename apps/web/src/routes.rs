@@ -244,6 +244,9 @@ async fn dispatch(
             framed,
         })
         .await?;
+    if let Some(destination) = bound.page.0.redirect(bound.route.operation) {
+        return Ok(axum::response::Redirect::to(destination).into_response());
+    }
     let shell = crate::shell::render(
         &app,
         scope.as_ref(),

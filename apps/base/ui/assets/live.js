@@ -513,6 +513,14 @@
   // A form names its event with data-event: `params` sends the list query,
   // `save` the Company edit shape, anything else an event of that name
   // carrying the form's values. data-target picks a mounted panel.
+  function formValues(form) {
+    const values = {};
+    for (const [key, value] of new FormData(form)) {
+      if (key.endsWith('[]')) (values[key] ||= []).push(value);
+      else values[key] = value;
+    }
+    return values;
+  }
   document.addEventListener('submit', (event) => {
     const form = event.target;
     if (!form.dataset.event) return;
