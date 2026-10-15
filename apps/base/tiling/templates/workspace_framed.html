@@ -1,0 +1,7 @@
+{#- The workspace asked for inside a tile: a tile shows one page. -#}
+{%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
+<div data-shared-ui class="h-full">
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+<div id="workspace-framed" class="flex h-full items-center justify-center p-6">{% call lists::empty_state(e=state) %}{% endcall %}</div>
+</div>

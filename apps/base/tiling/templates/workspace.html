@@ -1,0 +1,59 @@
+{#- The tiled workspace (Bilimbi `Tiling.Web.WorkspaceLive` template). The
+    server owns the tree: `data-focused` is the focused tile after every patch,
+    and each tile is one element per tile id, positioned by `data-place` alone,
+    so a split, close or resize never re-creates a frame. Geometry travels in
+    `data-place`, never a `style` attribute: the host CSP allows no inline
+    style, so the Tiling hook (base/ui assets/tiling.js) writes the position
+    through the CSSOM after every patch. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
+{%- import "tabs.html" as tabstrip -%}
+{%- import "dialog.html" as dialog -%}
+{%- import "tiling.html" as tiling -%}
+<div data-shared-ui class="flex h-full min-h-0 flex-col">
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{#- Bilimbi puts these in the shell's top bar (`topbar_actions`); Bilibi's
+    shell has no such slot yet, so they head the workspace instead. -#}
+<div id="workspace-actions" class="flex shrink-0 items-center justify-end gap-1">
+{% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
+</div>
+<div id="workspace" data-hook="Tiling" data-focused="{{ focused }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
+{%- if !tiles.is_empty() %}
+{% call tabstrip::tabs(id="workspace-tabs", items=tabs, label="Tiles", class="shrink-0 lg:hidden") %}{% endcall %}
+{%- endif %}
+<p id="workspace-announcement" data-live-ignore class="sr-only" role="status" aria-live="polite"></p>
+<div id="workspace-tiles" class="relative min-h-0 flex-1">
+{%- if let Some(empty) = empty %}
+<div id="workspace-empty" class="flex h-full items-center justify-center p-6">{% call lists::empty_state(e=empty) %}{% endcall %}</div>
+{%- endif %}
+{%- for tile in tiles %}
+<div id="tile-{{ tile.id }}" class="workspace-tile group absolute p-0.5" data-place="{{ tile.place }}" data-tile="{{ tile.id }}" data-title="{{ tile.title }}" data-focused="{{ tile.focused }}"{% if tile.following %} data-follow="on"{% endif %}{% if tile.hidden %} hidden{% endif %}>
+<div class="relative flex h-full min-h-0 flex-col overflow-hidden rounded-md border bg-surface group-data-[drop-target=true]:ring-2 group-data-[drop-target=true]:ring-brand-strong group-data-[dragging=true]:opacity-60 {% if tile.focused %}border-brand-strong ring-1 ring-brand-strong{% else %}border-line{% endif %}">
+{% call tiling::tile_controls(id="tile-{}-controls"|format(tile.id), tile_id=tile.id, title=tile.title, focused=tile.focused, master_layout=mode == "master", master_tile=tile.master, following=tile.following) %}{% endcall %}
+{%- if tile.open() %}
+{#- The frame's `src` is written once: a frame navigates itself afterwards,
+    and the patcher never rewrites an existing iframe's `src`. -#}
+<div id="tile-{{ tile.id }}-frame" class="min-h-0 flex-1"><iframe id="tile-{{ tile.id }}-page" src="{{ tile.path }}" title="{{ tile.title }}" data-tile-frame="{{ tile.id }}" class="size-full border-0 bg-canvas"></iframe></div>
+{%- else if let Some(state) = tile.refusal %}
+<div id="tile-{{ tile.id }}-{% if tile.forbidden() %}forbidden{% else %}unserved{% endif %}" class="flex flex-1 items-center justify-center p-4">{% call lists::empty_state(e=state) %}{% endcall %}</div>
+{%- endif %}
+</div>
+</div>
+{%- endfor %}
+{%- for handle in handles %}
+{% call tiling::split_handle(id="split-{}"|format(handle.id), horizontal=handle.horizontal, label=handle.label, place=handle.place, split=handle.id, rect=handle.rect) %}{% endcall %}
+{%- endfor %}
+</div>
+</div>
+{%- if picker_open %}
+{% call dialog::modal(id="workspace-picker", title="Add a page", cancel_event="close_picker", description=picker_description, owns_flash=true, messages=flash) %}
+<div id="workspace-picker-pages" class="-mx-1 max-h-96 space-y-0.5 overflow-y-auto">
+{%- for page in pages %}
+<button type="button" id="workspace-pick-{{ page.id }}" data-event="add_tile" data-value-path="{{ page.route }}" class="block w-full rounded-md px-2 py-1.5 text-left transition hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40"><span class="block text-sm text-ink">{{ page.label }}</span>{% if !page.trail.is_empty() %}<span class="block text-xs text-ink-muted">{{ page.trail }}</span>{% endif %}</button>
+{%- endfor %}
+{%- if pages.is_empty() %}{% call lists::empty_state(e=picker_empty) %}{% endcall %}{% endif %}
+</div>
+{% endcall %}
+{%- endif %}
+</div>
