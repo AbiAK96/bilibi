@@ -27,4 +27,5 @@ tokio.workspace = true
 tokio-postgres.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 bilibi-web = { path = "../../web" }

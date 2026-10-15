@@ -78,8 +78,9 @@ impl Index {
         })
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
+        self.list.search = self.list.search.trim().chars().take(200).collect();
         let search = |list: &ListState| Search {
-            search: list.search.trim().into(),
+            search: list.search.trim().chars().take(200).collect(),
             kind: match list.filters["kind"].as_str() {
                 "human" => Some(PersonKind::Human),
                 "agent" => Some(PersonKind::Agent),

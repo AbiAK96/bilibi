@@ -18,13 +18,19 @@ use std::{collections::HashMap, sync::Arc};
 
 pub const SERVICE: &str = "core/person.pages";
 #[derive(Clone)]
+pub struct RecordPanel {
+    anchor: String,
+    embed: String,
+    access: bilibi_module_registry::contributions::Access,
+}
+#[derive(Clone)]
 pub struct Pages {
     pub db: Db,
     pub persons: Arc<PersonService>,
     pub views: Arc<PageViews>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
-    pub person_panels: Vec<(String, String)>,
+    pub person_panels: Vec<RecordPanel>,
 }
 impl Pages {
     async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
@@ -32,6 +38,31 @@ impl Pages {
         Ok(effective_capabilities(&**client, scope)
             .await?
             .contains(capability))
+    }
+    async fn embed_allowed(
+        &self,
+        scope: &Scope,
+        access: bilibi_module_registry::contributions::Access,
+    ) -> Result<bool> {
+        use bilibi_module_registry::contributions::Access;
+        let capability = match access {
+            Access::Capability(key) | Access::OperatorCapability(key) => {
+                self.allowed(scope, key).await?
+            }
+            _ => true,
+        };
+        if !capability {
+            return Ok(false);
+        }
+        if matches!(access, Access::Operator | Access::OperatorCapability(_)) {
+            let client = self.db.get().await?;
+            return match bilibi_tenancy::prove_operator(&**client, scope).await {
+                Ok(_) => Ok(true),
+                Err(Error::Forbidden) => Ok(false),
+                Err(error) => Err(error),
+            };
+        }
+        Ok(true)
     }
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let client = self.db.get().await?;
@@ -43,24 +74,34 @@ impl Pages {
         request: &PageRequest<'_, Scope>,
     ) -> Result<Box<dyn LiveState<Scope, Error>>> {
         let scope = request.scope.ok_or(Error::Unauthorized)?;
-        match request.operation {
-            "list" => Ok(Box::new(
+        let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+            "list" => Box::new(
                 index::Index::new(self.clone(), scope, request.query, request.framed).await?,
-            )),
-            "create" => Ok(Box::new(create::Create::new(self.clone()))),
-            "detail" => Ok(Box::new(detail::Detail::new(
+            ),
+            "create" => return Ok(Box::new(create::Create::new(self.clone()))),
+            "detail" => Box::new(detail::Detail::new(
                 self.clone(),
                 id(request.path)?,
                 request.framed,
-            ))),
-            "contact" => Ok(Box::new(panels::Contact::new(
+            )),
+            "contact" => Box::new(panels::Contact::new(
                 self.clone(),
                 id(request.path)?,
                 request.path.get("panel").ok_or(Error::Invalid)?.clone(),
                 request.framed,
-            ))),
-            _ => Err(Error::NotFound),
-        }
+            )),
+            _ => return Err(Error::NotFound),
+        };
+        Ok(Box::new(Reactive {
+            state,
+            persons: self.persons.clone(),
+            person: if request.operation == "list" {
+                None
+            } else {
+                Some(id(request.path)?)
+            },
+            forwarding: None,
+        }))
     }
 }
 impl Page<Scope, Error> for Pages {
@@ -127,25 +168,85 @@ fn event(event: &Value) -> Result<&str> {
 /// Discover owner panels without depending on Address, Affiliation, User or
 /// People. A missing optional owner contributes nothing; the host reauthorizes
 /// each contributed panel independently on mount, event and refresh.
-pub fn person_panels(
-    services: &bilibi_module_registry::Services,
-) -> bilibi_module_registry::Result<Vec<(String, String)>> {
+pub fn person_panels() -> bilibi_module_registry::Result<Vec<RecordPanel>> {
     use bilibi_module_registry::contributions::{Embed, EmbedContext, EMBEDS};
     let mut panels = Vec::new();
-    for entry in services.catalog()?.entries::<Embed>(EMBEDS)? {
+    // Services.install validates all inventory contributions before factories,
+    // but installs Services.catalog only after factories/readiness complete.
+    for entry in inventory::iter::<bilibi_module_registry::Contribution>
+        .into_iter()
+        .filter(|entry| entry.consumer == EMBEDS)
+    {
         let embed = entry.get::<Embed>()?;
-        if matches!(
+        let person = matches!(
             embed.context,
             EmbedContext::Record {
                 kind: "core/person"
             }
-        ) && entry.id != "person.contacts"
-        {
-            panels.push((
-                format!("person-panel-{}", entry.id.replace(['.', '/'], "-")),
-                entry.id.into(),
-            ));
+        );
+        let history = matches!(embed.context, EmbedContext::Record { kind: "*" })
+            && embed.slot == "record.history";
+        if (person && entry.id != "person.contacts") || history {
+            panels.push(RecordPanel {
+                anchor: if history {
+                    "person-record-history".into()
+                } else {
+                    format!("person-panel-{}", entry.id.replace(['.', '/'], "-"))
+                },
+                embed: entry.id.into(),
+                access: embed.access,
+            });
         }
     }
+    panels.sort_by(|a, b| a.embed.cmp(&b.embed));
     Ok(panels)
+}
+
+/// Translate the owner's after-commit identities into host wakeups. Each
+/// mounted page owns its bridge and aborts it when navigation drops the page.
+struct Reactive {
+    state: Box<dyn LiveState<Scope, Error>>,
+    persons: Arc<PersonService>,
+    person: Option<PersonId>,
+    forwarding: Option<tokio::task::JoinHandle<()>>,
+}
+impl Drop for Reactive {
+    fn drop(&mut self) {
+        if let Some(job) = self.forwarding.take() {
+            job.abort();
+        }
+    }
+}
+impl LiveState<Scope, Error> for Reactive {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        self.state.update(request)
+    }
+    fn panels(&self) -> Vec<PanelSpec> {
+        self.state.panels()
+    }
+    fn subscriptions(&mut self) -> Vec<Subscription> {
+        let mut source = self.persons.subscribe();
+        let (sender, receiver) = tokio::sync::broadcast::channel(16);
+        let person = self.person;
+        self.forwarding = Some(tokio::spawn(async move {
+            loop {
+                match source.recv().await {
+                    Ok(change) if person.is_none_or(|id| id == change.id) => {
+                        if sender
+                            .send(Change {
+                                tenant: change.tenant,
+                                user: None,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }));
+        vec![Subscription { receiver }]
+    }
 }

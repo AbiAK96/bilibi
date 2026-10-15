@@ -731,6 +731,7 @@ name = "bilibi-person"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "axum",
  "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-database",

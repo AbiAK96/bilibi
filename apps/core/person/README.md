@@ -1,9 +1,10 @@
-# Person identity and personal contacts (K7)
+# Person identity and personal contacts
 
 `PersonService` (`core/person.persons`) and the transaction APIs in
 `src/identity.rs` own `persons`. They use K0's `PersonInput`, `PersonKind` and
 `PersonId`; an identity is never an employee or login account. Core works with
-People absent. K8 supplies list/create/detail pages; this slice has no routes.
+People absent. `/persons`, `/persons/new` and `/persons/{id}` provide the
+capability-gated directory, create form and inline record/contact editor.
 
 The additive module migration creates tenant-scoped bigint identities, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
@@ -101,3 +102,52 @@ executes create/update/retire through the real safe-write plan service and print
 replay refusal without printing credentials or plan codes. It creates a temporary
 operator marker only in the disposable DB and removes it. No People module,
 unit tests, test runner or mocks are involved.
+
+## Person screens and record panels (K8)
+
+The People menu entry is a Core contact directory. It has no employee number,
+employment type/status/dates, supervisor, department or automatic account
+controls. Human/agent is identity kind; current/retired is identity availability.
+Retirement preserves history and is independent of HR employment.
+
+The directory composes shared `ListState` and Grid `PageColumns`, with bounded
+25/50/100 row pages, search through visible contacts, kind and retired filters,
+name/kind/creation-date sorting and stable ID ties. Search, filters, sort,
+pagination and Grid `cols/lens/z/since` state survive reload and Back; column
+arrangements use shared per-account Grid persistence. Add personal email/phone
+through the notch; fresh restrictions prune walked columns and suggestions.
+
+Creation uses the owner validator, shared form errors, non-binding duplicate
+suggestions, and creates no login. Detail fields use shared inline text/choice
+editors and per-fact commit states. Enter/blur commits, Escape cancels, nullable
+contacts can clear, stale versions refuse, and lost write access keeps the page
+with readonly facts and an explanatory outcome. Retirement uses a held record
+version and shared confirmation dialog. History is the shared audit embed.
+
+`person.contacts` is a reusable discovered embed. A company, affiliation or
+account owner first resolves its relation through its public owner API, then
+mounts it with `{panel: <stable anchor>, id: <Person ID>}`. It reauthorizes Person
+reads and writes, masks restricted contacts, and edits only personal email and
+phone. Never pass a company ID as a Person ID. K19 owns the company affiliation
+list/editor and work contacts; no guessed company-to-person link exists here.
+
+Person detail automatically mounts contributed embeds whose context is
+`Record { kind: "core/person" }`, except its own `person.contacts`. The path
+carries `panel`, `id` and `person_id`; anchors are stable and browser-owned.
+Affiliation, Address, User and relationship owners can contribute their panels
+without Person importing them or requiring People. Each panel is separately
+guarded by the host. HTTP rendering leaves child anchors for live mounting.
+
+The manual `person-contact-panel` example serves an independent record host at
+`/person-contact-reference/{id}` so the shared contact embed can be tried outside
+Person detail. Run it with an existing migrated/seeded disposable `DATABASE_URL`:
+
+```sh
+APP_ORIGIN=http://127.0.0.1:4499 BIND_ADDR=127.0.0.1:4499 \
+  cargo run -p bilibi-person --example person-contact-panel --locked
+```
+
+Sign in, open the reference route with a Person ID created through `/persons/new`,
+edit a personal contact, and verify it in the ordinary Person page. The reference
+host resolves the Person through its public API on every update; a production
+company host additionally resolves its owned affiliation before supplying that ID.

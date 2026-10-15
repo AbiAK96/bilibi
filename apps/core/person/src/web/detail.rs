@@ -20,18 +20,26 @@ struct View<'a> {
     panels: Vec<PanelSpec>,
     dialog: Html,
 }
+#[derive(Template)]
+#[template(path = "person_actions.html")]
+struct Actions {
+    retire: Html,
+    back: Html,
+}
 pub(super) struct Detail {
     pub pages: Pages,
     pub id: PersonId,
+    active_panels: Vec<PanelSpec>,
     statuses: CommitStates,
     pending_retire: Option<(String, i64)>,
-    notice: String,
+    pub(super) notice: String,
 }
 impl Detail {
     pub fn new(pages: Pages, id: PersonId, _framed: bool) -> Self {
         Self {
             pages,
             id,
+            active_panels: Vec::new(),
             statuses: CommitStates::default(),
             pending_retire: None,
             notice: String::new(),
@@ -95,13 +103,30 @@ impl Detail {
         })?);
         render(Card {
             id: &format!("{prefix}-card"),
+            class: "mt-6",
             role: "region",
             body,
             ..Card::default()
         })
     }
-    async fn view(&self, scope: &Scope) -> Result<LiveBody> {
+    async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let person = self.pages.persons.read(scope, self.id).await?;
+        self.active_panels.clear();
+        for panel in &self.pages.person_panels {
+            if self.pages.embed_allowed(scope, panel.access).await? {
+                self.active_panels.push(PanelSpec {
+                    id: panel.anchor.clone(),
+                    embed: panel.embed.clone(),
+                    path: HashMap::from([
+                        ("panel".into(), panel.anchor.clone()),
+                        ("id".into(), self.id.get().to_string()),
+                        ("person_id".into(), self.id.get().to_string()),
+                        ("kinds".into(), "person".into()),
+                    ]),
+                    query: HashMap::new(),
+                });
+            }
+        }
         let editable = person.retired_at.is_none() && self.pages.allowed(scope, UPDATE).await?;
         let mut actions = Html::EMPTY;
         if person.retired_at.is_none()
@@ -117,12 +142,16 @@ impl Detail {
                 ..Button::default()
             })?);
         }
-        actions.push(&render(BackLink {
+        let back = render(BackLink {
             href: "/persons",
             id: "person-back",
             title: "Back to people",
             ..BackLink::default()
-        })?);
+        })?;
+        let actions = render(Actions {
+            retire: actions,
+            back,
+        })?;
         let header = render(Header {
             title: Html::text(&person.name),
             actions,
@@ -221,7 +250,11 @@ impl Detail {
             header,
             identity,
             contacts: self.contacts(scope, &person, "person-contact").await?,
-            panels: self.panels(),
+            panels: self
+                .panels()
+                .into_iter()
+                .filter(|p| p.id != "person-record-history")
+                .collect(),
             dialog,
         })?;
         Ok(LiveBody {
@@ -356,31 +389,6 @@ impl LiveState<Scope, Error> for Detail {
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
-        let mut panels = vec![PanelSpec {
-            id: "person-record-history".into(),
-            embed: "audit.record-history".into(),
-            path: HashMap::from([
-                ("panel".into(), "person-record-history".into()),
-                ("kinds".into(), "person".into()),
-                ("id".into(), self.id.get().to_string()),
-            ]),
-            query: HashMap::new(),
-        }];
-        panels.extend(
-            self.pages
-                .person_panels
-                .iter()
-                .map(|(anchor, embed)| PanelSpec {
-                    id: anchor.clone(),
-                    embed: embed.clone(),
-                    path: HashMap::from([
-                        ("panel".into(), anchor.clone()),
-                        ("id".into(), self.id.get().to_string()),
-                        ("person_id".into(), self.id.get().to_string()),
-                    ]),
-                    query: HashMap::new(),
-                }),
-        );
-        panels
+        self.active_panels.clone()
     }
 }

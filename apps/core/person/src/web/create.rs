@@ -85,6 +85,9 @@ impl Create {
                         .collect(),
                 )
                 .attr("data-debounce", "300");
+            if ["name", "kind"].contains(&key) {
+                field = field.required();
+            }
             if !can_create {
                 field = field.disabled();
             }
@@ -134,10 +137,11 @@ impl Create {
             fields,
             restricted: masked,
             duplicates,
-            cancel: render(BackLink {
+            cancel: render(Button {
                 href: "/persons",
-                title: "Cancel",
-                ..BackLink::default()
+                id: "person-cancel",
+                body: Html::text("Cancel"),
+                ..Button::default()
             })?,
             submit: render(Button {
                 id: "person-create",

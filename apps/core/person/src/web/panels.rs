@@ -31,7 +31,9 @@ impl LiveState<Scope, Error> for Contact {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             if let LiveInput::Event(value) = request.input {
-                if event(value)? != "save_field" {
+                if event(value)? != "save_field"
+                    || !["email", "phone"].contains(&value["field"].as_str().unwrap_or(""))
+                {
                     return Err(Error::Invalid);
                 }
                 self.detail.handle(request.scope, value).await?;
@@ -60,6 +62,7 @@ impl LiveState<Scope, Error> for Contact {
                         .await?,
                 })?
                 .to_string(),
+                notice: self.detail.notice.clone(),
                 rows: 1,
                 ..LiveBody::default()
             })
