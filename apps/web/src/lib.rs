@@ -132,6 +132,10 @@ pub fn router(app: App) -> Router {
             get(|| async { asset_response("ui-specimen.html") }),
         )
         .route("/assets/ui-components.html", get(components_specimen))
+        .route(
+            "/assets/logo.svg",
+            get(|| async { asset_response("logo.svg") }),
+        )
         .route("/assets/ui-feedback.html", get(feedback_specimen))
         .route(
             "/assets/ui-feedback-demo.js",

@@ -264,9 +264,15 @@ async fn dispatch(
             .await?;
     }
     let mut response = crate::document_themed(
-        bound.page.0.title(bound.route.operation).unwrap_or("Bilibi"),
-        &shell.html,shell.theme,
-    )?.into_response();
+        bound
+            .page
+            .0
+            .title(bound.route.operation)
+            .unwrap_or("Bilibi"),
+        &shell.html,
+        shell.theme,
+    )?
+    .into_response();
     if framed {
         response.headers_mut().insert(
             header::HeaderName::from_static("x-bilibi-framed"),

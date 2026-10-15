@@ -241,10 +241,12 @@ impl View<'_> {
                     })
                 })
                 .collect::<askama::Result<_>>()?;
-            table.empty = Some(TableEmpty::State(EmptyState::missing(
-                "No example legal entity types",
-                "Every example has been deleted. Restore the examples to walk the flow again.",
-            )));
+            if table.rows.is_empty() {
+                table.empty = Some(TableEmpty::State(EmptyState::missing(
+                    "No example legal entity types",
+                    "Every example has been deleted. Restore the examples to walk the flow again.",
+                )));
+            }
             return render(table);
         }
         if id == "sample-id-table" {
@@ -374,7 +376,15 @@ impl View<'_> {
             body: Html::text("Clear search"),
             ..bilibi_ui::Button::default()
         })?;
-        table.empty = Some(TableEmpty::State(empty));
+        if table.rows.is_empty() {
+            table.empty = Some(if id == "sample-table" {
+                TableEmpty::State(empty)
+            } else {
+                TableEmpty::Content(Html::raw(
+                    r#"<p id="design-library-pattern-empty" class="p-4 text-sm text-ink-muted">No example companies match. Clear the search to see all examples.</p>"#,
+                ))
+            });
+        }
         render(table)
     }
     fn pagination(&self, id: &str) -> askama::Result<Html> {

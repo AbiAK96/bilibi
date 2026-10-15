@@ -168,8 +168,12 @@ impl View<'_> {
                     .errors(f.errors)
                     .wrapper_class(&f.wrapper_class)
                     .attrs(f.attrs);
-                m.placeholder = string(c, "placeholder").into();
-                m.selection_label = string(c, "selection_label").into();
+                if c.get("placeholder").is_some() {
+                    m.placeholder = string(c, "placeholder").into();
+                }
+                if c.get("selection_label").is_some() {
+                    m.selection_label = string(c, "selection_label").into();
+                }
                 m.required = flag(c, "required");
                 m.values = self
                     .state
@@ -298,10 +302,16 @@ impl View<'_> {
                     } else {
                         Html::text(value)
                     };
+                    let mut editor = render(editor)?;
+                    if id.ends_with("edit") {
+                        editor.push(&Html::raw(
+                            r#"<span class="text-xs text-ink-muted">Saves on selection.</span>"#,
+                        ));
+                    }
                     render(InlineChoice {
                         field: inline,
                         display,
-                        editor: render(editor)?,
+                        editor,
                     })
                 }
             }
