@@ -290,6 +290,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-tenancy",
+ "bytes",
  "inventory",
  "serde_json",
  "tokio",

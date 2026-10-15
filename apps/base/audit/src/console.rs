@@ -5,7 +5,10 @@ use crate::{bounded_text, record_action, Attribution, RequestInfo};
 use bilibi_database::{Db, Error, Result};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
-use tokio_postgres::{error::SqlState, Client};
+use tokio_postgres::{error::SqlState, Client, IsolationLevel};
+
+mod parameters;
+pub use parameters::{extract_named_parameters, Parameters};
 
 pub const MAX_ROWS: i64 = 1000;
 pub const TIMEOUT_MS: i64 = 10_000;
@@ -38,6 +41,9 @@ pub enum Guard {
     Statement,
     Keyword,
     ReadOnlyTransaction,
+    Capability,
+    Actor,
+    Bounds,
 }
 impl Guard {
     pub fn key(self) -> &'static str {
@@ -47,6 +53,9 @@ impl Guard {
             Self::Statement => "statement",
             Self::Keyword => "keyword",
             Self::ReadOnlyTransaction => "read_only_transaction",
+            Self::Capability => "capability",
+            Self::Actor => "actor",
+            Self::Bounds => "bounds",
         }
     }
 }
@@ -66,6 +75,7 @@ impl Outcome {
         }
     }
 }
+#[derive(Debug)]
 pub struct ConsoleAnswer {
     pub outcome: Outcome,
     pub result: Option<ConsoleResult>,
@@ -80,37 +90,42 @@ pub async fn execute_readonly(
     request: ConsoleRequest<'_>,
     info: Option<&RequestInfo>,
 ) -> Result<ConsoleAnswer> {
-    let mut client = db.get().await?;
-    let (outcome, result) = run(&mut client, scope, &request).await?;
-    let mut payload = json!({"sql": bounded_text(request.sql)});
-    if let Some(name) = request.name {
-        payload["name"] = Value::String(bounded_text(name));
+    execute_readonly_with_options(db, scope, request, &ConsoleOptions::default(), info).await
+}
+
+/// Named values travel through PostgreSQL bind parameters, never SQL text or
+/// audit payloads. Sorting is restricted to a column returned by the query.
+#[derive(Clone, Debug, Default)]
+pub struct ConsoleOptions {
+    pub parameters: Parameters,
+    pub order_by: Option<String>,
+    pub descending: bool,
+}
+
+pub async fn execute_readonly_with_options(
+    db: &Db,
+    scope: &Scope,
+    request: ConsoleRequest<'_>,
+    options: &ConsoleOptions,
+    info: Option<&RequestInfo>,
+) -> Result<ConsoleAnswer> {
+    let execution = async {
+        let mut client = db.get().await?;
+        run(&mut client, scope, &request, options).await
     }
-    match &outcome {
-        Outcome::Succeeded { row_count } => {
-            payload["result"] = json!("succeeded");
-            payload["row_count"] = json!(row_count);
-        }
-        Outcome::Refused { guard, message } => {
-            payload["result"] = json!("refused");
-            payload["guard"] = json!(guard.key());
-            payload["message"] = json!(bounded_text(message));
-        }
-        Outcome::Failed { message } => {
-            payload["result"] = json!("failed");
-            payload["message"] = json!(bounded_text(message));
-        }
-    }
-    // Recorded after the read-only transaction ended, on the same connection.
-    let action_id = record_action(
-        &**client,
-        &Attribution::from_scope(scope),
-        info,
-        outcome.event(),
-        payload,
-        false,
-    )
-    .await?;
+    .await;
+    let (outcome, result) = match execution {
+        Ok(answer) => answer,
+        // Connection, operator-proof and transaction setup errors also count as
+        // attempts. If the recorder is unavailable, fail closed with no rows.
+        Err(error) => (
+            Outcome::Failed {
+                message: error.to_string(),
+            },
+            None,
+        ),
+    };
+    let action_id = record_outcome(db, scope, &request, &outcome, info).await?;
     Ok(ConsoleAnswer {
         outcome,
         result,
@@ -118,10 +133,55 @@ pub async fn execute_readonly(
     })
 }
 
+/// The service records authorization refusals through the same payload builder.
+/// This API accepts counts/outcomes only and cannot receive result rows.
+pub async fn record_outcome(
+    db: &Db,
+    scope: &Scope,
+    request: &ConsoleRequest<'_>,
+    outcome: &Outcome,
+    info: Option<&RequestInfo>,
+) -> Result<i64> {
+    let mut payload = json!({"sql": bounded_text(request.sql)});
+    if let Some(name) = request.name {
+        payload["name"] = Value::String(bounded_text(name));
+    }
+    match outcome {
+        Outcome::Succeeded { row_count } => {
+            payload["result"] = json!("succeeded");
+            payload["row_count"] = json!(row_count);
+        }
+        Outcome::Refused { guard, .. } => {
+            payload["result"] = json!("refused");
+            payload["guard"] = json!(guard.key());
+            payload["message"] = json!(format!("Query refused by {} guard.", guard.key()));
+        }
+        Outcome::Failed { .. } => {
+            payload["result"] = json!("failed");
+            // PostgreSQL errors can quote parameter values or data raised by a
+            // function. Return details to the operator, never persist them.
+            payload["message"] = json!("Query execution failed.");
+        }
+    }
+    // The execution connection has been rolled back and released. Recording on
+    // a separate checkout also survives a connection broken by the command.
+    let client = db.get().await?;
+    record_action(
+        &**client,
+        &Attribution::from_scope(scope),
+        info,
+        outcome.event(),
+        payload,
+        false,
+    )
+    .await
+}
+
 async fn run(
     client: &mut Client,
     scope: &Scope,
     request: &ConsoleRequest<'_>,
+    options: &ConsoleOptions,
 ) -> Result<(Outcome, Option<ConsoleResult>)> {
     let refused = |guard: Guard, message: &str| {
         Ok((
@@ -146,7 +206,17 @@ async fn run(
     if sql.is_empty() {
         return refused(Guard::Empty, "Query cannot be empty.");
     }
-    let stripped = strip(sql);
+    if sql.len() > 100_000
+        || options.parameters.len() > 1000
+        || options
+            .parameters
+            .values()
+            .flatten()
+            .any(|value| value.len() > 100_000)
+    {
+        return refused(Guard::Bounds, "Query or parameter input is too large.");
+    }
+    let stripped = parameters::code_only(sql);
     let mut words = stripped
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty())
@@ -165,7 +235,11 @@ async fn run(
     }
     let page = request.page.max(1);
     let per_page = request.per_page.clamp(1, MAX_ROWS);
-    match query(client, sql, page, per_page).await {
+    if (page - 1).checked_mul(per_page).is_none() {
+        return refused(Guard::Bounds, "Result page is too large.");
+    }
+    let bound = parameters::bind(sql, &options.parameters);
+    match query(client, &bound, page, per_page, options).await {
         Ok(result) => Ok((
             Outcome::Succeeded {
                 row_count: result.total,
@@ -190,17 +264,44 @@ async fn run(
 
 async fn query(
     client: &mut Client,
-    sql: &str,
+    bound: &parameters::Bound,
     page: i64,
     per_page: i64,
+    options: &ConsoleOptions,
 ) -> std::result::Result<ConsoleResult, tokio_postgres::Error> {
-    let tx = client.build_transaction().read_only(true).start().await?;
+    let tx = client
+        .build_transaction()
+        .read_only(true)
+        .isolation_level(IsolationLevel::RepeatableRead)
+        .start()
+        .await?;
+    let result = query_in_transaction(&tx, bound, page, per_page, options).await;
+    // Await rollback even after a SQL failure, before the connection is reused.
+    let rollback = tx.rollback().await;
+    match result {
+        Err(error) => Err(error),
+        Ok(result) => {
+            rollback?;
+            Ok(result)
+        }
+    }
+}
+
+async fn query_in_transaction(
+    tx: &tokio_postgres::Transaction<'_>,
+    bound: &parameters::Bound,
+    page: i64,
+    per_page: i64,
+    options: &ConsoleOptions,
+) -> std::result::Result<ConsoleResult, tokio_postgres::Error> {
     tx.batch_execute(&format!("SET LOCAL statement_timeout = {TIMEOUT_MS}"))
         .await?;
+    let sql = &bound.sql;
+    let params = bound.values();
     let total: i64 = tx
         .query_one(
             &format!("SELECT count(*) FROM ({sql}\n) AS __blb_count"),
-            &[],
+            &params,
         )
         .await?
         .get(0);
@@ -211,78 +312,55 @@ async fn query(
         .iter()
         .map(|column| column.name().to_owned())
         .collect();
-    let rows = tx
-        .query(
-            &format!(
-                "SELECT row_to_json(__blb_view) FROM ({sql}\n) AS __blb_view LIMIT $1 OFFSET $2"
-            ),
-            &[&per_page, &((page - 1) * per_page)],
+    let order = options
+        .order_by
+        .as_ref()
+        .and_then(|column| columns.iter().position(|candidate| candidate == column))
+        .map(|index| {
+            format!(
+                " ORDER BY __blb_view.\"c{index}\" {}",
+                if options.descending { "DESC" } else { "ASC" }
+            )
+        })
+        .unwrap_or_default();
+    // Unique positional aliases preserve duplicate SQL column names and
+    // their values. row_to_json otherwise collapses duplicate object keys.
+    let aliases = if columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "({})",
+            (0..columns.len())
+                .map(|i| format!("\"c{i}\""))
+                .collect::<Vec<_>>()
+                .join(",")
         )
-        .await?
+    };
+    let page_sql = format!(
+        "SELECT row_to_json(__blb_view) FROM ({sql}\n) AS __blb_view{aliases}{order} LIMIT {per_page} OFFSET {}",
+        (page - 1) * per_page,
+    );
+    let raw_rows = tx.query(&page_sql, &params).await?;
+    let rows = raw_rows
         .iter()
         .map(|row| {
-            let mut object: Value = row.get(0);
-            columns
-                .iter()
-                .map(|column| {
+            let mut object: Value = row.try_get(0)?;
+            Ok((0..columns.len())
+                .map(|i| {
                     object
-                        .get_mut(column)
+                        .get_mut(format!("c{i}"))
                         .map(Value::take)
                         .unwrap_or(Value::Null)
                 })
-                .collect()
+                .collect())
         })
-        .collect();
-    tx.rollback().await?;
+        .collect::<std::result::Result<Vec<_>, tokio_postgres::Error>>()?;
     Ok(ConsoleResult {
         columns,
         rows,
         total,
         page,
         per_page,
-        last_page: ((total + per_page - 1) / per_page).max(1),
+        last_page: (total / per_page + i64::from(total % per_page != 0)).max(1),
     })
-}
-
-/// Drops string literals and comments so keyword checks see code only.
-fn strip(sql: &str) -> String {
-    let chars: Vec<char> = sql.chars().collect();
-    let mut out = String::with_capacity(sql.len());
-    let mut i = 0;
-    while i < chars.len() {
-        match chars[i] {
-            '\'' => {
-                i += 1;
-                while i < chars.len() {
-                    if chars[i] == '\'' {
-                        if chars.get(i + 1) == Some(&'\'') {
-                            i += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    i += 1;
-                }
-                out.push(' ');
-            }
-            '-' if chars.get(i + 1) == Some(&'-') => {
-                while i < chars.len() && chars[i] != '\n' {
-                    i += 1;
-                }
-                out.push(' ');
-                continue;
-            }
-            '/' if chars.get(i + 1) == Some(&'*') => {
-                i += 2;
-                while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
-                    i += 1;
-                }
-                i += 1;
-                out.push(' ');
-            }
-            c => out.push(c),
-        }
-        i += 1;
-    }
-    out
 }

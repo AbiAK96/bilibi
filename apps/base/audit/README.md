@@ -58,8 +58,23 @@ PostgreSQL `READ ONLY` transaction with a 10 s statement timeout, count, column
 names and at most 1,000 rows per page. Every command is one
 `database_query.executed|refused|failed` action row with the SQL as typed and the
 outcome; result rows never reach the record, and a command whose record cannot
-be written returns no answer. C9/C10 own saved queries, parameter binding and the
-screen; they call this function rather than running SQL themselves.
+be written returns no answer. Database error details are returned to the operator
+but the recorded failure/refusal message is generic: PostgreSQL messages may
+quote parameter values or data raised by a function.
+
+`execute_readonly_with_options` also accepts named parameters and output sorting.
+Its lexical binder skips strings, quoted identifiers, dollar quotes, casts and
+nested comments; values use PostgreSQL's text bind format for the inferred type,
+never string substitution. A missing value binds NULL. The transaction uses a
+repeatable-read snapshot and is explicitly rolled back even on SQL error. Unique
+positional aliases preserve duplicate output names in JSON conversion; paging
+arithmetic is checked. Connection/setup errors also go through the recorder on
+a fresh pool checkout. `record_outcome` allows the owning service to record
+capability/actor refusals through this same rows-free payload builder.
+
+C9's `core/user.database_queries` service owns saved queries and the live
+capability/account checks; C10 owns the screen. Both reuse this executor rather
+than running editor SQL themselves.
 
 `record_history` and `recent_actions` are tenant-scoped reads for P12/P13; those
 slices own the capability vocabulary, filters, field withholding and screens.
