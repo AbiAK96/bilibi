@@ -13,6 +13,24 @@ async fn main() -> Result<()> {
                 .await?;
             println!("Authorization system roles reconciled");
         }
+        Some("geonames-import") => {
+            use bilibi_core::geonames::{ImportOptions, ReferenceImport, IMPORT_SERVICE, USAGE};
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            let options = ImportOptions::from_args(&args).map_err(|message| {
+                eprintln!("{message}\n{USAGE}");
+                Error::Invalid
+            })?;
+            let app = bilibi_web::App::new(db.clone(), "http://localhost")?;
+            let importer = app.services.get::<ReferenceImport>(IMPORT_SERVICE)?;
+            println!("GeoNames cache: {}", options.cache_dir.display());
+            match importer.run(&options).await {
+                Ok(reports) => reports.iter().for_each(|report| println!("{report}")),
+                Err(error) => {
+                    eprintln!("GeoNames import failed: {error}");
+                    return Err(Error::Internal);
+                }
+            }
+        }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;

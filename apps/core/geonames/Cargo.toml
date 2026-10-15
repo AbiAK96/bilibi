@@ -9,11 +9,16 @@ license.workspace = true
 bilibi-authz = { path = "../../base/authz" }
 bilibi-database.workspace = true
 bilibi-grid = { path = "../../base/grid" }
+bilibi-integration = { path = "../../base/integration" }
 bilibi-module-registry.workspace = true
+bilibi-tenancy = { path = "../../base/tenancy" }
 inventory.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
 tokio-postgres.workspace = true
+zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 bilibi-base = { path = "../../base" }
 bilibi-core = { path = ".." }
-tokio.workspace = true
+axum.workspace = true
