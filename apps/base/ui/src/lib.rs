@@ -75,6 +75,8 @@ pub const JS: &str = include_str!("../assets/live.js");
 pub const UI_JS: &str = include_str!("../assets/ui.js");
 /// The `data-hook` browser behaviour of the shared form controls.
 pub const HOOKS_JS: &str = include_str!("../assets/hooks.js");
+/// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
+pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
 
 /// Vendored public assets. Keep this allowlist bounded: never resolve a
 /// request path on disk, and never make font loading depend on authentication.

@@ -50,6 +50,10 @@ It is an asset fixture, not the Design Library or a component implementation.
   `7fa22308a3d0c94ee2b3cd537a1196b65db34a3e`, as recorded by Bilimbi.
   Both original WOFF2 files are copied unchanged. SIL OFL 1.1:
   `static/fonts/OFL.txt` (also publicly served).
+- topbar 3.0.0 (`vendor/topbar.js`): the page-loading bar, copied unchanged from
+  Bilimbi `apps/web/assets/vendor/topbar.js` including its reduced-motion check.
+  MIT, license header in the file. Served at `/assets/topbar.js`; `live.js`
+  shows it for page-level round trips that exceed 300ms.
 - Heroicons: v2.2.0 at `0435d4ca364a608cc75e2f8683d374e55abbae26`,
   matching Bilimbi's mix.lock. Original optimized SVGs and MIT license are in
   `vendor/heroicons/`.

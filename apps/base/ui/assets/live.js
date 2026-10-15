@@ -1,158 +1,495 @@
-// The browser sends intent and installs escaped server-rendered HTML. Page data,
-// sorting, editing, permissions, and notification counts remain on the server.
+// Browser half of the live-page transport (apps/web/src/live.rs). The browser
+// sends intent and installs escaped server-rendered HTML; page data, sorting,
+// editing, permissions and notification counts remain on the server.
+//
+// This file replaces the four LiveView behaviours Bilimbi relied on:
+//
+//   * An intent queue with request IDs. Every intent is sent in order and
+//     acknowledged by the echoed `request_id`; the server processes a socket
+//     sequentially, so rapid input is never dropped while a round trip is in
+//     flight. Intents raised while the socket is down wait for the remount.
+//   * A keyed DOM patch. A `page` or `fragment` reply is reconciled into the
+//     existing tree: elements with an `id` keep their identity, unkeyed siblings
+//     match by position, attributes and text are written only where they
+//     differ. Focus, selection, scroll positions, unfinished drafts, open
+//     disclosures and <iframe> documents therefore survive a patch that does not
+//     change them. `data-live-ignore` marks a subtree the browser owns (only its
+//     data-* attributes are patched, like Bilimbi's phx-update="ignore").
+//   * Busy state. The control that raised an intent carries aria-busy until its
+//     reply arrives (Bilimbi's aria-busy mirror); a `data-working` label is
+//     restored by ui.js at the same moment. Page-level round trips (mount,
+//     navigate, params, Back) show the topbar loading bar after 300ms.
+//   * Reconnect with backoff. A dropped socket reconnects, remounts the current
+//     URL into the existing DOM and then sends the intents raised meanwhile.
+//     Intents that were in flight when the socket dropped cannot be confirmed;
+//     the status region says how many, so nothing is discarded silently. In
+//     development the reconnect reloads the page to pick up rebuilt assets.
+//
+// Hooks: ui.js mounts and destroys `data-hook` controllers from DOM mutations;
+// this patcher reports the hooks whose attributes or subtree it touched through
+// BilibiUI.patched so each receives exactly one `updated` per patch.
 (() => {
-  const feedback = document.createElement('div');
-  feedback.id = 'feedback'; feedback.setAttribute('role', 'status');
-  document.body.append(feedback);
-  let socket;
-  let pending = false;
-  let sequence = 0;
-  let activeRequest = null;
-  let submittedField = null;
-  let lastHTML = null;
-  let reconnecting = false;
-  let retryDelay = 500;
-  let retryTimer;
+  'use strict';
   const devReload = __BILIBI_DEV_RELOAD__;
+  const feedback = document.createElement('div');
+  feedback.id = 'feedback';
+  feedback.setAttribute('role', 'status');
+  document.body.append(feedback);
+
+  // ---- Transport, queue and acknowledgement --------------------------------
+  let socket = null;
+  let sequence = 0;
+  const queued = []; // intents not yet sent: {intent, source, form, loading}
+  const inflight = new Map(); // request_id -> entry awaiting the server's echo
+  let reconnecting = false;
+  let stopped = false; // the server cleared the page: no reconnect
+  let unconfirmed = 0; // in-flight intents lost to a dropped socket
+  let retryDelay = 500;
+  let retryTimer = null;
+  let lastHTML = null;
+
+  const params = () => Object.fromEntries(new URLSearchParams(location.search));
+  const mountIntent = () => ({type: 'mount', path: location.pathname, params: params()});
+
   function connect() {
-    if (!document.querySelector('[data-live]')) return;
+    if (stopped || !document.querySelector('[data-live]')) return;
+    clearTimeout(retryTimer);
+    retryTimer = null;
     const url = new URL('/live', location.href);
     if (document.querySelector('[data-framed=true]')) url.searchParams.set('framed', 'true');
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
-    socket.onopen = () => {
-      window.dispatchEvent(new CustomEvent('bilibi:connected'));
-      if (reconnecting) { location.reload(); return; }
-      retryDelay = 500;
-      send({type:'mount', path: location.pathname, params: Object.fromEntries(new URLSearchParams(location.search))});
+    socket.onopen = opened;
+    socket.onmessage = ({data}) => receive(JSON.parse(data));
+    socket.onclose = closed;
+  }
+
+  function opened() {
+    retryDelay = 500;
+    window.dispatchEvent(new CustomEvent('bilibi:connected'));
+    if (reconnecting && devReload) { location.reload(); return; }
+    const resumed = reconnecting;
+    reconnecting = false;
+    feedback.classList.remove('rebuilding');
+    // The mount at the current URL goes first; intents raised before the socket
+    // was open (or while it was down) follow it in the order they were raised.
+    const held = queued.splice(0);
+    enqueue(mountIntent(), {loading: true, navigation: !resumed});
+    for (const entry of held) { queued.push(entry); }
+    if (resumed) {
+      feedback.textContent = unconfirmed
+        ? `Reconnected. ${unconfirmed} request${unconfirmed === 1 ? ' was' : 's were'} not confirmed before the connection dropped; the page shows the server's current state.`
+        : '';
+      unconfirmed = 0;
+    }
+    flush();
+  }
+
+  function closed() {
+    socket = null;
+    if (stopped || !document.getElementById('app')) return;
+    for (const entry of inflight.values()) settle(entry);
+    unconfirmed += inflight.size;
+    inflight.clear();
+    loading();
+    // The shared connection banners reveal themselves from this event.
+    window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: devReload ? 'server' : 'client'}}));
+    reconnecting = true;
+    feedback.textContent = devReload ? 'Rebuilding…' : 'Live connection lost. Reconnecting…';
+    feedback.classList.toggle('rebuilding', devReload);
+    retry();
+  }
+
+  function retry() {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => {
+      retryDelay = Math.min(retryDelay * 2, 5000);
+      connect();
+    }, retryDelay);
+  }
+
+  // A tab that comes back or a network that returns need not wait out the backoff.
+  for (const name of ['online', 'focus']) {
+    window.addEventListener(name, () => { if (reconnecting && !socket && retryTimer) connect(); });
+  }
+
+  function enqueue(intent, meta = {}) {
+    const entry = {intent, source: meta.source || null, form: meta.form || null,
+      loading: !!meta.loading, navigation: !!meta.navigation};
+    if (entry.source) busy(entry.source);
+    queued.push(entry);
+    flush();
+  }
+
+  function flush() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    while (queued.length) {
+      const entry = queued.shift();
+      const id = ++sequence;
+      inflight.set(id, entry);
+      socket.send(JSON.stringify({...entry.intent, request_id: id}));
+    }
+    loading();
+  }
+
+  // ---- Busy state ----------------------------------------------------------
+  // The raising control is marked busy until its reply. The marker records that
+  // this file owns the aria-busy: a server-rendered aria-busy stands untouched.
+  function busy(el) {
+    if (!el.isConnected || el.hasAttribute('aria-busy')) return;
+    el.setAttribute('aria-busy', 'true');
+    el.setAttribute('data-live-busy', '');
+  }
+
+  function settle(entry) {
+    const el = entry.source;
+    if (!el) return;
+    if (el.hasAttribute('data-live-busy')) {
+      el.removeAttribute('data-live-busy');
+      el.removeAttribute('aria-busy');
+    }
+    if (window.BilibiUI) window.BilibiUI.settle(el);
+  }
+
+  // The loading bar uses the orientation colour from the theme; a canvas cannot
+  // paint a `var(--color-brand-strong)` token, so a probe resolves it per show.
+  function brandStrong() {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--color-brand-strong)';
+    document.documentElement.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }
+
+  let barShown = false;
+  function loading() {
+    const active = [...inflight.values()].some((entry) => entry.loading);
+    if (active === barShown || !window.topbar) return;
+    barShown = active;
+    if (active) {
+      window.topbar.config({barColors: {0: brandStrong()}, shadowColor: 'rgba(0, 0, 0, .3)'});
+      window.topbar.show(300);
+    } else {
+      window.topbar.hide();
+    }
+  }
+
+  // ---- Replies -------------------------------------------------------------
+  function receive(message) {
+    const entry = message.request_id == null ? null : inflight.get(message.request_id);
+    // Acknowledge before patching: the busy mirror lifts and the control shows
+    // whatever the reply renders for it.
+    if (entry) {
+      inflight.delete(message.request_id);
+      settle(entry);
+    }
+    // A form whose submission the server accepted gives up its draft and shows
+    // the stored value; a rejected submission keeps the person's input.
+    const options = {
+      submitted: entry && entry.form && message.type !== 'error' ? entry.form : null,
+      navigation: !!(entry && entry.navigation),
     };
-    socket.onmessage = ({data}) => {
-      const message = JSON.parse(data);
-      if (message.type === 'page') {
-        // The owner hands the person to another origin (an OAuth callback):
-        // navigate instead of installing the page.
-        if (message.redirect) { location.assign(message.redirect); return; }
-        const target = document.getElementById('app');
-        if (message.html !== lastHTML) {
-          // Keep unfinished inline input across bell/refresh patches. Retain the
-          // draft's version too, so a concurrent server change still conflicts.
-          const drafts = [...target.querySelectorAll('form[data-event=save]')].flatMap(form => {
-            const input = form.elements.value;
-            const initial = input.tagName === 'SELECT'
-              ? [...input.options].find(option => option.defaultSelected)?.value : input.defaultValue;
-            const field = form.elements.field.value;
-            if (input.value === initial || (message.notice && field === submittedField)) return [];
-            return [{field, id:form.elements.id.value, value:input.value, version:form.elements.version.value,
-              focused:input === document.activeElement, start:input.selectionStart, end:input.selectionEnd}];
-          });
-          const menuOpen = target.querySelector('#user-menu')?.open;
-          target.outerHTML = message.html;
+    if (message.type === 'page') {
+      // Consent replies can hand the browser back to an OAuth client.
+      if (message.redirect) { location.assign(message.redirect); return; }
+      if (message.html !== lastHTML) {
+        patch(document.getElementById('app'), message.html, options);
+        lastHTML = message.html;
+      }
+      if (message.url && message.url !== location.pathname + location.search) {
+        history[message.history === 'push' ? 'pushState' : 'replaceState'](null, '', message.url);
+      }
+      if (message.notice) feedback.textContent = message.notice;
+    } else if (message.type === 'fragment') {
+      const target = document.getElementById(message.target);
+      if (target) patch(target, message.html, options);
+      if (message.notice) feedback.textContent = message.notice;
+    } else if (message.type === 'error') {
+      feedback.textContent = message.message;
+      if (message.clear) {
+        if (message.target && !['app', 'page', 'shell'].includes(message.target)) {
+          // A refused panel keeps an empty anchor so the parent stays usable.
+          const placeholder = document.createElement('div');
+          placeholder.id = message.target;
+          const current = document.getElementById(message.target);
+          if (current) current.replaceWith(placeholder);
+        } else {
+          stopped = true;
           const app = document.getElementById('app');
-          if (app.querySelector('#user-menu')) app.querySelector('#user-menu').open = menuOpen;
-          for (const draft of drafts) {
-            const form = [...app.querySelectorAll('form[data-event=save]')].find(form =>
-              form.elements.field.value === draft.field && form.elements.id.value === draft.id);
-            if (!form) continue; // A newly restricted field must not keep its draft.
-            form.elements.value.value = draft.value;
-            form.elements.version.value = draft.version;
-            if (draft.focused) {
-              form.elements.value.focus();
-              if (typeof draft.start === 'number') form.elements.value.setSelectionRange(draft.start, draft.end);
-            }
-          }
-          lastHTML = message.html;
-        }
-        if (message.url && message.url !== location.pathname + location.search) {
-          history[message.history === 'push' ? 'pushState' : 'replaceState'](null, '', message.url);
-        }
-        if (message.notice) { feedback.textContent = message.notice; submittedField = null; }
-        if (message.request_id === activeRequest) pending = false;
-      } else if (message.type === 'fragment') {
-        const target = document.getElementById(message.target);
-        if (target) target.outerHTML = message.html;
-        if (message.notice) feedback.textContent = message.notice;
-        if (message.request_id === activeRequest) pending = false;
-      } else if (message.type === 'error') {
-        feedback.textContent = message.message;
-        if (message.request_id === activeRequest) pending = false;
-        submittedField = null;
-        if (message.clear) {
-          if (message.target && message.target !== 'app' && message.target !== 'page' && message.target !== 'shell') {
-            const placeholder = document.createElement('div');
-            placeholder.id = message.target;
-            document.getElementById(message.target)?.replaceWith(placeholder);
-            return;
-          }
-          document.getElementById('app')?.remove();
-          const link = document.createElement('a'); link.href='/login'; link.textContent='Sign in again';
-          feedback.append(' ', link); socket.close();
+          if (app) app.remove();
+          const link = document.createElement('a');
+          link.href = '/login';
+          link.textContent = 'Sign in again';
+          feedback.append(' ', link);
+          if (socket) socket.close();
         }
       }
-    };
-    socket.onclose = () => {
-      pending = false;
-      if (!document.getElementById('app')) return;
-      // The shared connection banners reveal themselves from this event.
-      window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: devReload ? 'server' : 'client'}}));
-      if (!devReload) { feedback.textContent = 'Live connection closed. Reload to reconnect.'; return; }
-      reconnecting = true;
-      feedback.textContent = 'Rebuilding…';
-      feedback.classList.add('rebuilding');
-      clearTimeout(retryTimer);
-      retryTimer = setTimeout(() => {
-        retryDelay = Math.min(retryDelay * 2, 5000);
-        connect();
-      }, retryDelay);
-    };
+    }
+    loading();
   }
-  function send(event) {
-    if (socket?.readyState !== WebSocket.OPEN || pending) return;
-    pending = true;
-    activeRequest = ++sequence;
-    socket.send(JSON.stringify({...event, request_id:activeRequest}));
+
+  // ---- Keyed DOM patch -----------------------------------------------------
+  function patch(root, html, options) {
+    if (!root) return;
+    const template = document.createElement('template');
+    template.innerHTML = html;
+    const next = template.content.firstElementChild;
+    if (!next) return;
+    const focus = captureFocus();
+    const scroll = captureScroll(root);
+    const context = {
+      submitted: options.submitted,
+      touched: new Set(),
+      consumed: new Set(),
+      drafts: new Map(),
+      lookup: new Map(),
+    };
+    if (root.id) context.lookup.set(root.id, root);
+    for (const el of root.querySelectorAll('[id]')) context.lookup.set(el.id, el);
+    morph(root, next, context);
+    if (context.submitted && context.submitted.isConnected) context.submitted.reset();
+    restoreScroll(scroll, options.navigation);
+    restoreFocus(focus);
+    if (window.BilibiUI) window.BilibiUI.patched(context.touched);
   }
-  document.addEventListener('submit', event => {
+
+  function touch(node, context) {
+    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const hook = el && el.closest('[data-hook]');
+    if (hook) context.touched.add(hook);
+  }
+
+  function morph(from, to, context) {
+    context.consumed.add(from);
+    const element = from.nodeType === Node.ELEMENT_NODE;
+    if (from.nodeType !== to.nodeType || (element && from.tagName !== to.tagName)) {
+      touch(from, context);
+      from.replaceWith(to);
+      return to;
+    }
+    if (!element) {
+      if (from.nodeValue !== to.nodeValue) {
+        from.nodeValue = to.nodeValue;
+        touch(from, context);
+      }
+      return from;
+    }
+    // A browser-owned subtree and a control awaiting its own reply keep their
+    // state; the data-* attributes still follow the server.
+    if (from.hasAttribute('data-live-ignore') || from.hasAttribute('data-live-busy')) {
+      attributes(from, to, context, (name) => name.startsWith('data-'));
+      return from;
+    }
+    attributes(from, to, context, (name) => !pinned(from, name, context));
+    // An iframe's document belongs to the frame; its fallback children never render.
+    if (from.tagName !== 'IFRAME') children(from, to, context);
+    return from;
+  }
+
+  // Attributes the person or a controller owns on an existing element.
+  function pinned(el, name, context) {
+    if (name === 'src' && el.tagName === 'IFRAME') return true; // the frame navigated itself
+    if (name === 'open' && (el.tagName === 'DETAILS' || el.tagName === 'DIALOG')) return true;
+    // A draft keeps the context it was written in (its form's hidden values,
+    // such as a record version) so a concurrent change still conflicts on save.
+    if (name === 'value' && el.tagName === 'INPUT' && el.type === 'hidden' && el.form && drafting(el.form, context)) return true;
+    return false;
+  }
+
+  function drafting(form, context) {
+    if (form === context.submitted) return false;
+    if (!context.drafts.has(form)) context.drafts.set(form, [...form.elements].some(dirty));
+    return context.drafts.get(form);
+  }
+
+  // A control whose current state differs from the state the server last
+  // rendered. The browser's own dirty flags keep that state across attribute
+  // patches, so only hidden companions need help.
+  function dirty(control) {
+    switch (control.tagName) {
+      case 'SELECT':
+        return [...control.options].some((option) => option.selected !== option.defaultSelected);
+      case 'TEXTAREA':
+        return control.value !== control.defaultValue;
+      case 'INPUT':
+        if (control.type === 'checkbox' || control.type === 'radio') return control.checked !== control.defaultChecked;
+        if (control.type === 'hidden' || control.type === 'submit' || control.type === 'button') return false;
+        return control.value !== control.defaultValue;
+      default:
+        return false;
+    }
+  }
+
+  function attributes(from, to, context, allowed) {
+    for (const {name, value} of [...to.attributes]) {
+      if (!allowed(name) || from.getAttribute(name) === value) continue;
+      from.setAttribute(name, value);
+      touch(from, context);
+    }
+    for (const {name} of [...from.attributes]) {
+      if (!allowed(name) || to.hasAttribute(name)) continue;
+      from.removeAttribute(name);
+      touch(from, context);
+    }
+  }
+
+  const keyed = (node) => node.nodeType === Node.ELEMENT_NODE && node.id !== '';
+
+  function children(from, to, context) {
+    const olds = [...from.childNodes];
+    const siblings = new Map();
+    for (const node of olds) if (keyed(node)) siblings.set(node.id, node);
+    let cursor = from.firstChild;
+    for (const next of [...to.childNodes]) {
+      let match = null;
+      if (keyed(next)) {
+        // A keyed element is reused wherever it was, so moving it keeps its
+        // identity, hook instance and (when it stays in order) its document.
+        const candidate = siblings.get(next.id) || context.lookup.get(next.id);
+        if (candidate && candidate.isConnected && candidate.tagName === next.tagName
+          && !context.consumed.has(candidate) && !candidate.contains(from)) {
+          match = candidate;
+          if (match !== cursor) from.insertBefore(match, cursor);
+          else cursor = cursor.nextSibling;
+        }
+      } else {
+        // Unkeyed nodes pair by position with the next unkeyed, unconsumed old
+        // node; a keyed old node is only ever matched by its key.
+        while (cursor && (keyed(cursor) || context.consumed.has(cursor))) cursor = cursor.nextSibling;
+        if (cursor) {
+          match = cursor;
+          cursor = cursor.nextSibling;
+        }
+      }
+      if (match) {
+        morph(match, next, context);
+      } else {
+        touch(from, context);
+        from.insertBefore(next, cursor);
+      }
+    }
+    for (const node of olds) {
+      if (node.parentNode === from && !context.consumed.has(node)) {
+        touch(from, context);
+        node.remove();
+      }
+    }
+  }
+
+  // ---- Focus and scroll retention -------------------------------------------
+  function captureFocus() {
+    const el = document.activeElement;
+    if (!el || el === document.body || !el.id) return null;
+    const saved = {id: el.id};
+    try {
+      saved.start = el.selectionStart;
+      saved.end = el.selectionEnd;
+      saved.direction = el.selectionDirection;
+    } catch {
+      // Selection does not apply to this control.
+    }
+    return saved;
+  }
+
+  function restoreFocus(saved) {
+    if (!saved) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return; // focus survived in place
+    const el = document.getElementById(saved.id);
+    if (!el || typeof el.focus !== 'function') return;
+    el.focus({preventScroll: true});
+    if (typeof saved.start === 'number' && typeof el.setSelectionRange === 'function') {
+      try { el.setSelectionRange(saved.start, saved.end, saved.direction || 'none'); } catch {
+        // The control changed type or lost its text; the caret goes where the browser puts it.
+      }
+    }
+  }
+
+  function captureScroll(root) {
+    const boxes = [];
+    for (const el of [root, ...root.querySelectorAll('[id]')]) {
+      if (el.id && (el.scrollTop || el.scrollLeft)) boxes.push({id: el.id, el, top: el.scrollTop, left: el.scrollLeft});
+    }
+    return {boxes, x: window.scrollX, y: window.scrollY};
+  }
+
+  // A navigation starts at the top like a loaded page; every other patch keeps
+  // the person where they were, including inside a replaced scroll container.
+  function restoreScroll(saved, navigation) {
+    if (navigation) {
+      for (const box of saved.boxes) { const el = document.getElementById(box.id); if (el) el.scrollTop = el.scrollLeft = 0; }
+      window.scrollTo(0, 0);
+      return;
+    }
+    for (const box of saved.boxes) {
+      const el = document.getElementById(box.id);
+      if (el && el !== box.el) { el.scrollTop = box.top; el.scrollLeft = box.left; }
+    }
+    if (window.scrollX !== saved.x || window.scrollY !== saved.y) window.scrollTo(saved.x, saved.y);
+  }
+
+  // ---- Intent sources ------------------------------------------------------
+  // A form names its event with data-event: `params` sends the list query,
+  // `save` the Company edit shape, anything else an event of that name
+  // carrying the form's values. data-target picks a mounted panel.
+  document.addEventListener('submit', (event) => {
     const form = event.target;
     if (!form.dataset.event) return;
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form));
     const target = form.dataset.target || 'page';
-    if (form.dataset.event === 'save') { submittedField = values.field; send({type:'event', target, payload:{type:'save', edit:{...values, id:Number(values.id), version:Number(values.version)}}}); }
-    else if (form.dataset.event === 'params') send({type:'params', params:values});
-    // Any other form is the module event it names, carrying its field values.
-    else send({type:'event', target, payload:{type:form.dataset.event, ...values}});
+    const source = event.submitter || form;
+    const type = form.dataset.event;
+    if (type === 'params') {
+      enqueue({type: 'params', params: values}, {source, form, loading: true});
+    } else if (type === 'save') {
+      enqueue({type: 'event', target, payload: {type, edit: {...values, id: Number(values.id), version: Number(values.version)}}}, {source, form});
+    } else {
+      enqueue({type: 'event', target, payload: {type, ...values}}, {source, form});
+    }
   });
-  document.addEventListener('click', event => {
+
+  document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-event]');
     if (!button || button.disabled) return;
-    const type = button.dataset.event;
-    if (type === 'sort') send({type:'event', target:button.dataset.target || 'page', payload:{type, field:button.dataset.field}});
-    else if (type === 'page') send({type:'event', target:button.dataset.target || 'page', payload:{type, delta:Number(button.dataset.delta)}});
-    else if (type === 'read') send({type:'event', target:'shell', payload:{type}});
-    else {
-      // The control's other data-* values travel with the intent, as Bilimbi's
-      // phx-value-* did: data-value-id becomes id, data-key stays key. A named
-      // button contributes its value under its name.
-      const payload = {type};
+    const {event: type, target, field, delta} = button.dataset;
+    const payload = type === 'sort' ? {type, field} : type === 'page' ? {type, delta: Number(delta)} : {type};
+    if (!['sort', 'page', 'read'].includes(type)) {
+      // Preserve module values (the counterpart of Bilimbi's phx-value-*).
       for (const [key, value] of Object.entries(button.dataset)) {
-        if (['event', 'target', 'working', 'workingFrom', 'hook'].includes(key)) continue;
+        if (['event', 'target', 'working', 'workingFrom', 'hook', 'liveBusy'].includes(key)) continue;
         payload[key.startsWith('value') && key.length > 5 ? key[5].toLowerCase() + key.slice(6) : key] = value;
       }
       if (button.name) payload[button.name] = button.value;
-      send({type:'event', target:button.dataset.target || 'page', payload});
     }
+    enqueue({type: 'event', target: type === 'read' ? 'shell' : target || 'page', payload}, {source: button});
   });
+
   window.addEventListener('popstate', () => {
-    send({type:'mount', path:location.pathname, params:Object.fromEntries(new URLSearchParams(location.search))});
+    enqueue(mountIntent(), {loading: true, navigation: true});
   });
+
   document.addEventListener('bilibi:navigate', ({detail}) => {
-    send({type:'navigate', path:detail.path, params:detail.params || {}});
+    enqueue({type: 'navigate', path: detail.path, params: detail.params || {}}, {loading: true, navigation: true});
   });
-  // Component adapters send module intent through this bounded transport entry point.
-  // A ui.js controller raises {event, ...values}; an adapter may name a payload.
-  document.addEventListener('bilibi:event', ({detail}) => {
-    const {event: type, target, payload, ...values} = detail;
-    send({type:'event', target:target || 'page', payload:payload || {type, ...values}});
+
+  // Component adapters send module intent through this bounded transport entry
+  // point in either shape: {target, payload} or the ui.js controller shape
+  // {event, ...values}, which becomes payload {type: event, ...values} aimed at
+  // the nearest data-target ancestor.
+  document.addEventListener('bilibi:event', (event) => {
+    const detail = event.detail || {};
+    let payload = detail.payload;
+    if (!payload) {
+      const {event: type, target: _target, ...values} = detail;
+      if (!type) return;
+      payload = {type, ...values};
+    }
+    const origin = event.target instanceof Element ? event.target : null;
+    const owner = origin && origin.closest('[data-target]');
+    enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload});
   });
+
   connect();
 })();

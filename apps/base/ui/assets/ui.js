@@ -5,9 +5,10 @@
 //
 //   * A component names its controller with data-hook="Name". This file mounts
 //     it when the element enters the document (mounted), calls updated when its
-//     subtree is patched, and calls destroyed once the element leaves. A future
-//     keyed-fragment patcher only has to insert and remove elements; it does not
-//     call hooks itself. Other components register with BilibiUI.registerHook.
+//     subtree is patched, and calls destroyed once the element leaves. The keyed
+//     patcher in live.js inserts and removes elements and reports the hooks
+//     whose attributes it rewrote through BilibiUI.patched; it never calls a
+//     hook itself. Other components register with BilibiUI.registerHook.
 //   * A controller reports intent by raising a bubbling `bilibi:event`
 //     CustomEvent whose detail is {event, ...values}; the transport turns it
 //     into a server event. The server stays the one source of truth: a dialog
@@ -101,12 +102,14 @@
   });
 
   function settle(root = document) {
-    root.querySelectorAll('button[data-working-from]').forEach((button) => {
+    const buttons = [...root.querySelectorAll('button[data-working-from]')];
+    if (root instanceof Element && root.matches('button[data-working-from]')) buttons.unshift(root);
+    for (const button of buttons) {
       button.textContent = button.dataset.workingFrom;
       delete button.dataset.workingFrom;
       button.disabled = false;
       button.removeAttribute('aria-busy');
-    });
+    }
   }
 
   // ---- Modal ---------------------------------------------------------------
@@ -314,7 +317,9 @@
   };
 
   // ---- Hook lifecycle ------------------------------------------------------
-  function mount(el) {
+  // `fresh` collects the hooks mounted in one pass so a patch that inserts a
+  // control never follows its `mounted` with an `updated` for the same change.
+  function mount(el, fresh) {
     if (instances.has(el)) return;
     const hook = hooks[el.dataset.hook];
     if (!hook) return;
@@ -322,16 +327,17 @@
     instance.el = el;
     instance.emit = (event, detail) => emit(el, event, detail);
     instances.set(el, instance);
+    if (fresh) fresh.add(el);
     if (instance.mounted) instance.mounted();
   }
 
-  function scan(root) {
+  function scan(root, fresh) {
     if (root.nodeType !== Node.ELEMENT_NODE) return;
     const matching = (selector, visit) => {
       if (root.matches(selector)) visit(root);
       root.querySelectorAll(selector).forEach(visit);
     };
-    matching('[data-hook]', mount);
+    matching('[data-hook]', (el) => mount(el, fresh));
     matching('[data-connection]', applyConnection);
   }
 
@@ -343,11 +349,16 @@
     }
   }
 
-  const observer = new MutationObserver((records) => {
-    const patched = new Set();
+  // One pass over mutation records: mount what arrived, destroy what left, then
+  // call `updated` once per hook whose subtree changed. The live patcher adds
+  // the hooks whose attributes it rewrote, which the observer does not watch,
+  // and drains the observer first so the two never report the same patch twice.
+  function process(records, touched = []) {
+    const fresh = new Set();
+    const patched = new Set(touched);
     let removed = false;
     for (const record of records) {
-      record.addedNodes.forEach(scan);
+      record.addedNodes.forEach((node) => scan(node, fresh));
       if (record.removedNodes.length) removed = true;
       const owner = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
       const hooked = owner && owner.closest('[data-hook]');
@@ -355,10 +366,13 @@
     }
     if (removed) sweep();
     for (const el of patched) {
+      if (fresh.has(el)) continue;
       const instance = instances.get(el);
       if (instance && instance.updated && el.isConnected) instance.updated();
     }
-  });
+  }
+
+  const observer = new MutationObserver((records) => process(records));
 
   function start() {
     scan(document.documentElement);
@@ -373,9 +387,13 @@
   window.BilibiUI = {
     emit,
     settle,
+    // The live patcher reports the hooks whose attributes or subtree it rewrote.
+    patched(touched) {
+      process(observer.takeRecords(), touched);
+    },
     registerHook(name, hook) {
       hooks[name] = hook;
-      document.querySelectorAll(`[data-hook="${name}"]`).forEach(mount);
+      document.querySelectorAll(`[data-hook="${name}"]`).forEach((el) => mount(el));
     },
   };
 

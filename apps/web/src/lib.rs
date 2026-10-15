@@ -148,6 +148,15 @@ pub fn router(app: App) -> Router {
             }),
         )
         .route(
+            "/assets/topbar.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    bilibi_ui::TOPBAR_JS,
+                )
+            }),
+        )
+        .route(
             "/assets/live.js",
             get(|| async {
                 let script = bilibi_ui::JS.replace(
