@@ -1,10 +1,9 @@
 //! Discovered HTTP pages: validate/bind once, authorize before owner dispatch.
 use crate::{document, origin, token, App, HttpError};
-use askama::Template;
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{on, MethodFilter},
     Router,
@@ -14,7 +13,7 @@ use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
     RegistryError, Services,
 };
-use bilibi_ui::{page::PageRequest, Framed, Shell};
+use bilibi_ui::page::PageRequest;
 use std::{collections::HashMap, sync::Arc};
 
 type PageService = bilibi_ui::page::PageService<bilibi_security::Scope, Error>;
@@ -36,6 +35,7 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             "/",
             "/login",
             "/logout",
+            "/preferences",
             "/forgot-password",
             "/reset-password/{token}",
             "/live",
@@ -152,10 +152,13 @@ pub fn install(mut router: Router<App>, routes: &[BoundRoute]) -> Router<App> {
             on(
                 method,
                 move |State(app): State<App>,
+                      uri: Uri,
                       headers: HeaderMap,
                       Path(path): Path<HashMap<String, String>>,
                       Query(query): Query<HashMap<String, String>>,
-                      body: Bytes| dispatch(app, bound, headers, path, query, body),
+                      body: Bytes| {
+                    dispatch(app, bound, uri, headers, path, query, body)
+                },
             ),
         );
     }
@@ -192,6 +195,7 @@ pub async fn check_access(
 async fn dispatch(
     app: App,
     bound: BoundRoute,
+    uri: Uri,
     headers: HeaderMap,
     path: HashMap<String, String>,
     query: HashMap<String, String>,
@@ -233,34 +237,15 @@ async fn dispatch(
             framed,
         })
         .await?;
-    let html = if framed {
-        Framed {
-            body: &page.html,
-            live: page.live,
-        }
-        .render()
-        .map_err(|_| Error::Internal)?
-    } else if let Some(scope) = &scope {
-        let client = app.db.get().await.map_err(Error::from)?;
-        let unread = match bilibi_user::unread(&**client, scope).await {
-            Ok(unread) => unread,
-            Err(Error::Forbidden) => 0,
-            Err(error) => return Err(error.into()),
-        };
-        Shell {
-            user: &scope.user_name,
-            email: &scope.email,
-            tenant: &scope.tenant_name,
-            csrf: &scope.csrf,
-            unread,
-            live: page.live,
-            body: &page.html,
-        }
-        .render()
-        .map_err(|_| Error::Internal)?
-    } else {
-        page.html
-    };
+    let html = crate::shell::render(
+        &app,
+        scope.as_ref(),
+        uri.path(),
+        framed,
+        page.live,
+        &page.html,
+    )
+    .await?;
     if let (Some(credential), Some(_)) = (credential, scope) {
         let client = app.db.get().await.map_err(Error::from)?;
         app.security

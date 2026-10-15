@@ -5,13 +5,6 @@
 use askama::Template;
 pub mod page;
 
-#[derive(Template)]
-#[template(path = "framed.html")]
-pub struct Framed<'a> {
-    pub body: &'a str,
-    pub live: bool,
-}
-
 // Lets the shared macro file name this crate's items as `bilibi_ui::...` from
 // inside the crate and from every importing module alike.
 extern crate self as bilibi_ui;
@@ -23,7 +16,10 @@ mod feedback_specimen;
 pub mod forms;
 mod html;
 pub mod icons;
+mod shell;
 mod specimen;
+pub use shell::{navigation, AppShell, DisplayPreferences, Framed, NavNode, ShellContext};
+pub type Shell<'a> = AppShell<'a>;
 
 pub use auth::{
     AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, ResetForm, ResetPasswordPage,
@@ -48,18 +44,6 @@ pub use forms::{
 pub use html::Html;
 pub use specimen::ComponentsSpecimen;
 
-#[derive(Template)]
-#[template(path = "shell.html")]
-pub struct Shell<'a> {
-    pub user: &'a str,
-    pub email: &'a str,
-    pub tenant: &'a str,
-    pub csrf: &'a str,
-    pub unread: i64,
-    pub live: bool,
-    pub body: &'a str,
-}
-
 /// The HTML document around a page. `title` follows Bilimbi's live title:
 /// the page's own name, or the product name when a page has none.
 #[derive(Template)]
@@ -72,6 +56,7 @@ pub struct Document<'a> {
 pub const CSS: &str = include_str!("../assets/app.css");
 pub const JS: &str = include_str!("../assets/live.js");
 /// The hook controllers of the feedback, dialog and tab components.
+pub const SHELL_JS: &str = include_str!("../assets/shell.js");
 pub const UI_JS: &str = include_str!("../assets/ui.js");
 /// The `data-hook` browser behaviour of the shared form controls.
 pub const HOOKS_JS: &str = include_str!("../assets/hooks.js");

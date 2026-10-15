@@ -290,3 +290,19 @@ impl LiveState<Scope, Error> for PasswordPage {
         })
     }
 }
+
+#[derive(Template)]
+#[template(path = "bell.html")]
+struct Bell {
+    unread: i64,
+    icon: Html,
+}
+
+/// The shell's `shell.notifications` slot for an account that may view
+/// notifications; the host renders nothing when `unread` refuses.
+pub fn bell(unread: i64) -> askama::Result<Html> {
+    Html::render(&Bell {
+        unread,
+        icon: Html::render(&bilibi_ui::Icon::new("notify"))?,
+    })
+}

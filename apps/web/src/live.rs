@@ -1,6 +1,5 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
 use crate::{routes, App};
-use askama::Template;
 use axum::extract::ws::{Message, WebSocket};
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::contributions::{Access, Embed, EMBEDS};
@@ -245,32 +244,9 @@ impl Session {
         Ok(vec![fragment(target, body)])
     }
     async fn page_message(&mut self, app: &App, scope: &Scope, body: LiveBody) -> Result<Value> {
-        let html = if self.framed {
-            bilibi_ui::Framed {
-                body: &body.html,
-                live: true,
-            }
-            .render()
-            .map_err(|_| Error::Internal)?
-        } else {
-            let client = app.db.get().await?;
-            let unread = match bilibi_user::unread(&**client, scope).await {
-                Ok(value) => value,
-                Err(Error::Forbidden) => 0,
-                Err(error) => return Err(error),
-            };
-            bilibi_ui::Shell {
-                user: &scope.user_name,
-                email: &scope.email,
-                tenant: &scope.tenant_name,
-                csrf: &scope.csrf,
-                unread,
-                live: true,
-                body: &body.html,
-            }
-            .render()
-            .map_err(|_| Error::Internal)?
-        };
+        let html =
+            crate::shell::render(app, Some(scope), &self.path, self.framed, true, &body.html)
+                .await?;
         let mut pairs: Vec<_> = body.query.iter().collect();
         pairs.sort_by_key(|(key, _)| *key);
         let query = pairs

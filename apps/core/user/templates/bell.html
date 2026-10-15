@@ -1,0 +1,5 @@
+{#- The top-bar bell (Bilimbi `NotificationBellComponent` button). Until C6
+    ports the dropdown, pressing it marks every notification read. -#}
+<div id="app-notifications" class="relative">
+<button type="button" id="app-notifications-bell" data-event="read" class="relative inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-action transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong cursor-pointer" aria-label="{% if unread == 0 %}Notifications, none unread{% else %}Mark {{ unread }} unread notifications read{% endif %}" title="Notifications">{{ icon }}{% if unread > 0 %}<span id="app-notifications-unread-badge" class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 inline-flex items-center justify-center rounded-full bg-brand-strong text-white text-[9px] font-semibold leading-none tabular-nums">{% if unread > 99 %}99+{% else %}{{ unread }}{% endif %}</span>{% endif %}</button>
+</div>

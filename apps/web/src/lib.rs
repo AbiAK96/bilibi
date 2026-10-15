@@ -4,6 +4,7 @@ mod live;
 mod media;
 mod pdf;
 mod routes;
+mod shell;
 use askama::Template;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade},
@@ -31,6 +32,8 @@ pub struct App {
     pub security: Arc<bilibi_security::Security>,
     pub renderer: Arc<bilibi_ui::Renderer>,
     pub menu: Arc<bilibi_base::menu::Menu>,
+    pub display: Arc<bilibi_base::datetime::DisplayPolicy>,
+    pub mutations: Arc<bilibi_database::MutationBoundary>,
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
@@ -48,6 +51,8 @@ impl App {
         let security = services.get("base/security.guard")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
+        let display = services.get("base/datetime.display")?;
+        let mutations = services.get("base/database.mutations")?;
         for dropped in menu.dropped() {
             eprintln!("warning: {dropped}");
         }
@@ -62,6 +67,8 @@ impl App {
             security,
             renderer,
             menu: Arc::new(menu),
+            display,
+            mutations,
             services: Arc::new(services),
         })
     }
@@ -102,6 +109,7 @@ pub fn router(app: App) -> Router {
             get(auth::reset_page).post(auth::reset),
         )
         .route("/logout", post(logout))
+        .route("/preferences", post(shell::save))
         .route("/live", get(upgrade))
         .route(media::STREAM, get(media::stream))
         .route(media::ATTACHMENT, get(media::attachment))
@@ -137,6 +145,15 @@ pub fn router(app: App) -> Router {
         .route(
             "/assets/app.css",
             get(|| async { ([(header::CONTENT_TYPE, "text/css")], bilibi_ui::CSS) }),
+        )
+        .route(
+            "/assets/shell.js",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    bilibi_ui::SHELL_JS,
+                )
+            }),
         )
         .route(
             "/assets/hooks.js",
