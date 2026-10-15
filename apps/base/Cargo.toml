@@ -30,6 +30,7 @@ bilibi-schedule = { path = "schedule" }
 bilibi-security = { path = "security" }
 bilibi-session = { path = "session" }
 bilibi-settings = { path = "settings" }
+bilibi-settings-editor = { path = "settings_editor" }
 bilibi-tenancy = { path = "tenancy" }
 bilibi-tiling = { path = "tiling" }
 bilibi-ui = { path = "ui" }
