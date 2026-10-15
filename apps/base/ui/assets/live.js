@@ -245,8 +245,10 @@
       drafts: new Map(),
       lookup: new Map(),
     };
-    if (root.id) context.lookup.set(root.id, root);
-    for (const el of root.querySelectorAll('[id]')) context.lookup.set(el.id, el);
+    for (const el of [root, ...root.querySelectorAll('[id]')]) {
+      const id = key(el);
+      if (id) context.lookup.set(id, el);
+    }
     morph(root, next, context);
     if (context.submitted && context.submitted.isConnected) context.submitted.reset();
     restoreScroll(scroll, options.navigation);
@@ -334,19 +336,22 @@
     }
   }
 
-  const keyed = (node) => node.nodeType === Node.ELEMENT_NODE && node.id !== '';
+  // `el.id` cannot be trusted: a form whose control is named "id" returns that
+  // control instead of its attribute, so keys are read from the attribute.
+  const key = (el) => el.getAttribute('id') || '';
+  const keyed = (node) => node.nodeType === Node.ELEMENT_NODE && key(node) !== '';
 
   function children(from, to, context) {
     const olds = [...from.childNodes];
     const siblings = new Map();
-    for (const node of olds) if (keyed(node)) siblings.set(node.id, node);
+    for (const node of olds) if (keyed(node)) siblings.set(key(node), node);
     let cursor = from.firstChild;
     for (const next of [...to.childNodes]) {
       let match = null;
       if (keyed(next)) {
         // A keyed element is reused wherever it was, so moving it keeps its
         // identity, hook instance and (when it stays in order) its document.
-        const candidate = siblings.get(next.id) || context.lookup.get(next.id);
+        const candidate = siblings.get(key(next)) || context.lookup.get(key(next));
         if (candidate && candidate.isConnected && candidate.tagName === next.tagName
           && !context.consumed.has(candidate) && !candidate.contains(from)) {
           match = candidate;
@@ -380,8 +385,8 @@
   // ---- Focus and scroll retention -------------------------------------------
   function captureFocus() {
     const el = document.activeElement;
-    if (!el || el === document.body || !el.id) return null;
-    const saved = {id: el.id};
+    if (!el || el === document.body || !key(el)) return null;
+    const saved = {id: key(el)};
     try {
       saved.start = el.selectionStart;
       saved.end = el.selectionEnd;
@@ -409,7 +414,7 @@
   function captureScroll(root) {
     const boxes = [];
     for (const el of [root, ...root.querySelectorAll('[id]')]) {
-      if (el.id && (el.scrollTop || el.scrollLeft)) boxes.push({id: el.id, el, top: el.scrollTop, left: el.scrollLeft});
+      if (key(el) && (el.scrollTop || el.scrollLeft)) boxes.push({id: key(el), el, top: el.scrollTop, left: el.scrollLeft});
     }
     return {boxes, x: window.scrollX, y: window.scrollY};
   }
