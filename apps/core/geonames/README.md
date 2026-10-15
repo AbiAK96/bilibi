@@ -122,7 +122,45 @@ working unchanged, and `page_postcodes` reports each row's `provenance`
   `admin.geonames.update` (platform: it edits a table shared by every tenant);
   `tenant_owner` holds all three.
 - Grid: table `countries` (global source, keyed by `iso`, read with `list`).
-- Menu entries and routes arrive with the screens (C4).
+- Menu: the Administration › Geonames branch (`admin.geonames`, visible with
+  `admin.geonames.list`) with Countries, Admin1 Divisions and Postcodes.
+- Routes: `/geonames/countries`, `/geonames/admin1` and `/geonames/postcodes`
+  (registry service `core/geonames.pages`), framed live pages behind
+  `admin.geonames.list`.
+
+## Screens
+
+`src/web/` ports Bilimbi `Core.Geonames.Web.{CountriesLive, Admin1Live,
+PostcodesLive}`. Each page keeps its search, sort and page in the URL under
+Bilimbi's names (`search`, `sortBy`, `sortDir`, `page`, `perPage`; Admin1 adds
+`filterCountryIso`, Postcodes `summarySortBy`/`summarySortDir`) through the
+shared `ListState`, so Back and reload restore it, and draws its built-in
+columns through `ListColumns`/`FlexTable` (add, remove, reorder, zoom and
+reset without a Grid catalog). The route gate is `admin.geonames.list`;
+`admin.geonames.update` only decides whether the write controls are drawn,
+and every write asks for it again inside the API it calls. A refusal is a
+flash, never a page-clearing error.
+
+- **Countries**: ISO, name (inline edit → `update_country_name`), capital,
+  phone, currency, population and updated date. Update (operators) runs
+  `ReferenceImport::run_as` for the countries dataset in the background and
+  reports what it did: a fresh or confirmed-current download counts as an
+  update, a fallback to the cached file is a warning that says how old that
+  data is, and a failed download or import says the data was not changed.
+- **Admin1 Divisions**: country filter (only countries with divisions), code,
+  name (inline edit → `update_admin1_name`), alt name, updated date.
+- **Postcodes**: the per-country totals card with its own sort, the index
+  with a `Local` badge on operator rows, an inline place-name correction
+  that carries the row's revision in the fact's id (`{id}|{revision}`), the
+  Edit action per row and the New/Edit Postcode dialog. The dialog validates
+  as values change (`check_postcode`), lists the chosen country's divisions
+  as `Name (CC.code)`, and saves through `create_postcode`/`update_postcode`:
+  refusals land beside their fields, a stale revision or vanished row closes
+  the dialog with a flash and reloads the list.
+
+Name updates write the reference tables outside mutation capture, like the
+import, as Bilimbi excludes these schemas from audit; postcode corrections
+are audited through the sidecar as described above.
 
 ## Running proof
 
