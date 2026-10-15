@@ -145,6 +145,18 @@ fn field(c: &Value, state: &State) -> Field {
         },
         ..Attrs::default()
     };
+    if form == "sample" {
+        // Phoenix sends undeferred text changes immediately; the shared native
+        // form transport schedules input events when a debounce is named.
+        let debounce = match string(c, "phx-debounce") {
+            "" => "1",
+            copied => copied,
+        };
+        field
+            .attrs
+            .extra
+            .push(("data-debounce".into(), debounce.into()));
+    }
     field.checked = field.value == "true";
     field.multiple = flag(c, "multiple");
     if field.multiple {
