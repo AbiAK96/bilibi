@@ -1,6 +1,7 @@
 //! Tokio execution edge. DB leases provide at-least-once delivery, not exactly-once
 //! effects. Handlers must use owner idempotency and reauthorize owner operations.
 use crate::{arguments, store, Queue};
+use bilibi_authz::SystemScope;
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError, Services};
 use bilibi_tenancy::{Authentication, Scope};
@@ -58,12 +59,20 @@ fn validate_bindings(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
 }
 inventory::submit! { Consumer::new::<HandlerBinding>(HANDLERS,"base/queue",validate_bindings) }
 
+/// Who the job runs as, re-proven on every attempt and again in `begin`.
+#[derive(Clone, Debug)]
+pub enum Identity {
+    /// The user who enqueued the job, with the same party facets as then.
+    User(Scope),
+    /// A named system principal, declared in Authz with a durable tenant grant.
+    System(SystemScope),
+}
 #[derive(Clone)]
 pub struct Execution {
     pub job_id: i64,
     pub attempt: i32,
     pub max_attempts: i32,
-    scope: Scope,
+    identity: Identity,
     token: String,
     trace: String,
     capability: &'static str,
@@ -71,8 +80,21 @@ pub struct Execution {
     boundary: Arc<MutationBoundary>,
 }
 impl Execution {
-    pub fn scope(&self) -> &Scope {
-        &self.scope
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
+    /// The user behind a user-enqueued job; `None` for a system principal.
+    pub fn scope(&self) -> Option<&Scope> {
+        match &self.identity {
+            Identity::User(scope) => Some(scope),
+            Identity::System(_) => None,
+        }
+    }
+    pub fn tenant(&self) -> i64 {
+        match &self.identity {
+            Identity::User(scope) => scope.tenant(),
+            Identity::System(scope) => scope.tenant(),
+        }
     }
     /// Fences a business transaction against expired/replaced/cancelled claims.
     /// The queue row remains locked until owner commit/rollback, serializing it
@@ -84,26 +106,34 @@ impl Execution {
         client: &'a mut tokio_postgres::Client,
         action: impl Into<String>,
     ) -> Result<MutationTransaction<'a>> {
-        let mut context = self.scope.mutation_context(action);
+        let mut context = match &self.identity {
+            Identity::User(scope) => scope.mutation_context(action),
+            Identity::System(scope) => scope.mutation_context(action),
+        };
         context.trace_id = self.trace.clone();
         let tx = self.boundary.begin(client, context).await?;
-        let alive = tx.sql().query_opt("SELECT id FROM base_queue_jobs WHERE id=$1 AND tenant_id=$2 AND state='executing' AND lease_token=$3 AND lease_expires_at>clock_timestamp() FOR UPDATE", &[&self.job_id,&self.scope.tenant(),&self.token]).await?.is_some();
+        let alive = tx.sql().query_opt("SELECT id FROM base_queue_jobs WHERE id=$1 AND tenant_id=$2 AND state='executing' AND lease_token=$3 AND lease_expires_at>clock_timestamp() FOR UPDATE", &[&self.job_id,&self.tenant(),&self.token]).await?.is_some();
         if !alive {
             return Err(Error::Conflict);
         }
-        let scope = self
-            .authentication
-            .authenticate(
-                tx.sql(),
-                self.scope.tenant(),
-                self.scope.user(),
-                String::new(),
-            )
-            .await?;
-        if !same_actor(&scope, &self.scope) {
-            return Err(Error::Unauthorized);
+        match &self.identity {
+            Identity::User(captured) => {
+                let scope = self
+                    .authentication
+                    .authenticate(tx.sql(), captured.tenant(), captured.user(), String::new())
+                    .await?;
+                if !same_actor(&scope, captured) {
+                    return Err(Error::Unauthorized);
+                }
+                bilibi_authz::authorize_key(tx.sql(), &scope, self.capability).await?;
+            }
+            Identity::System(captured) => {
+                let scope =
+                    SystemScope::rehydrate(tx.sql(), captured.tenant(), captured.principal())
+                        .await?;
+                bilibi_authz::authorize_system(tx.sql(), &scope, self.capability).await?;
+            }
         }
-        bilibi_authz::authorize_key(tx.sql(), &scope, self.capability).await?;
         Ok(tx)
     }
 }
@@ -250,33 +280,51 @@ impl Executor {
     ) -> Result<(Execution, Arc<HandlerService>, Value)> {
         let row = &claim.row;
         let worker = self.queue.workers().get(row.get("worker_id"))?;
-        if worker.module != row.get::<_, &str>("worker_module")
-            || row.get::<_, &str>("actor_kind") != "user"
-        {
+        if worker.module != row.get::<_, &str>("worker_module") {
             return Err(Error::Invalid);
         }
         let bound = self.handlers.get(worker.id).ok_or(Error::Invalid)?;
         let client = self.db.get().await?;
-        let scope = self
-            .authentication
-            .authenticate(
-                &**client,
-                row.get("tenant_id"),
-                row.get("actor_id"),
-                String::new(),
-            )
-            .await?;
-        // Captured identity facets must still be current. Never substitute a new
-        // organisation or affiliation simply because the account changed.
-        if scope.actor().person().map(|id| id.get()) != row.get::<_, Option<i64>>("person_id")
-            || scope.actor().organisation().map(|id| id.get())
-                != row.get::<_, Option<i64>>("organisation_id")
-            || scope.actor().affiliation().map(|id| id.get())
-                != row.get::<_, Option<i64>>("affiliation_id")
-        {
-            return Err(Error::Unauthorized);
-        }
-        bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
+        let identity = match row.get::<_, &str>("actor_kind") {
+            "user" => {
+                let scope = self
+                    .authentication
+                    .authenticate(
+                        &**client,
+                        row.get("tenant_id"),
+                        row.get("actor_id"),
+                        String::new(),
+                    )
+                    .await?;
+                // Captured identity facets must still be current. Never substitute a new
+                // organisation or affiliation simply because the account changed.
+                if scope.actor().person().map(|id| id.get())
+                    != row.get::<_, Option<i64>>("person_id")
+                    || scope.actor().organisation().map(|id| id.get())
+                        != row.get::<_, Option<i64>>("organisation_id")
+                    || scope.actor().affiliation().map(|id| id.get())
+                        != row.get::<_, Option<i64>>("affiliation_id")
+                {
+                    return Err(Error::Unauthorized);
+                }
+                bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
+                Identity::User(scope)
+            }
+            "system" => {
+                // Declaration and durable grant are read live; a principal whose
+                // declaration was removed, or a tenant no longer active, is refused.
+                let principal: Option<String> = row.get("system_principal");
+                let scope =
+                    SystemScope::rehydrate(&**client, row.get("tenant_id"), principal.as_deref())
+                        .await?;
+                if scope.principal().is_none() {
+                    return Err(Error::Unauthorized);
+                }
+                bilibi_authz::authorize_system(&**client, &scope, bound.capability).await?;
+                Identity::System(scope)
+            }
+            _ => return Err(Error::Invalid),
+        };
         let args: Value = row.get("args");
         arguments::validate(&args)?;
         let args = (worker.definition.validate)(args)?;
@@ -286,7 +334,7 @@ impl Executor {
                 job_id: row.get("id"),
                 attempt: row.get("attempt"),
                 max_attempts: row.get("max_attempts"),
-                scope,
+                identity,
                 token: claim.token.clone(),
                 trace: row.get("trace_id"),
                 capability: bound.capability,

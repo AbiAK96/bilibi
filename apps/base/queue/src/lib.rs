@@ -5,6 +5,7 @@ mod registry;
 pub mod store;
 pub use registry::{RegisteredWorker, Worker, Workers, WORKERS};
 
+use bilibi_authz::SystemScope;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Module, Service};
 use bilibi_tenancy::Scope;
@@ -51,29 +52,80 @@ impl Queue {
         {
             return Err(Error::Forbidden);
         }
+        let actor = Actor::User {
+            user: scope.user(),
+            person: scope.actor().person().map(|id| id.get()),
+            organisation: scope.actor().organisation().map(|id| id.get()),
+            affiliation: scope.actor().affiliation().map(|id| id.get()),
+        };
+        self.insert(tx, scope.tenant(), actor, worker_id, args)
+            .await
+    }
+    /// Enqueue by a named system principal (a scheduler or maintenance edge),
+    /// never a browser. The audit context must already name that principal in
+    /// the same tenant, and the principal must be declared in Authz. Execution
+    /// re-proves the live tenant, declaration and durable grant on every attempt.
+    pub async fn enqueue_system(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &SystemScope,
+        worker_id: &str,
+        args: Value,
+    ) -> Result<JobRef> {
+        let principal = scope.principal().ok_or(Error::Forbidden)?;
+        if tx.context().tenant != scope.tenant()
+            || tx.context().actor.kind != "system"
+            || tx.context().actor.id != principal
+            || tx.context().impersonator.is_some()
+            || !bilibi_authz::vocabulary()?
+                .system_principals
+                .contains_key(principal)
+        {
+            return Err(Error::Forbidden);
+        }
+        let actor = Actor::System(principal.to_owned());
+        self.insert(tx, scope.tenant(), actor, worker_id, args)
+            .await
+    }
+    async fn insert(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        tenant: i64,
+        actor: Actor,
+        worker_id: &str,
+        args: Value,
+    ) -> Result<JobRef> {
         let worker = self.workers.get(worker_id)?;
         arguments::validate(&args)?;
         let args = (worker.definition.validate)(args)?;
         arguments::validate(&args)?;
-        let tenant = scope.tenant();
-        let actor = scope.user();
-        let person = scope.actor().person().map(|id| id.get());
-        let organisation = scope.actor().organisation().map(|id| id.get());
-        let affiliation = scope.actor().affiliation().map(|id| id.get());
         let trace = tx.context().trace_id.clone();
         tx.mutate(move |sql|Box::pin(async move {
-            let row = sql.query_one("INSERT INTO base_queue_jobs(tenant_id,worker_id,worker_module,args,actor_kind,actor_id,person_id,organisation_id,affiliation_id,trace_id,max_attempts) VALUES($1,$2,$3,$4,'user',$5,$6,$7,$8,$9,$10) RETURNING id", &[&tenant,&worker.id,&worker.module,&args,&actor,&person,&organisation,&affiliation,&trace,&worker.definition.max_attempts]).await?;
+            let (kind, actor_id, principal, person, organisation, affiliation) = match &actor {
+                Actor::User { user, person, organisation, affiliation } => ("user", *user, None, *person, *organisation, *affiliation),
+                Actor::System(principal) => ("system", 0, Some(principal.as_str()), None, None, None),
+            };
+            let row = sql.query_one("INSERT INTO base_queue_jobs(tenant_id,worker_id,worker_module,args,actor_kind,actor_id,system_principal,person_id,organisation_id,affiliation_id,trace_id,max_attempts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id", &[&tenant,&worker.id,&worker.module,&args,&kind,&actor_id,&principal,&person,&organisation,&affiliation,&trace,&worker.definition.max_attempts]).await?;
             let id = row.get("id");
             // No args, names, email or credential material enters audit evidence.
-            let change = Change {kind:"base/queue.job".into(),id,old:Value::Null,new:json!({"worker":worker.id,"state":"available","actor_kind":"user","actor_id":actor,"max_attempts":worker.definition.max_attempts})};
+            let change = Change {kind:"base/queue.job".into(),id,old:Value::Null,new:json!({"worker":worker.id,"state":"available","actor_kind":kind,"actor_id":actor_id,"system_principal":principal,"max_attempts":worker.definition.max_attempts})};
             Ok((JobRef{id},vec![change]))
         })).await
     }
 }
+enum Actor {
+    User {
+        user: i64,
+        person: Option<i64>,
+        organisation: Option<i64>,
+        affiliation: Option<i64>,
+    },
+    System(String),
+}
 inventory::submit! {
     Module {id:"base/queue",layer:bilibi_module_registry::Layer::Base,
         dependencies:&["base/module_registry","base/database","base/audit","base/tenancy","base/authz"],
-        migrations:&[("base-queue-001",include_str!("../migrations/001-queue.sql"))],
+        migrations:&[("base-queue-001",include_str!("../migrations/001-queue.sql")),("base-queue-002",include_str!("../migrations/002-queue-system-actor.sql"))],
         services:&[Service {id:"base/queue.store",factory:|_| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(Queue::new(Workers::from_catalog(&catalog)?)))

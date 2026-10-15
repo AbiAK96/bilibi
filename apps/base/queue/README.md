@@ -56,14 +56,26 @@ already locked business transaction; it cannot undo a committed effect.
 At-least-once delivery requires an owner idempotency key, including for external
 IO and when a business commit succeeds before queue completion is recorded.
 
+`Queue::enqueue_system` enqueues as a named system principal (`SystemScope`,
+for example Schedule's `scheduler`) instead of a user. The audit context must
+already name that principal in the same tenant, and the principal must be
+declared in the Authz vocabulary. A system job carries `actor_kind='system'`,
+`system_principal` and no party facets. Each attempt rehydrates the principal
+(`SystemScope::rehydrate`: live tenant plus current declaration) and checks the
+binding's capability through `authorize_system`, which also needs the durable
+tenant grant (`Grants::set_system`); a principal without that grant cancels with
+`actor_refused`. `Execution::identity` says which kind of actor is running;
+`Execution::scope` is `None` for a system job. `Execution::begin` re-proves the
+same identity inside the owner's transaction.
+
 `store::lookup` and bounded `store::states` return redacted state/attempt/failure
 facts including terminal states. Trusted owner/scheduler adapters supply a
 proven tenant; UI/API adapters must authorize their own reads. `cancel_for` and
 `retry_for` join an owner-authorized audited transaction and require matching
 scope/context. Cancel is idempotent for terminal jobs. Explicit retry resets the
 attempt budget of cancelled/discarded/retryable/scheduled jobs; completed and
-executing jobs refuse replay. User-delegated jobs are supported; anonymous work,
-named system-principal enqueue and uniqueness policy remain separate extensions.
+executing jobs refuse replay. User-delegated and named system-principal jobs are supported; anonymous work
+and uniqueness policy remain separate extensions.
 Impersonation is refused until Tenancy supplies a sealed impersonator facet;
 caller-supplied audit attribution cannot create execution authority.
 
