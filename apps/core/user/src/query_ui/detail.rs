@@ -52,9 +52,6 @@ impl Detail {
                     .map_err(database_error)?,
             )
         };
-        if saved.is_none() && !pages.editor(scope).await? {
-            return Err(Error::Forbidden);
-        }
         let draft = saved
             .as_ref()
             .map(queries::SavedQuery::input)
