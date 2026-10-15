@@ -61,6 +61,17 @@ setting!(
     "Failed or refused purges after which a document is held for an operator to retry or resolve."
 );
 setting!("pdf.chromium.binary",String,json!("chromium"),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(|name| !name.is_empty() && name.len() <= 1024 && (!name.contains('/') || name.starts_with('/'))), message: "must be an executable name on PATH or an absolute path" }),"PDF Chromium executable","Sandbox-capable Chromium or Chrome for HTML printing. A bare name is searched on PATH. Never run it with its sandbox disabled.");
+setting!("pdf.qpdf.binary",String,json!("qpdf"),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(|name| !name.is_empty() && name.len() <= 1024 && (!name.contains('/') || name.starts_with('/'))), message: "must be an executable name on PATH or an absolute path" }),"PDF qpdf executable","qpdf 10.6 or newer, used to protect PDFs with AES-256. A bare name is searched on PATH. Without it password-protected rendering is refused, never stored unprotected.");
+setting!(
+    "pdf.qpdf.timeout_seconds",
+    Integer,
+    json!(60),
+    false,
+    Some(1.0),
+    Some(600.0),
+    "PDF protection timeout (seconds)",
+    "Maximum time one qpdf run may take; the tool is killed at the deadline."
+);
 setting!(
     "pdf.render_timeout_seconds",
     Integer,

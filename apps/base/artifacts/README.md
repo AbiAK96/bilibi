@@ -77,8 +77,8 @@ documents held for an operator (see Retention purge).
 Use `artifacts::pdf::render` for text and table documents rather than a
 module-local PDF serializer, and store through `Owned::generate_pdf` or
 `Owned::store_pdf` rather than calling `put` with unchecked bytes. HTML
-printing and signed render URLs are below (A4); passwords and queued rendering are
-later slices.
+printing and signed render URLs are below (A4); AES-256 passwords and queued
+rendering are in the last sections (A5).
 
 Implement `PdfOwner` (an `Owner` extension) on the same trusted adapter. `generate_pdf`
 authorizes `Create` first, then calls `render_pdf(scope, company, reference,
@@ -244,7 +244,7 @@ disables signed-URL printing), `pdf.signed_url_ttl_seconds` (60),
 `pdf.render_timeout_seconds` (30), `pdf.max_render_tokens` (100),
 `pdf.paper.format` (`A4`) and `pdf.paper.print_background` (true). Rendered size is
 bounded by `artifacts.max_bytes`. The walkthrough ran with Google Chrome 154 and the
-Snap Chromium. Password protection (`qpdf`) and queued rendering are A5.
+Snap Chromium. Password protection and queued rendering are the next sections.
 
 `examples/html-pdf-walkthrough.rs` starts the real app on three local ports and
 real Chromium against a disposable database (see the variables above, plus
@@ -252,6 +252,95 @@ real Chromium against a disposable database (see the variables above, plus
 hostile template whose every outside resource it counts at a probe port, replayed
 and altered tokens, expiry, permission revoked in flight and before publication,
 and each refusal. It writes `inline.pdf` and `view.pdf` for inspection.
+
+## Password-protected PDFs (A5)
+
+Every PDF writer goes through `Owned::persist_pdf(client, reference, bytes,
+&PdfOptions)`; `render_inline_with` / `render_view_with` (and the queued handler)
+call it, rather than `store_pdf` plus a module-local encryption step. It validates,
+authorizes `Create`, optionally encrypts, then stores through `put`, so a protected
+request never stores an unprotected copy: if protection is unavailable or fails
+nothing is written. `protect_with_password(client, &source, &user, owner)` stores an
+encrypted copy of an existing artifact and leaves the source unchanged. Both return
+a `PdfArtifact` (artifact metadata plus template/data version, producer and
+production time; `to_map()` has no path or credential). A protected artifact's
+data version gains ` (encrypted)`.
+
+Passwords are `Secret` values, not strings: they must be 1-127 bytes of printable
+UTF-8 (the R6 handler ignores bytes past 127, so a longer password is refused rather
+than silently weakened), and a `Secret` cannot be printed, cloned or serialized. An
+empty password is therefore never "no protection"; build the options without one.
+An omitted owner password falls back to the user password.
+
+```rust,ignore
+let options = PdfOptions::default().template_version("statement-v1").data_version("run-17")
+    .password(Secret::new(password)?, None);
+let artifact = documents.render_inline_with(&mut client, reference, &data, &options).await?;
+let copy = documents.protect_with_password(&mut client, &artifact, &user, Some(&owner)).await?;
+```
+
+Encryption runs `qpdf` (10.6 or newer; the walkthrough used 12.3.2) with a
+`--job-json-file`, so passwords never appear in argv or the environment. The plaintext
+PDF, the job file and the encrypted output live in a random `0700` directory
+(`bilibi-pdf-*`, files `0600`) that is removed on success, failure, timeout and
+cancellation; qpdf leads its own process group, which is killed on every exit; its
+output is discarded and callers see only `PdfProtectionUnavailable`,
+`PdfProtectionFailed` or `PdfTimeout`. Output is checked as a PDF and against
+`artifacts.max_bytes`. Unlike Bilimbi this needs no Node.js. Operator Settings (same
+capability): `pdf.qpdf.binary` (bare name on `PATH` or absolute; default `qpdf`) and
+`pdf.qpdf.timeout_seconds` (60, 1-600). `Artifacts::protection_available` says whether
+the executable resolves, for a caller deciding whether to offer protection.
+
+## Queued rendering and completion (A5)
+
+An owner renders in the background by contributing its own queue worker and
+binding this module's handler. Three pieces, all in the owner's module:
+
+1. `impl QueuedPdfOwner for ConcreteOwner` (it also implements `PdfOwner` and
+   `HtmlOwner`; return `Error::Invalid` from the render method a mode never uses):
+   `worker_id`, `pdf_request` and `pdf_rendered`.
+2. Contributions: `Contribution::new(WORKERS, WORKER_ID, prov, &RENDER_WORKER)` and
+   `Contribution::new(HANDLERS, WORKER_ID, prov, &HandlerBinding { service, capability })`
+   with the owner's own capability (the actor must hold it on every attempt) and
+   the same module provenance.
+3. A service whose factory returns `artifacts.pdf_handler(Arc::new(owner))`
+   (`Arc<Artifacts>` from `base/artifacts.store`) as the bound `HandlerService`.
+
+`documents.enqueue_pdf(&mut tx, &reference, request_id)` authorizes `Create` and
+enqueues in the owner's own `MutationTransaction`, so the owner's request row, the
+job and the audit evidence commit or roll back together. Only `company_id`,
+`subject`, `kind` and `request_id` enter the job: `validate_render_job` is an exact
+allowlist that refuses a password, data, HTML or actor rather than stripping it. The
+actor is the one Queue captured and re-proves on every attempt; the owner is fixed by
+the worker ID chosen in trusted code. Queue and audit rows hold references and fixed
+failure codes only (`pdf_forbidden`, `pdf_request_failed`, `pdf_render_failed`,
+`pdf_completion_failed`, ...), never data or errors.
+
+Per attempt the handler re-authorizes `Create`, calls `pdf_request` (the owner
+resolves current data, versions, mode `Inline`/`View`/`Document`, routing metadata
+and any password from its own secure store, with the `Execution` in hand), renders
+and stores through `persist_pdf`, then calls `pdf_rendered` with a `Rendered`
+(`request_id`, `job_id`, `PdfArtifact`, metadata: no input data, no password). A
+refusal cancels the job; anything else retries up to 3 attempts and then discards.
+Delivery is at least once, completion included: a failing callback retries the whole
+job and the retry stores another artifact (retention owns cleanup), so key the
+business effect on `request_id` and do callback writes inside `execution.begin(..)`,
+which fences them against an expired or cancelled lease. A render holds one pool
+connection for its duration; `View` needs the Web host's `/pdf/render` route and
+`pdf.render_origin`, so a private host without HTTP renders `Inline` or `Document`.
+No Domain owner is wired yet: the production worker catalog stays empty.
+
+`examples/queued-pdf-walkthrough.rs` is a running proof, not a test: against a
+disposable database it links a specimen owner and runs the real executor, Chromium and
+qpdf (see the variables above plus `BILIBI_PDF_QPDF`). It enqueues protected inline,
+signed-route and document renders and shows the job arguments, the completion events,
+`qpdf --show-encryption` (R=6, AESv3), `pdftotext` refused without and accepted with
+the password, an unprotected control, a completion callback that commits then fails
+(retry, one idempotent business effect), permission revoked in flight (cancelled, nothing stored),
+qpdf missing (retries then discards, nothing stored), a hanging and a failing qpdf
+(group killed, no leftover directory), `protect_with_password`, password rules, peer
+refusals, the argument allowlist, and a scan of every table for the password (only
+the owner's store holds it).
 
 No unit tests. `examples/artifacts-walkthrough.rs` (A1) and
 `examples/retention-walkthrough.rs` (A2) are explicit disposable-DB walkthroughs

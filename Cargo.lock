@@ -262,6 +262,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-party-ids",
+ "bilibi-queue",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-web",

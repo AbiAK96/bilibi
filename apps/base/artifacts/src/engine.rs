@@ -56,7 +56,7 @@ pub(crate) enum Source {
 
 /// Resolve the configured executable without a shell. A bare name is searched
 /// on `PATH`; anything with a slash must be absolute.
-fn executable(name: &str) -> Result<PathBuf> {
+pub(crate) fn executable(name: &str) -> Result<PathBuf> {
     let usable = |path: &Path| {
         path.metadata()
             .is_ok_and(|stat| stat.is_file() && stat.permissions().mode() & 0o111 != 0)

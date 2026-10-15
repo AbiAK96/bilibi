@@ -7,7 +7,10 @@
 //!   process, scope and live authority checks as everything else. Claims never
 //!   leave this process: the token only names a waiting `render_view` call, and
 //!   the route hands the browser whatever that call produces.
-use crate::{engine, Artifacts, Error, Metadata, Operation, Owned, Owner, Reference, Result};
+use crate::{
+    engine, Artifacts, Error, Metadata, Operation, Owned, Owner, PdfArtifact, PdfOptions,
+    Reference, Result,
+};
 use base64::Engine as _;
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::Scope;
@@ -234,6 +237,20 @@ impl<O: HtmlOwner> Owned<'_, O> {
         reference: Reference,
         data: &Value,
     ) -> Result<Metadata> {
+        Ok(self
+            .render_inline_with(client, reference, data, &PdfOptions::default())
+            .await?
+            .document)
+    }
+    /// `render_inline` with provenance versions and optional AES-256 protection.
+    pub async fn render_inline_with(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        data: &Value,
+        options: &PdfOptions,
+    ) -> Result<PdfArtifact> {
+        options.validate()?;
         if !data.is_object() {
             return Err(Error::Invalid);
         }
@@ -242,7 +259,7 @@ impl<O: HtmlOwner> Owned<'_, O> {
         let config = self.store.pdf_config(&*client).await?;
         let html = self.html(&reference, data, config.max_bytes).await?;
         let bytes = engine::print(&config, engine::Source::Html(html)).await?;
-        self.store_pdf(client, reference, &bytes).await
+        self.persist_pdf(client, reference, &bytes, options).await
     }
     /// Like `render_inline`, but the browser fetches the page from this app's
     /// single-use signed `/pdf/render/{token}` URL, which needs
@@ -255,6 +272,20 @@ impl<O: HtmlOwner> Owned<'_, O> {
         reference: Reference,
         data: &Value,
     ) -> Result<Metadata> {
+        Ok(self
+            .render_view_with(client, reference, data, &PdfOptions::default())
+            .await?
+            .document)
+    }
+    /// `render_view` with provenance versions and optional AES-256 protection.
+    pub async fn render_view_with(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        data: &Value,
+        options: &PdfOptions,
+    ) -> Result<PdfArtifact> {
+        options.validate()?;
         if !data.is_object() {
             return Err(Error::Invalid);
         }
@@ -310,6 +341,6 @@ impl<O: HtmlOwner> Owned<'_, O> {
             }
         };
         drop(issued);
-        self.store_pdf(client, reference, &bytes).await
+        self.persist_pdf(client, reference, &bytes, options).await
     }
 }

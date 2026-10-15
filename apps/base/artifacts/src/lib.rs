@@ -3,15 +3,23 @@
 mod contributions;
 mod engine;
 pub mod pdf;
+mod protect;
+mod queued;
 mod render;
 mod retention;
 mod storage;
 
+pub use protect::{PdfArtifact, PdfOptions, Secret};
+pub use queued::{
+    validate_args as validate_render_job, CompletionFuture, PdfMode, PdfRenderHandler, PdfRequest,
+    QueuedPdfOwner, Rendered, RequestFuture, RENDER_WORKER,
+};
 pub use retention::{PurgeHold, Retention, RetentionEvent};
 
-use bilibi_database::{Change, MutationBoundary, MutationTransaction};
+use bilibi_database::{Change, Db, MutationBoundary, MutationTransaction};
 use bilibi_module_registry::Service;
 use bilibi_party_ids::OrganisationId;
+use bilibi_queue::Queue;
 use bilibi_settings::Settings;
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 pub use render::{HtmlFuture, HtmlOwner, Served, RENDER_HEADERS, RENDER_ROUTE};
@@ -45,6 +53,12 @@ pub enum Error {
     PdfEngineUnavailable,
     #[error("PDF rendering failed")]
     PdfFailed,
+    #[error("PDF protection unavailable; configure a qpdf executable in Settings")]
+    PdfProtectionUnavailable,
+    #[error("PDF protection failed")]
+    PdfProtectionFailed,
+    #[error("A PDF password must be 1-127 bytes of printable text")]
+    InvalidPassword,
     #[error("PDF rendering timed out")]
     PdfTimeout,
     #[error("Configure pdf.render_origin before printing through a signed render URL")]
@@ -98,6 +112,9 @@ impl Error {
             Self::BytesPresent => "bytes_present",
             Self::PdfEngineUnavailable => "pdf_engine_unavailable",
             Self::PdfFailed => "pdf_failed",
+            Self::PdfProtectionUnavailable => "pdf_protection_unavailable",
+            Self::PdfProtectionFailed => "pdf_protection_failed",
+            Self::InvalidPassword => "invalid_password",
             Self::PdfTimeout => "pdf_timeout",
             Self::RenderOrigin => "render_origin",
             Self::RenderTokensFull => "render_tokens_full",
@@ -243,6 +260,8 @@ pub struct Artifacts {
     settings: Arc<Settings>,
     authentication: Arc<Authentication>,
     tokens: render::Tokens,
+    queue: Arc<Queue>,
+    db: Db,
 }
 impl Artifacts {
     pub fn for_owner<'a, O: Owner>(
@@ -299,6 +318,103 @@ impl<O: Owner> Owned<'_, O> {
     ) -> Result<Metadata> {
         pdf::validate(bytes)?;
         self.put(client, reference, bytes, PDF).await
+    }
+}
+impl Artifacts {
+    pub(crate) async fn protect_tool(&self, client: &Client) -> Result<protect::Tool> {
+        let get = |key: &'static str| async move {
+            self.settings
+                .get_global(client, key)
+                .await
+                .map_err(Error::from)
+        };
+        let seconds = get("pdf.qpdf.timeout_seconds").await?.as_u64();
+        let max = get("artifacts.max_bytes").await?.as_u64();
+        Ok(protect::Tool {
+            binary: get("pdf.qpdf.binary")
+                .await?
+                .as_str()
+                .ok_or(Error::PdfProtectionUnavailable)?
+                .to_owned(),
+            timeout: std::time::Duration::from_secs(
+                seconds
+                    .filter(|s| (1..=600).contains(s))
+                    .ok_or(Error::Policy)?,
+            ),
+            max_bytes: max.filter(|max| *max > 0).ok_or(Error::Policy)? as usize,
+        })
+    }
+    /// Whether the configured qpdf executable exists, so a caller can offer
+    /// password protection. Protected renders fail closed when it does not.
+    pub async fn protection_available(&self, client: &Client) -> bool {
+        match self.protect_tool(client).await {
+            Ok(tool) => engine::executable(&tool.binary).is_ok(),
+            Err(_) => false,
+        }
+    }
+}
+impl<O: Owner> Owned<'_, O> {
+    /// The PDF writer seam for bytes made elsewhere: validates, authorizes,
+    /// optionally encrypts with AES-256 and stores through `put`. Encryption
+    /// happens before publication, so a protected request never stores an
+    /// unprotected copy. Passwords reach only the tool's private job file.
+    pub async fn persist_pdf(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        bytes: &[u8],
+        options: &PdfOptions,
+    ) -> Result<PdfArtifact> {
+        options.validate()?;
+        pdf::validate(bytes)?;
+        self.authorize(&*client, Operation::Create, Some(&reference))
+            .await?;
+        let metadata = match options.passwords() {
+            None => self.put(client, reference, bytes, PDF).await?,
+            Some((user, owner)) => {
+                let tool = self.store.protect_tool(&*client).await?;
+                let encrypted = protect::encrypt(&tool, bytes, user, owner).await?;
+                self.put(client, reference, &encrypted, PDF).await?
+            }
+        };
+        let produced_at = self.clock(&*client).await?;
+        Ok(PdfArtifact::new(
+            metadata,
+            options,
+            self.scope.user(),
+            produced_at,
+        ))
+    }
+    /// Stores an AES-256 protected copy of an existing PDF, leaving the source
+    /// unchanged. Reads (and audits) the source, then writes like `persist_pdf`.
+    pub async fn protect_with_password(
+        &self,
+        client: &mut Client,
+        source: &PdfArtifact,
+        user: &Secret,
+        owner: Option<&Secret>,
+    ) -> Result<PdfArtifact> {
+        let document = self.read(client, &source.document.id).await?;
+        if document.metadata.content_type != PDF {
+            return Err(Error::InvalidPdf);
+        }
+        let reference = document.metadata.reference.clone();
+        self.authorize(&*client, Operation::Create, Some(&reference))
+            .await?;
+        let tool = self.store.protect_tool(&*client).await?;
+        let encrypted = protect::encrypt(&tool, &document.bytes, user, owner).await?;
+        let metadata = self.put(client, reference, &encrypted, PDF).await?;
+        let produced_at = self.clock(&*client).await?;
+        Ok(source.encrypted_copy(metadata, self.scope.user(), produced_at))
+    }
+    async fn clock(&self, client: &Client) -> Result<String> {
+        Ok(client
+            .query_one(
+                "SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
+                &[],
+            )
+            .await?
+            .get(0))
     }
 }
 #[derive(Debug, Default)]
@@ -636,10 +752,11 @@ impl<O: Owner> Owned<'_, O> {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"base/artifacts",layer:bilibi_module_registry::Layer::Base,
-        dependencies:&["base/audit","base/authz","base/database","base/settings","base/tenancy","base/party_ids"],
+        dependencies:&["base/audit","base/authz","base/database","base/queue","base/settings","base/tenancy","base/party_ids"],
         migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql")),("base-artifacts-002",include_str!("../migrations/002-retention.sql"))],
         services:&[Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
             boundary:services.get("base/database.mutations")?, settings:services.get("base/settings.store")?, authentication:services.get("base/tenancy.authentication")?,
+            queue:services.get("base/queue.store")?, db:services.get::<Db>("base/database.pool")?.as_ref().clone(),
             tokens:render::Tokens::new().map_err(|error| bilibi_module_registry::RegistryError::Contribution(error.to_string()))?,
         }))}],
     }
