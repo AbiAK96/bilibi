@@ -7,92 +7,16 @@
 //! across an upstream change, 503 and unreachable fallbacks, `force` refusing
 //! fallback, a payload with no valid rows, a database failure in a late batch,
 //! the ETag-less cache lifetime and the capability-gated screen entry point.
-use axum::{
-    extract::{Path as UrlPath, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
-};
+#[path = "support/fixture.rs"]
+#[allow(dead_code)]
+mod fixture;
+
 use bilibi_database::{pool, Error, Result};
 use bilibi_geonames::{Dataset, Geonames, ImportOptions, ReferenceImport, IMPORT_SERVICE, SERVICE};
 use bilibi_module_registry::Services;
 use bilibi_tenancy::Authentication;
-use std::{
-    collections::HashMap,
-    hash::{DefaultHasher, Hash, Hasher},
-    io::Write,
-    path::Path,
-    sync::{Arc, Mutex},
-};
-
-const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/sample");
-
-#[derive(Default)]
-struct Fixture {
-    files: HashMap<String, Vec<u8>>,
-    /// Answer every request with this status instead of a file.
-    status: Option<u16>,
-    requests: usize,
-}
-type Shared = Arc<Mutex<Fixture>>;
-
-fn etag(body: &[u8]) -> String {
-    let mut hasher = DefaultHasher::new();
-    body.hash(&mut hasher);
-    format!("\"{:016x}\"", hasher.finish())
-}
-
-async fn serve(
-    State(fixture): State<Shared>,
-    UrlPath(name): UrlPath<String>,
-    headers: HeaderMap,
-) -> Response {
-    let mut fixture = fixture.lock().unwrap();
-    fixture.requests += 1;
-    if let Some(status) = fixture.status {
-        return StatusCode::from_u16(status).unwrap().into_response();
-    }
-    let Some(body) = fixture.files.get(&name).cloned() else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let tag = etag(&body);
-    if headers
-        .get(header::IF_NONE_MATCH)
-        .and_then(|v| v.to_str().ok())
-        == Some(tag.as_str())
-    {
-        return (StatusCode::NOT_MODIFIED, [(header::ETAG, tag)]).into_response();
-    }
-    ([(header::ETAG, tag)], body).into_response()
-}
-
-fn zip(entry: &str, body: &[u8]) -> Vec<u8> {
-    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    writer.start_file(entry, options).unwrap();
-    writer.write_all(body).unwrap();
-    writer.finish().unwrap().into_inner()
-}
-
-fn sample(name: &str) -> Vec<u8> {
-    std::fs::read(Path::new(SAMPLE).join(name)).unwrap()
-}
-
-fn sample_files() -> HashMap<String, Vec<u8>> {
-    HashMap::from([
-        ("countryInfo.txt".into(), sample("countryInfo.txt")),
-        (
-            "admin1CodesASCII.txt".into(),
-            sample("admin1CodesASCII.txt"),
-        ),
-        (
-            "cities15000.zip".into(),
-            zip("cities15000.txt", &sample("cities15000.txt")),
-        ),
-    ])
-}
+use fixture::{describe_cache, sample, sample_files, zip, Shared};
+use std::sync::Arc;
 
 async fn run(label: &str, importer: &ReferenceImport, options: &ImportOptions, fixture: &Shared) {
     let before = fixture.lock().unwrap().requests;
@@ -108,10 +32,7 @@ async fn run(label: &str, importer: &ReferenceImport, options: &ImportOptions, f
 }
 
 fn cache(options: &ImportOptions, file: &str) {
-    let path = options.cache_dir.join(file);
-    let size = std::fs::metadata(&path).map(|m| m.len()).ok();
-    let etag = std::fs::read_to_string(path.with_file_name(format!("{file}.etag"))).ok();
-    println!("  cache {file}: size {size:?}, etag {etag:?}");
+    describe_cache(&options.cache_dir, file);
 }
 
 async fn counts(db: &bilibi_database::Db) -> Result<()> {
@@ -144,26 +65,11 @@ async fn main() -> Result<()> {
     let importer = services.get::<ReferenceImport>(IMPORT_SERVICE)?;
     let geo = services.get::<Geonames>(SERVICE)?;
     db.get().await?
-        .batch_execute("TRUNCATE geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
+        .batch_execute("TRUNCATE geonames_postcode_overrides, geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
         .await?;
 
-    let fixture: Shared = Arc::new(Mutex::new(Fixture {
-        files: sample_files(),
-        ..Fixture::default()
-    }));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .map_err(|_| Error::Internal)?;
-    let port = listener.local_addr().map_err(|_| Error::Internal)?.port();
-    let app = Router::new()
-        .route("/dump/{name}", get(serve))
-        .with_state(fixture.clone());
-    tokio::spawn(async move { axum::serve(listener, app).await });
-
-    let cache_dir = std::env::temp_dir().join(format!(
-        "bilibi-geonames-walkthrough-{}",
-        std::process::id()
-    ));
+    let (port, fixture) = fixture::start().await.map_err(|_| Error::Internal)?;
+    let cache_dir = fixture::cache_dir("walkthrough");
     let options = ImportOptions {
         cache_dir: cache_dir.clone(),
         base_url: format!("http://127.0.0.1:{port}/dump"),

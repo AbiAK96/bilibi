@@ -1,0 +1,15 @@
+MY	50000	Kuala Lumpur	Kuala Lumpur	14	Kuala Lumpur	KUL			3.1516	101.6942	4
+MY	50050	Kuala Lumpur	Kuala Lumpur	14	Kuala Lumpur	KUL			3.1516	101.6942	4
+MY	50088	Kuala Lumpur	Kuala Lumpur	14					3.1516	101.6942	4
+MY	10000	George Town	Pulau Pinang	09	Timur Laut	TL			5.4141	100.3288	4
+MY	10050	George Town	Pulau Pinang	09					5.4141	100.3288	4
+MY	40000	Shah Alam	Selangor	12	Petaling	PTL			3.0836	101.5327	4
+MY	40150	Shah Alam	Selangor	12					3.0836	101.5327	4
+MY	47800	Petaling Jaya	Selangor	12	Petaling	PTL			3.1073	101.6067	4
+MY	80000	Johor Bahru	Johor	01					1.4655	103.7578	4
+MY	80100	Johor Bahru	Johor	01					1.4655	103.7578	
+SG	018956	Marina Bay	Central Singapore	01					1.2816	103.8636	4
+MY	99999
+MY	99998	Out of range	Selangor	12					95.0	101.0	4
+MY	99997	Bad accuracy	Selangor	12					3.0	101.0	9
+# a comment line the importer skips

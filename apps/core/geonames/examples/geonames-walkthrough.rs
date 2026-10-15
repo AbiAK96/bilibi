@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let client = db.get().await?;
     // Re-runs start from the install state.
     client
-        .batch_execute("TRUNCATE geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
+        .batch_execute("TRUNCATE geonames_postcode_overrides, geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
         .await?;
 
     println!("== fresh install");
