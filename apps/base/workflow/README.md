@@ -5,8 +5,8 @@ history, and immutable versioned process runs with their lifecycle and
 worker leases. Its facade accepts a sealed
 `bilibi_tenancy::Scope`, a subject kind (public key or alias) and the owner's
 record ID. It never queries an owner's table: the owner proves identity, tenant
-and current status through its `SubjectAdapter`. Human-action replay and
-durable transition delivery are later slices.
+and current status through its `SubjectAdapter`. Durable transition delivery
+is a later slice.
 
 ## Contributions
 
@@ -19,13 +19,18 @@ An owner declares `base/workflow` as a module dependency and submits immutable
   owner hooks, referenced by key or alias from an edge.
 - `Flow(Flow { code, label, subject, active, statuses, edges })`: default
   statuses and edges. Each edge may name a capability, guard and action.
+- `HumanAction(HumanAction { key, label, subject, capability, executor,
+  handler })`: an action a signed-in person performs on an owned subject (see
+  Human actions).
 
 Boot rejects a contributor that does not depend on `base/workflow`, invalid or
 duplicate keys (lowercase dotted segments, at most 255 bytes), duplicate aliases,
 a flow whose subject belongs to another module, two flows on one subject, edges
 whose statuses are missing, whose `settings`/`metadata` are not JSON objects,
 whose capability is not in the Authz vocabulary, or whose guard/action is not
-owned by the same module. Contributions perform no I/O.
+owned by the same module. A human action must have a valid key unique per
+subject, a label, a vocabulary capability and a subject its own module owns.
+Contributions perform no I/O.
 
 ## Versioned processes
 
@@ -151,6 +156,52 @@ edges, run by a trusted admin or seed adapter holding
 wins, including inactive flags; boot never calls it and a changed contribution
 never overwrites rows.
 
+## Human actions
+
+Use `Engine::available_actions` and `execute_action`, never a hand-rolled
+button handler that writes the owner row and completes work itself: the gate
+is what makes a double-click, a retry or a stale page safe.
+
+`available_actions(scope, kind, id)` returns the subject version and every
+contributed action whose capability the signed-in actor holds. An action with
+an `executor` appears once per due, `available` work item of that executor key
+in a running run of the subject, carrying the run, item and work version.
+Availability is not authorization: owner eligibility is proved only when the
+action executes.
+
+The page echoes an `ActionRequest { action_key, idempotency_key,
+expected_subject_version, payload, process_run_id, work_item_id,
+expected_work_version }` (`ActionRequest::new(...).for_entry(&entry)`); it
+never carries the actor, tenant or capability. The payload is a JSON object or
+array without floats, and the request is at most 65,536 encoded bytes. A
+work-bound action needs the whole binding; any other action refuses one.
+
+`execute_action(scope, kind, id, request)`, or `execute_action_in(&mut
+MutationTransaction, ...)` inside the owner's transaction, re-authenticates
+the scope, locks the subject under the owner's `ExecuteAction` policy and
+checks the capability. It then locks the tenant/idempotency-key row:
+
+- A saved key replays the first result (`replayed: true`) without running
+  anything and before any version check, because the first execution
+  legitimately changed the subject. The SHA-256 intent digest over subject,
+  actor, action, work binding and canonical payload must match, compared in
+  constant time; another subject, actor, action or payload under the same key
+  conflicts.
+- A new key compares `expected_subject_version`, proves the bound run belongs
+  to this subject and locks it with its graph, and checks the item is due,
+  `available`, of the action's executor and at `expected_work_version`. It
+  then inserts the request row, runs `HumanActionHandler::handle`, completes
+  the bound item with the handler's `HumanOutcome` (the `work.completed` event
+  names the request and actor) and saves the result.
+
+Everything commits in one audited transaction, so a committed request always
+carries its result and any refusal, handler error or cancellation rolls back
+the owner write, request row and work completion together. Concurrent
+duplicates serialize on the subject lock: one executes and the other replays.
+The same key raced on two subjects of a tenant serializes on the key's unique
+constraint, and the loser conflicts. The handler must take the actor from the
+scope, never from the payload, and must perform database effects only.
+
 ## Owner contract
 
 All callbacks receive the kernel's `tokio_postgres::Transaction`. They must not
@@ -161,8 +212,8 @@ open or commit another transaction and must perform database effects only.
   It returns a `Subject` holding only proven id, tenant, status, version and
   plain JSON facts.
 - `SubjectAdapter::authorize(tx, scope, subject, operation)` enforces owner
-  policy for `Read`, `Transition`, `RecordInitial`, `RecordComment` and `Adopt`,
-  even on edges without a capability.
+  policy for `Read`, `Transition`, `RecordInitial`, `RecordComment`, `Adopt`
+  and `ExecuteAction`, even on edges without a capability.
 - `SubjectAdapter::persist(tx, scope, subject, to, request)` writes the proven
   status from the locked status, increments the version and returns every
   change for audit capture. The kernel rereads the row and refuses a persist
@@ -306,6 +357,39 @@ repeating `complete-claimed` returns the same item while `heartbeat` conflicts.
 `block-claimed 4 '<claim>' "reason"` blocks a leased item. With `notify` leased,
 `supersede` conflicts, `block 4 <run> notify "reason"` finishes it anyway, and
 the leaseholder's `complete-claimed` then returns the blocked item.
+
+To demonstrate human actions in a fresh disposable database after `init`:
+
+```sh
+cargo run -p bilibi-workflow --example owner -- actions 4 1
+cargo run -p bilibi-workflow --example owner -- act 4 1
+cargo run -p bilibi-workflow --example owner -- act 4 1
+cargo run -p bilibi-workflow --example owner -- act 4 1 reference.acknowledge ack:1 '{"note":"x"}'
+cargo run -p bilibi-workflow --example owner -- act-stale 4 1 reference.acknowledge ack:2
+cargo run -p bilibi-workflow --example owner -- act-outer-fail 4 1 reference.acknowledge ack:3
+cargo run -p bilibi-workflow --example owner -- act-race 4 1 reference.acknowledge race:1 '{"handler_wait":true}'
+cargo run -p bilibi-workflow --example owner -- act-race-cross 4 1 2 cross:1
+cargo run -p bilibi-workflow --example owner -- start-human 4 3
+cargo run -p bilibi-workflow --example owner -- actions 4 3
+cargo run -p bilibi-workflow --example owner -- act-work-stale 4 3 reference.review.submit review:stale
+cargo run -p bilibi-workflow --example owner -- act-race 4 3 reference.review.submit review:1 '{"handler_wait":true}'
+cargo run -p bilibi-workflow --example owner -- events 4 <run>
+cargo run -p bilibi-workflow --example owner -- actions 2 1
+```
+
+The `act` commands build their request from `actions`, as a page would, then
+take an action key, idempotency key and optional payload. The second `act`
+replays request 1 although the subject version moved; a changed payload under
+`ack:1` conflicts, as do a stale subject version and a stale work version.
+`act-outer-fail` executes inside an owner transaction that rolls back, leaving
+the record version and request table unchanged (`show 4 1`). `act-race`
+submits the same request on two connections while the handler sleeps: one
+executes and the other replays the same request ID, and `action_count` rises
+once. `act-race-cross` races one key on records 1 and 2; record 2 conflicts.
+On record 3, `reference.review.submit` is offered for the `review` item of the
+`reference.human` run; the raced submission completes it once, releases
+`publish` and the action is no longer offered. The viewer (user 2) is offered
+nothing. `{"handler_fail":true}` as the payload makes the handler refuse.
 
 Arguments are `command [user-id] [record-id]`; user 4 is the seeded admin.
 For `run`, `run-drift`, `events` and the lifecycle commands, the record-ID
