@@ -76,4 +76,7 @@ if [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; then
 fi
 echo "Open $APP_ORIGIN — tenant 1, ai@agent.my / bilibi-dev."
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
-exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts --shell './scripts/dev-run.sh'
+# The asset build rewrites app.css (and npm may touch node_modules) under apps/;
+# watching them would make every rebuild trigger the next one.
+exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
+    --ignore 'apps/base/ui/assets/app.css' --ignore '**/node_modules/**' --shell './scripts/dev-run.sh'

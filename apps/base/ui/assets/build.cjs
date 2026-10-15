@@ -22,7 +22,11 @@ try {
       process.exitCode = 1;
     }
   } else {
-    fs.writeFileSync(artifact, compiled);
+    // Leave an identical file untouched: the dev watcher sees every write,
+    // even a byte-identical one, and would rebuild again.
+    if (!fs.existsSync(artifact) || !compiled.equals(fs.readFileSync(artifact))) {
+      fs.writeFileSync(artifact, compiled);
+    }
   }
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
