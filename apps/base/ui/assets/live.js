@@ -55,7 +55,6 @@
   const framed = window.parent !== window;
   // The path the mounted page was rendered for, to tell Back within a page
   // from Back to another.
-  let livePath = location.pathname;
 
   const params = () => Object.fromEntries(new URLSearchParams(location.search));
   const mountIntent = () => ({type: 'mount', path: location.pathname, params: params()});
@@ -217,7 +216,6 @@
         history[push ? 'pushState' : 'replaceState'](null, '', message.url);
         window.dispatchEvent(new CustomEvent('bilibi:location'));
       }
-      livePath = location.pathname;
       if (message.notice) feedback.textContent = message.notice;
     } else if (message.type === 'fragment') {
       // A panel's action can open a local page (a notification's link).
@@ -600,9 +598,12 @@
   // marks itself `data-history="params"`: its state lives in its own query, so
   // the step is a params update in place (Bilimbi's handle_params on a live
   // patch) and the DOM it keeps, frames included, is reconciled, not rebuilt.
+  // The step names the historical path too: the server keeps the state when
+  // that path is still this page's (a saved layout's address under the
+  // workspace) and mounts the page it names otherwise.
   window.addEventListener('popstate', () => {
-    if (location.pathname === livePath && document.querySelector('#app [data-history="params"]')) {
-      enqueue({type: 'params', params: params()}, {loading: true});
+    if (document.querySelector('#app [data-history="params"]')) {
+      enqueue({type: 'params', path: location.pathname, params: params()}, {loading: true});
       return;
     }
     enqueue(mountIntent(), {loading: true, navigation: true});

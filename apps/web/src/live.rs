@@ -31,8 +31,13 @@ enum Event {
         #[serde(default)]
         params: HashMap<String, String>,
     },
+    /// `path` is the browser's pathname after Back or Forward inside a page
+    /// marked `data-history="params"`; the host keeps the mounted state when
+    /// that path belongs to the same page and remounts otherwise.
     Params {
         params: HashMap<String, String>,
+        #[serde(default)]
+        path: Option<String>,
     },
     #[serde(rename = "event")]
     Action {
@@ -129,6 +134,9 @@ struct Session {
     path: String,
     /// Route template of the mounted page, the stable identity Perf records.
     route: String,
+    /// The discovered route the page mounted under, which decides whether a
+    /// path the page or the browser names is still this page.
+    page_route: Option<&'static bilibi_module_registry::contributions::Route>,
     page: Option<Mounted>,
     panels: HashMap<String, Panel>,
     /// `EmbedContext::Shell` panels (the bell), keyed by their element id.
@@ -183,8 +191,38 @@ impl Session {
         ));
         self.path = path;
         self.route = bound.route.path.to_owned();
+        self.page_route = Some(bound.route);
         self.sync_shell(app, token, &scope).await?;
         self.update(app, token, "page", LiveInput::Refresh).await
+    }
+    /// Moves the mounted page to `path` without remounting, when that path is
+    /// served by the same service and operation (a saved layout's address under
+    /// the workspace), guarding the new route's access first. Returns the
+    /// route's path parameters, or `None` when the path is another page's.
+    async fn relocate(
+        &mut self,
+        app: &App,
+        token: &str,
+        path: &str,
+    ) -> Result<Option<HashMap<String, String>>> {
+        let (bound, params) = routes::resolve(app, path)?;
+        let current = self.page_route.ok_or(Error::Invalid)?;
+        if bound.route.service != current.service
+            || bound.route.operation != current.operation
+            || (self.framed && !bound.route.framed)
+        {
+            return Ok(None);
+        }
+        routes::check_access(app, bound.route.access, Some(token))
+            .await?
+            .ok_or(Error::Forbidden)?;
+        self.path = path.to_owned();
+        self.route = bound.route.path.to_owned();
+        self.page_route = Some(bound.route);
+        if let Some(page) = &mut self.page {
+            page.access = bound.route.access;
+        }
+        Ok(Some(params))
     }
     /// Mounts each shell embed the actor may see, once per socket, and drops
     /// one whose access is gone. A refused embed renders nothing in the shell.
@@ -256,6 +294,13 @@ impl Session {
                     input,
                 })
                 .await?;
+            // A page may move only among its own routes; any other path is a
+            // module bug, not a navigation.
+            if let Some(path) = body.path.as_deref().filter(|path| *path != self.path) {
+                if self.relocate(app, token, path).await?.is_none() {
+                    return Err(Error::Invalid);
+                }
+            }
             let mut messages = vec![self.page_message(app, &scope, body).await?];
             messages.extend(self.sync_panels(app, token, &scope).await?);
             return Ok(messages);
@@ -391,10 +436,25 @@ impl Session {
             Event::Mount { path, params } | Event::Navigate { path, params } => {
                 self.mount(app, token, path, params).await?
             }
-            Event::Params { params } => {
-                self.update(app, token, "page", LiveInput::Params(&params))
-                    .await?
-            }
+            // Back or Forward inside a `data-history="params"` page: the
+            // historical path stays this page's state (its route parameters
+            // join the params, after the query so the path wins) or, when it
+            // names another page, mounts that page.
+            Event::Params { params, path } => match path {
+                Some(path) => match self.relocate(app, token, &path).await? {
+                    Some(route_params) => {
+                        let mut params = params;
+                        params.extend(route_params);
+                        self.update(app, token, "page", LiveInput::Params(&params))
+                            .await?
+                    }
+                    None => self.mount(app, token, path, params).await?,
+                },
+                None => {
+                    self.update(app, token, "page", LiveInput::Params(&params))
+                        .await?
+                }
+            },
             Event::Action { target, payload } => {
                 self.update(app, token, &target, LiveInput::Event(&payload))
                     .await?
@@ -445,6 +505,7 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
         framed,
         path: String::new(),
         route: String::new(),
+        page_route: None,
         page: None,
         panels: HashMap::new(),
         shell: HashMap::new(),

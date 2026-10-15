@@ -38,13 +38,19 @@ Client intents use these shapes (an optional unsigned `request_id` is echoed):
 ```json
 {"type":"mount","path":"/companies","params":{"q":"Company"},"request_id":1}
 {"type":"navigate","path":"/companies/1","params":{},"request_id":2}
-{"type":"params","params":{"page":"2"},"request_id":3}
+{"type":"params","params":{"page":"2"},"path":"/companies","request_id":3}
 {"type":"event","target":"page","payload":{"type":"sort","field":"name"},"request_id":4}
 {"type":"event","target":"counter-a","payload":{"type":"increment"},"request_id":5}
 ```
 
 Mount/navigation creates new state and drops old state/subscriptions. Params
-updates the current owner. `page` targets its state; any other module target must
+updates the current owner; its optional `path` is the browser's pathname after
+Back or Forward, which keeps the mounted state when the same service and
+operation serve it (its route parameters join the params, after the query) and
+mounts the named page otherwise. A page may also move itself among its own
+routes by returning `LiveBody.path` (the workspace opening a saved layout at
+`/workspace/{slug}`): Web resolves it, requires the mounted page's service and
+operation, guards the new route's access and refuses any other page's path. `page` targets its state; any other module target must
 be a mounted panel ID: a server-declared page panel, or a shell panel. Outside
 framed pages Web mounts every `EmbedContext::Shell` contribution once per socket
 under its element id (slot `shell.notifications` is `#app-notifications`, the
