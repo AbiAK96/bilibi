@@ -1,0 +1,102 @@
+# Integration exchange log and outgoing transport
+
+`base/integration` records incoming and outgoing HTTP exchanges in one log,
+`base_integration_exchanges`, and is the only outgoing HTTP client. Domain
+modules own request meaning, response parsing, retries and user-facing
+outcomes. API adapters own authentication and call the incoming recorder after
+dispatch. Business writes keep using the ordinary mutation audit; exchange
+logging is separate.
+
+The service is `base/integration.exchanges` (`Integration`).
+
+## Outgoing calls: use `send`/`stream`, not `reqwest` directly
+
+```rust
+let reply = integration.send(
+    Origin::User(&scope),
+    &Call { system: "partner".into(), operation: "items.fetch".into(),
+            owner_type: Some("domain/orders".into()), owner_id: Some(order_id), ..Call::default() },
+    Outgoing::get(url).header("Authorization", token),
+).await?;
+
+// Installation-wide reference data has no tenant or person, and streams
+// straight into the caller's file without holding the body.
+integration.stream(Origin::System,
+    &Call { system: "geonames".into(), operation: "reference.download".into(), ..Call::default() },
+    Outgoing::get(url).max_body_bytes(500 << 20), &mut file).await?;
+```
+
+`Origin::User` is a session scope, `Origin::Principal` a queued job's
+`SystemScope` (tenant-owned, no person) and `Origin::System` tenantless
+traffic. One row describes the complete logical call: retries are off and
+belong to the owner. A 4xx/5xx is an ordinary `Reply`; only transport failures
+are `Failure::Transport` (`timeout`, `connect`, `redirect`, `body_limit`,
+`sink`, `transport`), recorded before they return. Buffered replies stop at
+`max_body_bytes` (10 MiB by default); `stream` writes chunk by chunk with the
+same bound and leaves cleanup of a partial target to the caller. The whole-call
+timeout defaults to 30 s. `Failure::Invalid` (bad metadata, URL, non-HTTP
+scheme or header) sends and records nothing. `Failure::Unrecorded` means the
+remote system may have acted but the row could not be written: never treat it
+as permission to repeat a consequential command.
+
+## Incoming calls
+
+```rust
+integration.record_incoming(&scope, &Incoming {
+    method: Some("PATCH".into()), endpoint: Some("/api/companies/17".into()),
+    operation: Some("company.update".into()), response_status: Some(403), duration_ms: Some(12),
+    connection_id: Some(connection), agent_id: Some(agent), run_id: Some(run), ..Incoming::default()
+}).await?;
+// A credential that resolved no tenant (refused, unknown, expired):
+integration.record_incoming_system(&Incoming { method: Some("POST".into()),
+    endpoint: Some("/api/v1/operations".into()), response_status: Some(401), ..Incoming::default() }).await?;
+```
+
+Call once after dispatch, including refused and failed requests. The tenant and
+user come only from the sealed scope; a system row asserts neither, and only the
+platform operator can see it. Connection, agent and run ids are observations,
+never authority. An omitted method or duration stays unknown; no status and no
+error class records `unknown`; an operation key stands in for the endpoint when
+there is no HTTP path. Out-of-range status, negative duration or over-long
+fields refuse with `Error::Invalid`.
+
+## Privacy
+
+Every stored endpoint loses URL credentials, the query string and the
+fragment; do not put secrets in path segments or observational ids. Raw error
+messages are never stored (`error_message` is generic). Bodies and headers are
+kept only with `retain_payload: true`, as `{"kind":"json","value":…}` previews:
+keys naming authorization, cookie, password, secret, token, api key, credential
+or signature are `[redacted]`, every string value is `[omitted]`, numbers,
+booleans and structure stay. Non-JSON or streamed bodies, and previews over
+32 KiB, record only `{"kind":"omitted","reason":…}`. `payload` redacts again
+on read (`redaction::inspect_stored`).
+
+## Reads, deletion and retention
+
+`list`, `get`, `payload` and `delete` take the session scope and authorize on
+every call: `admin.system.outbound-exchange.list`, `.payload.view` (with list)
+and `.delete`. These are tenant capabilities; Auditor and System Viewer get
+list only. A tenant sees its own rows; only the platform operator scope widens
+to all tenants and system rows, and it never bypasses the capability. `list`
+takes a `Filter` (direction, outcome, one search across host/path/operation,
+status, user and agent ids, exact status, actor, UTC `since` and exclusive
+`until`) and page sizes 25/50/100/300. Deletion is an audited mutation
+(`base/integration.exchange`) carrying metadata only.
+
+Recording and pruning are machine measurements on their own pooled connection,
+outside the caller's transaction and outside mutation capture. The global
+operator setting `integration.payload_retention_days` (default 30) drives the
+contributed daily schedule `base/integration.payload-retention` (03:17 UTC,
+forbid overlap), which clears previews and keeps metadata. Like every
+contributed recurrence it runs nothing until an operator enables it on
+`/system/schedule`.
+
+## Runtime evidence
+
+`examples/integration-walkthrough.rs` runs against a disposable database
+(`BILIBI_DISPOSABLE_INTEGRATION_DEMO=yes`, `DATABASE_URL`) with a local fixture
+server: retained/redacted preview, HTTP error, body limit, streamed download,
+connect failure, timeout, tenant and system incoming rows, every visibility and
+capability gate, audited deletion and payload pruning. The API Exchanges pages
+(`/system/api-exchanges`) are slice O2.
