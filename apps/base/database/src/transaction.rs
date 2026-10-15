@@ -174,7 +174,9 @@ impl<'a> MutationTransaction<'a> {
         result
     }
     /// Prefer `mutate` for owner writes: an owner/capture error permanently
-    /// prevents commit, even if a caller catches the error.
+    /// prevents commit, even if a caller catches the error. A write that
+    /// reports no `Change` is `Error::Invalid`, so decide a refusal (a taken
+    /// name, a stale version) with `sql()` before calling this, not inside it.
     pub async fn mutate<T, F>(&mut self, write: F) -> Result<T>
     where
         F: for<'b> FnOnce(

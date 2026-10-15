@@ -43,7 +43,7 @@ edge; the sealed scope is identity for one unit of work, not a permanent login.
 Decisions record reason and principal kind using the caller's connection; decisions
 inside an owner transaction follow that transaction's commit/rollback.
 
-`base/authz.grants` exposes audited role assignments, custom-role capability
+`base/authz.grants` exposes audited custom-role creation, role assignments, custom-role capability
 changes, direct overrides, and system grants. It checks the administrator and
 principal through the live owner verifier. System roles are immutable through
 interactive role-grant writes; reconciliation is their explicit update path.
