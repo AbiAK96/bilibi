@@ -324,6 +324,48 @@ async fn main() -> Result<()> {
     run(
         &queries,
         actor,
+        "connection terminated",
+        "SELECT pg_terminate_backend(pg_backend_pid())",
+        ConsoleOptions::default(),
+        1,
+        25,
+    )
+    .await?;
+    run(
+        &queries,
+        actor,
+        "JSON conversion failure",
+        "SELECT 1e10000::numeric AS huge",
+        ConsoleOptions::default(),
+        1,
+        25,
+    )
+    .await?;
+    client
+        .execute(
+            "UPDATE users SET status='inactive' WHERE tenant_id=$1 AND id=$2",
+            &[&scopes[1].tenant(), &scopes[1].user()],
+        )
+        .await?;
+    run(
+        &queries,
+        &scopes[1],
+        "inactive actor",
+        "SELECT 1",
+        ConsoleOptions::default(),
+        1,
+        25,
+    )
+    .await?;
+    client
+        .execute(
+            "UPDATE users SET status='active' WHERE tenant_id=$1 AND id=$2",
+            &[&scopes[1].tenant(), &scopes[1].user()],
+        )
+        .await?;
+    run(
+        &queries,
+        actor,
         "timeout",
         "SELECT pg_sleep(11)",
         ConsoleOptions::default(),
