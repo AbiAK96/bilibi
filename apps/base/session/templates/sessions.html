@@ -6,7 +6,7 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="sessions-index") %}
-{% call ui::header(subtitle="View and manage active sessions") %}Sessions{% endcall %}
+{{ header|safe }}
 {{ toolbar|safe }}
 {{ card|safe }}
 {{ dialog|safe }}

@@ -29,9 +29,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Badge, BadgeKind, Card, Column, ConfirmDialog, FilterToolbar, FlashMap, Html,
-    IconButton, IconKind, ListSpec, ListState, PageCounts, Pagination, Row, SortDir, StatItem,
-    StatStrip, StatusKind, Table, TableEmpty, ToolbarControl, NO_FLASH,
+    params, Badge, BadgeKind, Card, Column, ConfirmDialog, FilterToolbar, FlashMap, Header, Html,
+    IconButton, IconContext, IconKind, ListSpec, ListState, PageCounts, Pagination, Row, SortDir,
+    StatItem, StatStrip, StatusKind, Table, TableEmpty, ToolbarControl, NO_FLASH,
 };
 use serde_json::Value;
 use std::{
@@ -98,6 +98,7 @@ impl Pages {
 #[template(path = "sessions.html")]
 struct IndexView<'a> {
     flash: FlashMap<'a>,
+    header: Html,
     toolbar: Html,
     card: Html,
     dialog: Html,
@@ -301,6 +302,17 @@ impl Index {
             self.pending = None;
         }
 
+        let header = render(Header {
+            title: Html::text("Sessions"),
+            subtitle: "View and manage active sessions",
+            title_actions: render(IconButton {
+                context: IconContext::Inline,
+                id: "sessions-pin",
+                nav_pin: "nav-admin-system-session",
+                ..IconButton::new("bilimbi-pin", "Pin Sessions to sidebar")
+            })?,
+            ..Header::default()
+        })?;
         let form = self.state.filters_form();
         let toolbar = render(FilterToolbar::new(
             "sessions-filters",
@@ -419,6 +431,7 @@ impl Index {
         }
         IndexView {
             flash,
+            header,
             toolbar,
             card,
             dialog,
