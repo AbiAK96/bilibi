@@ -20,6 +20,10 @@ pub struct PageBody {
 }
 pub trait Page<Context, Error>: Send + Sync {
     fn render<'a>(&'a self, request: PageRequest<'a, Context>) -> PageFuture<'a, Error>;
+    /// The document title for a discovered page, when its owner supplies one.
+    fn title(&self, _operation: &str) -> Option<&'static str> {
+        None
+    }
     /// An owner may finish an authorized HTTP action with a 303 redirect.
     /// The host calls this only after `render` succeeds; live updates use LiveBody.redirect.
     fn redirect(&self, _operation: &str) -> Option<&'static str> {

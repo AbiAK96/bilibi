@@ -1,0 +1,25 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <div id="design-library-list-populated">
+                  <p class="mb-1 text-xs text-ink-muted">Facts for one record</p>
+                  {% call ui::facts() %}
+                    {% call ui::fact(title="Company") %}Acme Holdings{% endcall %}{% call ui::fact(title="Status") %}
+                      {% call ui::badge(kind=bilibi_ui::BadgeKind::Success) %}Active{% endcall %}
+                    {% endcall %}{% call ui::fact(title="Jurisdiction") %}Malaysia{% endcall %}
+                  {% endcall %}
+                </div>
+                <div id="design-library-list-single" class="border-t border-line pt-3">
+                  <p class="mb-1 text-xs text-ink-muted">One fact</p>
+                  {% call ui::facts() %}
+                    {% call ui::fact(title="Company") %}Acme Holdings{% endcall %}
+                  {% endcall %}
+                </div>
+                <div id="design-library-list-boundary" class="border-t border-line pt-3">
+                  <p class="text-xs text-ink-muted">
+                    This list has no loading, empty, or error state; the screen around it supplies the facts.
+                  </p>
+                </div>
+              

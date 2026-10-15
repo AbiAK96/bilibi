@@ -1,0 +1,988 @@
+{
+  "library-shell-time": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "library-shell-time",
+    "value": "~U[2026-09-14 07:00:00Z]"
+  },
+  "design-library-inline-long-text-read": {
+    "kind": "inline_long_text",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-long-text-read",
+    "label": "Description",
+    "value": "Supports the regional service teams.",
+    "editing": false,
+    "editable?": true,
+    "save_event": "preview-long-text"
+  },
+  "design-library-inline-long-text-edit": {
+    "kind": "inline_long_text",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-long-text-edit",
+    "label": "Description",
+    "value": "Supports the regional service teams.",
+    "editing": true,
+    "autofocus": false,
+    "editable?": true,
+    "save_event": "preview-long-text",
+    "allow_empty": true,
+    "status": "saved"
+  },
+  "design-library-inline-long-text-error": {
+    "kind": "inline_long_text",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-long-text-error",
+    "label": "Description",
+    "value": "Supports the regional service teams.",
+    "editing": true,
+    "autofocus": false,
+    "editable?": true,
+    "save_event": "preview-long-text",
+    "status": "{:error, \"The description could not be saved.\"}"
+  },
+  "design-library-inline-choice-read": {
+    "kind": "inline_choice",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-choice-read",
+    "label": "Edit status",
+    "editing": false,
+    "editable?": true
+  },
+  "design-library-inline-choice-edit": {
+    "kind": "inline_choice",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-choice-edit",
+    "label": "Edit status",
+    "editing": true,
+    "editable?": true
+  },
+  "design-library-inline-choice-error": {
+    "kind": "inline_choice",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-choice-error",
+    "label": "Edit status",
+    "editing": false,
+    "editable?": true,
+    "status": "{:error, \"Pending is not allowed.\"}",
+    "status_id": "design-library-inline-choice-error-message"
+  },
+  "example-tabs": {
+    "kind": "tabs",
+    "id": "example-tabs",
+    "aria-label": "Example views",
+    "items": [
+      {
+        "href": "#component-tabs",
+        "current": "EXPR:true",
+        "label": "Overview"
+      },
+      {
+        "href": "#component-tabs",
+        "label": "History"
+      },
+      {
+        "href": "#component-tabs",
+        "label": "Settings"
+      },
+      {
+        "href": "#component-tabs",
+        "label": "Recent activity"
+      },
+      {
+        "href": "#component-tabs",
+        "label": "Access history"
+      }
+    ]
+  },
+  "example-single-tab": {
+    "kind": "tabs",
+    "id": "example-single-tab",
+    "aria-label": "Example single view",
+    "items": [
+      {
+        "href": "#component-tabs",
+        "current": "EXPR:true",
+        "label": "Overview"
+      }
+    ]
+  },
+  "sample_text_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "text_field",
+    "label": "Text",
+    "placeholder": "Enter a value"
+  },
+  "sample_search_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "search_field",
+    "type": "search",
+    "label": "Search",
+    "placeholder": "Search…",
+    "phx-debounce": "150"
+  },
+  "sample_email_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "email_field",
+    "type": "email",
+    "label": "Email"
+  },
+  "sample_tel_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "tel_field",
+    "type": "tel",
+    "label": "Telephone"
+  },
+  "sample_number_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "number_field",
+    "type": "number",
+    "label": "Number"
+  },
+  "sample_url_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "url_field",
+    "type": "url",
+    "label": "URL"
+  },
+  "sample_textarea_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "textarea_field",
+    "type": "textarea",
+    "label": "Textarea",
+    "wrapper_class": "mb-0"
+  },
+  "sample_select_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "select_field",
+    "type": "select",
+    "label": "Select",
+    "options": [
+      [
+        "Standard",
+        "standard"
+      ],
+      [
+        "Advanced",
+        "advanced"
+      ]
+    ]
+  },
+  "design-library-multi-select": {
+    "kind": "multi_select",
+    "form": "sample",
+    "key": "roles",
+    "id": "design-library-multi-select",
+    "label": "Multi-select",
+    "options": [
+      [
+        "Administrator",
+        "admin"
+      ],
+      [
+        "Operator",
+        "operator"
+      ],
+      [
+        "Reviewer",
+        "reviewer"
+      ]
+    ],
+    "selection_label": ":count role selected|:count roles selected"
+  },
+  "sample_checkbox_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "checkbox_field",
+    "type": "checkbox",
+    "label": "Enable synchronization"
+  },
+  "component-radio-group": {
+    "kind": "radio_group",
+    "form": "sample",
+    "key": "radio_field",
+    "id": "component-radio-group",
+    "label": "Appearance",
+    "options": [
+      [
+        "System",
+        "system"
+      ],
+      [
+        "Light",
+        "light"
+      ],
+      [
+        "Dark",
+        "dark"
+      ]
+    ],
+    "wrapper_class": "mb-1.5"
+  },
+  "design-library-multi-select-required": {
+    "kind": "multi_select",
+    "form": "sample",
+    "key": "required_roles",
+    "id": "design-library-multi-select-required",
+    "label": "Roles",
+    "hint": "Everyone needs at least one role.",
+    "required": true,
+    "options": [
+      [
+        "Administrator",
+        "admin"
+      ],
+      [
+        "Operator",
+        "operator"
+      ],
+      [
+        "Reviewer",
+        "reviewer"
+      ]
+    ],
+    "selection_label": ":count role selected|:count roles selected"
+  },
+  "design-library-multi-select-chips": {
+    "kind": "multi_select",
+    "form": "sample",
+    "key": "chip_roles",
+    "id": "design-library-multi-select-chips",
+    "aria-label": "Roles with chips",
+    "placeholder": "Add roles",
+    "chips": true,
+    "options": [
+      [
+        "Administrator",
+        "admin"
+      ],
+      [
+        "Operator",
+        "operator"
+      ],
+      [
+        "Reviewer",
+        "reviewer"
+      ]
+    ]
+  },
+  "design-library-multi-select-plain": {
+    "kind": "multi_select",
+    "form": "sample",
+    "key": "plain_roles",
+    "id": "design-library-multi-select-plain",
+    "aria-label": "Optional roles",
+    "options": [
+      [
+        "Administrator",
+        "admin"
+      ],
+      [
+        "Operator",
+        "operator"
+      ],
+      [
+        "Reviewer",
+        "reviewer"
+      ]
+    ],
+    "wrapper_class": "mb-0"
+  },
+  "design-library-radio-locked": {
+    "kind": "radio_group",
+    "form": "",
+    "key": "",
+    "id": "design-library-radio-locked",
+    "name": "locked_region",
+    "aria-label": "Data region",
+    "value": "sg",
+    "disabled": true,
+    "hint": "Your organization set this for everyone.",
+    "options": [
+      [
+        "Singapore",
+        "sg"
+      ],
+      [
+        "Malaysia",
+        "my"
+      ]
+    ],
+    "wrapper_class": "mb-0"
+  },
+  "sample_date_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "date_field",
+    "type": "date",
+    "label": "Date"
+  },
+  "sample_time_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "time_field",
+    "type": "time",
+    "label": "Time"
+  },
+  "sample_datetime_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "datetime_field",
+    "type": "datetime-local",
+    "label": "Date and time"
+  },
+  "sample_month_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "month_field",
+    "type": "month",
+    "label": "Month"
+  },
+  "sample_week_field": {
+    "kind": "input",
+    "form": "sample",
+    "key": "week_field",
+    "type": "week",
+    "label": "Week"
+  },
+  "sample_password_field": {
+    "kind": "secret_input",
+    "form": "sample",
+    "key": "password_field",
+    "label": "Password",
+    "subject": "password",
+    "autocomplete": "new-password"
+  },
+  "sample_api_key_field": {
+    "kind": "secret_input",
+    "form": "sample",
+    "key": "api_key_field",
+    "label": "API key",
+    "subject": "API key",
+    "autocomplete": "off",
+    "wrapper_class": "mb-0",
+    "hint": "The eye shows a newly entered value for confirmation."
+  },
+  "design-library-stored-key": {
+    "kind": "secret_input",
+    "form": "",
+    "key": "",
+    "id": "design-library-stored-key",
+    "name": "stored_key",
+    "label": "Stored API key",
+    "subject": "API key",
+    "stored?": true,
+    "value": "never-render-this-plaintext",
+    "autocomplete": "off",
+    "hint": "Leave the mask to keep the saved value, or clear it explicitly."
+  },
+  "design-library-no-eye": {
+    "kind": "secret_input",
+    "form": "sample",
+    "key": "password_field",
+    "id": "design-library-no-eye",
+    "aria-label": "Password without reveal",
+    "subject": "password",
+    "reveal": false
+  },
+  "design-library-input-datetime": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-input-datetime",
+    "value": "@sample_input_datetime"
+  },
+  "field-with-help": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "field-with-help",
+    "label": "Company code",
+    "value": "acme",
+    "hint": "Used in URLs and exports."
+  },
+  "error_sample_invalid_text": {
+    "kind": "input",
+    "form": "error_sample",
+    "key": "invalid_text",
+    "label": "Required value",
+    "placeholder": "Enter a value"
+  },
+  "disabled-field": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "disabled-field",
+    "label": "System value",
+    "value": "Managed by Bilimbi",
+    "disabled": true
+  },
+  "required-field": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "required-field",
+    "label": "Company name",
+    "value": "",
+    "placeholder": "Enter a value",
+    "required": true
+  },
+  "readonly-field": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "readonly-field",
+    "label": "System identifier",
+    "value": "acme-0042",
+    "readonly": true
+  },
+  "field-with-help-and-error": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "field-with-help-and-error",
+    "label": "Tax ID",
+    "value": "",
+    "hint": "As printed on the certificate.",
+    "errors": [
+      "can't be blank"
+    ]
+  },
+  "design-library-radio-disabled": {
+    "kind": "radio_group",
+    "form": "",
+    "key": "",
+    "id": "design-library-radio-disabled",
+    "name": "radio_disabled",
+    "label": "Locked appearance",
+    "value": "system",
+    "disabled": true,
+    "options": [
+      [
+        "System",
+        "system"
+      ],
+      [
+        "Light",
+        "light"
+      ],
+      [
+        "Dark",
+        "dark"
+      ]
+    ],
+    "wrapper_class": "mb-0 mt-4"
+  },
+  "example_role": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "example_role",
+    "type": "select",
+    "label": "Role",
+    "prompt": "Select a role",
+    "value": "",
+    "options": [
+      [
+        "Administrator",
+        "admin"
+      ],
+      [
+        "Operator",
+        "operator"
+      ]
+    ]
+  },
+  "example_teams": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "id": "example_teams",
+    "name": "example_teams[]",
+    "type": "select",
+    "label": "Teams",
+    "multiple": true,
+    "value": "[]",
+    "options": [
+      [
+        "Platform",
+        "platform"
+      ],
+      [
+        "Billing",
+        "billing"
+      ],
+      [
+        "Support",
+        "support"
+      ]
+    ]
+  },
+  "example_interests": {
+    "kind": "input",
+    "form": "sample",
+    "key": "example_interests",
+    "id": "example_interests",
+    "type": "multi_select",
+    "label": "Interests",
+    "selection_label": ":count interest selected|:count interests selected",
+    "options": [
+      [
+        "Platform",
+        "platform"
+      ],
+      [
+        "Billing",
+        "billing"
+      ]
+    ]
+  },
+  "example_teams_chips": {
+    "kind": "input",
+    "form": "sample",
+    "key": "example_teams_chips",
+    "id": "example_teams_chips",
+    "type": "multi_select",
+    "label": "Teams, as chips",
+    "placeholder": "Add teams",
+    "chips": true,
+    "options": [
+      [
+        "Platform",
+        "platform"
+      ],
+      [
+        "Billing",
+        "billing"
+      ],
+      [
+        "Support",
+        "support"
+      ]
+    ]
+  },
+  "quick_search": {
+    "kind": "input",
+    "form": "",
+    "key": "",
+    "name": "quick_search",
+    "type": "search",
+    "aria-label": "Quick search",
+    "placeholder": "Quick search…",
+    "value": ""
+  },
+  "design-library-combobox-country": {
+    "kind": "combobox",
+    "form": "",
+    "key": "",
+    "id": "design-library-combobox-country",
+    "name": "example_country",
+    "label": "Country",
+    "placeholder": "Search countries…",
+    "options": [
+      [
+        "Malaysia (MY)",
+        "MY"
+      ],
+      [
+        "Singapore (SG)",
+        "SG"
+      ],
+      [
+        "Thailand (TH)",
+        "TH"
+      ]
+    ]
+  },
+  "design-library-combobox-selected": {
+    "kind": "combobox",
+    "form": "",
+    "key": "",
+    "id": "design-library-combobox-selected",
+    "name": "example_selected_country",
+    "label": "Selected country",
+    "value": "SG",
+    "options": [
+      [
+        "Malaysia (MY)",
+        "MY"
+      ],
+      [
+        "Singapore (SG)",
+        "SG"
+      ],
+      [
+        "Thailand (TH)",
+        "TH"
+      ]
+    ]
+  },
+  "design-library-combobox-empty": {
+    "kind": "combobox",
+    "form": "",
+    "key": "",
+    "id": "design-library-combobox-empty",
+    "name": "example_empty_country",
+    "label": "Unavailable country list",
+    "placeholder": "No countries",
+    "options": [],
+    "errors": [
+      "Choose a country before continuing."
+    ]
+  },
+  "design-library-combobox-inline": {
+    "kind": "combobox",
+    "form": "",
+    "key": "",
+    "id": "design-library-combobox-inline",
+    "aria-label": "Inline country editor",
+    "value": "MY",
+    "cancel_event": "preview-combobox-cancel",
+    "options": [
+      [
+        "Malaysia (MY)",
+        "MY"
+      ],
+      [
+        "Singapore (SG)",
+        "SG"
+      ],
+      [
+        "Thailand (TH)",
+        "TH"
+      ]
+    ]
+  },
+  "design-library-inline-edit": {
+    "kind": "inline_edit",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-edit",
+    "value": "@inline_value",
+    "save_event": "preview-inline-edit",
+    "label": "Edit company name"
+  },
+  "design-library-inline-edit-saved": {
+    "kind": "inline_edit",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-edit-saved",
+    "value": "Bilimbi Industries",
+    "save_event": "preview-inline-edit",
+    "label": "Edit company name",
+    "status": "saved"
+  },
+  "design-library-inline-edit-add": {
+    "kind": "inline_edit",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-edit-add",
+    "value": "",
+    "save_event": "preview-inline-edit",
+    "label": "Add business activity",
+    "placeholder": "Add activity"
+  },
+  "design-library-inline-edit-error": {
+    "kind": "inline_edit",
+    "form": "",
+    "key": "",
+    "id": "design-library-inline-edit-error",
+    "value": "",
+    "save_event": "preview-inline-edit",
+    "label": "Edit phone",
+    "allow_empty": true,
+    "status": "{:error, \"\\\"+60 3\\\" was not saved: Phone should be at most 3 character(s).\"}"
+  },
+  "design-library-commit-status-saved": {
+    "kind": "commit_status",
+    "form": "",
+    "key": "",
+    "id": "design-library-commit-status-saved",
+    "status": "saved"
+  },
+  "design-library-commit-status-error": {
+    "kind": "commit_status",
+    "form": "",
+    "key": "",
+    "id": "design-library-commit-status-error",
+    "status": "{:error, \"\\\"+60 3\\\" was not saved: Phone should be at most 3 character(s).\"}"
+  },
+  "design-library-modal-name": {
+    "kind": "input",
+    "form": "example",
+    "key": "name",
+    "id": "design-library-modal-name",
+    "label": "Company name"
+  },
+  "design-library-wide-modal-name": {
+    "kind": "input",
+    "form": "example",
+    "key": "name",
+    "id": "design-library-wide-modal-name",
+    "label": "Company name"
+  },
+  "design-library-wide-modal-code": {
+    "kind": "input",
+    "form": "example",
+    "key": "code",
+    "id": "design-library-wide-modal-code",
+    "label": "Code"
+  },
+  "design-library-table-search": {
+    "kind": "filter_toolbar",
+    "id": "design-library-table-search",
+    "form": "EXPR:@sample_filter_form",
+    "event": "sample-search",
+    "controls": [
+      {
+        "type": "EXPR::search",
+        "field": "EXPR:@sample_filter_form[:search]",
+        "id": "design-library-table-search-input",
+        "label": "Search the example company table",
+        "placeholder": "Search by name or code…",
+        "options": []
+      }
+    ]
+  },
+  "design-library-stat-linked": {
+    "kind": "stat_strip",
+    "id": "design-library-stat-linked",
+    "title": "Workspace",
+    "navigate": "EXPR:~p\"/system/design-library/components\"",
+    "items": [
+      {
+        "label": "People",
+        "kind": "EXPR::number",
+        "value": "EXPR:24"
+      },
+      {
+        "label": "Active",
+        "value": "EXPR:18"
+      }
+    ]
+  },
+  "design-library-stat-unlinked": {
+    "kind": "stat_strip",
+    "id": "design-library-stat-unlinked",
+    "title": "Storage",
+    "items": [
+      {
+        "label": "Store",
+        "kind": "EXPR::text",
+        "value": "Durable"
+      }
+    ]
+  },
+  "design-library-date-time": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-date-time",
+    "value": "@sample_datetime"
+  },
+  "design-library-date": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-date",
+    "value": "@sample_datetime",
+    "format": "date"
+  },
+  "design-library-time": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-time",
+    "value": "@sample_datetime",
+    "format": "time"
+  },
+  "design-library-date-time-second": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-date-time-second",
+    "value": "@sample_datetime",
+    "precision": "second"
+  },
+  "design-library-date-empty": {
+    "kind": "datetime",
+    "form": "",
+    "key": "",
+    "id": "design-library-date-empty"
+  },
+  "design-library-restricted": {
+    "kind": "restricted",
+    "form": "",
+    "key": "",
+    "id": "design-library-restricted"
+  },
+  "design-library-restricted-reason": {
+    "kind": "restricted",
+    "form": "",
+    "key": "",
+    "id": "design-library-restricted-reason",
+    "reason": "Bonuses are shown to payroll only."
+  },
+  "design-library-restricted-field": {
+    "kind": "restricted_field",
+    "form": "",
+    "key": "",
+    "id": "design-library-restricted-field",
+    "label": "Bank account"
+  },
+  "design-library-restricted-field-reason": {
+    "kind": "restricted_field",
+    "form": "",
+    "key": "",
+    "id": "design-library-restricted-field-reason",
+    "label": "Bonus",
+    "reason": "Bonuses are shown to payroll only."
+  },
+  "pattern_search": {
+    "kind": "input",
+    "form": "pattern",
+    "key": "search",
+    "type": "search",
+    "label": "Search companies",
+    "label_class": "sr-only",
+    "wrapper_class": "mb-0",
+    "placeholder": "Search companies…"
+  },
+  "design-library-filter-full": {
+    "kind": "filter_toolbar",
+    "id": "design-library-filter-full",
+    "class": "mb-0 min-w-0 flex-1",
+    "form": "EXPR:@filter_toolbar_full_form",
+    "event": "filter-toolbar-preview",
+    "controls": [
+      {
+        "type": "EXPR::search",
+        "field": "EXPR:@filter_toolbar_full_form[:search]",
+        "id": "design-library-filter-full-search",
+        "label": "Search example companies",
+        "placeholder": "Search example companies…",
+        "options": []
+      },
+      {
+        "type": "EXPR::select",
+        "field": "EXPR:@filter_toolbar_full_form[:status]",
+        "id": "design-library-filter-full-status",
+        "label": "Status filter",
+        "options": [
+          [
+            "All statuses",
+            ""
+          ],
+          [
+            "Active",
+            "active"
+          ],
+          [
+            "Pending",
+            "pending"
+          ]
+        ]
+      },
+      {
+        "type": "EXPR::select",
+        "field": "EXPR:@filter_toolbar_full_form[:kind]",
+        "id": "design-library-filter-full-kind",
+        "label": "Kind filter",
+        "options": [
+          [
+            "All kinds",
+            ""
+          ],
+          [
+            "Standard",
+            "standard"
+          ],
+          [
+            "Advanced",
+            "advanced"
+          ]
+        ]
+      },
+      {
+        "type": "EXPR::multi_select",
+        "field": "EXPR:@filter_toolbar_full_form[:roles]",
+        "id": "design-library-filter-full-roles",
+        "label": "Role filter",
+        "placeholder": "All roles",
+        "selection_label": ":count role selected|:count roles selected",
+        "options": [
+          [
+            "Administrator",
+            "admin"
+          ],
+          [
+            "Operator",
+            "operator"
+          ],
+          [
+            "Reviewer",
+            "reviewer"
+          ]
+        ]
+      }
+    ]
+  },
+  "design-library-filter-period": {
+    "kind": "period_filter",
+    "form": "",
+    "key": "",
+    "id": "design-library-filter-period",
+    "state": "@period",
+    "clock": "@period_clock",
+    "current_scope": "@current_scope",
+    "path": "fn params -> ~p\"/system/design-library/components?#{params}\" end"
+  },
+  "design-library-filter-search-only": {
+    "kind": "filter_toolbar",
+    "id": "design-library-filter-search-only",
+    "form": "EXPR:@filter_toolbar_search_form",
+    "event": "filter-toolbar-search-preview",
+    "controls": [
+      {
+        "type": "EXPR::search",
+        "field": "EXPR:@filter_toolbar_search_form[:search]",
+        "id": "design-library-filter-search-only-search",
+        "label": "Search example records",
+        "placeholder": "Search example records…",
+        "options": []
+      }
+    ]
+  },
+  "code_input-specimen": {
+    "kind": "code_input",
+    "form": "",
+    "key": "",
+    "label": "Device code",
+    "length": 8,
+    "group_size": 4
+  },
+  "example-period-filter": {
+    "kind": "period_filter",
+    "form": "",
+    "key": "",
+    "id": "example-period-filter",
+    "clock": "@period_clock",
+    "state": "@period",
+    "current_scope": "@current_scope",
+    "path": "fn params -> ~p\"/system/design-library/components?#{params}\" end"
+  }
+}

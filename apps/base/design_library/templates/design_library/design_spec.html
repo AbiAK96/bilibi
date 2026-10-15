@@ -1,0 +1,63 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+      <section id="specifications" class="space-y-8">
+        <section id="accepted-design" class="space-y-6">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Accepted choices</h2><p class="text-sm text-ink-muted">
+              These are the current rules for Bilimbi.
+            </p>
+          </div>
+          <section id="spec-shell" class="space-y-3">
+            <h2 class="text-base font-semibold text-ink">
+              Application shell
+            </h2>
+            <p class="text-sm text-muted">
+              Account details belong behind the bottom-left circle, including the Platform-operator caution row when the tenant is the platform operator; only impersonation, which has an exit, stays above the workspace. Where a screen's own reach is not filtered to one company, that screen says so in the same caution colour: the SQL console warns beside the query it runs, and an authorization listing the operator scope widens to rows attached to no company carries a one-line caption above its table, and the roles list, whose Principals counts it widens, names those counts. An account works in one company and tenant, so the menu shows the current scope and offers no switching.
+            </p>
+            <p class="text-sm text-muted">
+              The clock selects Company, Local or UTC time. Sun, moon and desktop select Light, Dark or System theme. A saved choice confirms in place, updates the controls and follows your account; every timestamp already rendered through &lt;.datetime&gt; changes with it, without a reload and without losing your place, and every screen you open afterwards uses the new choice. A screen that formats instants directly rather than through that component is unaffected until it adopts it. While saving, controls prevent duplicate work; a failed save keeps the previous choice and explains how to retry. While you view as another user, the top bar reports the active time display and offers no controls, because those preferences belong to the account you are viewing.
+            </p>
+            <p class="text-sm text-muted">
+              Menus close on Escape or outside click and return keyboard focus to their trigger on Escape. The narrow drawer contains keyboard focus and returns it to the sidebar toggle when closed.
+            </p>
+          </section>
+          <section id="spec-theme" class="space-y-3">
+            <h3 class="text-sm font-semibold text-ink">Theme</h3>
+            <div class="grid gap-3 lg:grid-cols-2">
+              {% call ui::card(id="spec-t01", inner_class="p-4") %}{{ self.card_spec_t01()? }}{% endcall %}
+              {% call ui::card(id="spec-d01", inner_class="p-4") %}{{ self.card_spec_d01()? }}{% endcall %}
+              {% call ui::card(id="spec-d02", inner_class="p-4") %}{{ self.card_spec_d02()? }}{% endcall %}
+            </div>
+          </section>
+
+          <section id="spec-components" class="space-y-3">
+            <h3 class="text-sm font-semibold text-ink">Components</h3>
+            <div class="grid gap-3 lg:grid-cols-2">
+              {% call ui::card(id="spec-c01", inner_class="p-4") %}{{ self.card_spec_c01()? }}{% endcall %}
+              {% call ui::card(id="spec-c02", inner_class="p-4") %}{{ self.card_spec_c02()? }}{% endcall %}
+              {% call ui::card(id="spec-c03", inner_class="p-4") %}{{ self.card_spec_c03()? }}{% endcall %}
+              {% call ui::card(id="spec-c04", inner_class="p-4") %}{{ self.card_spec_c04()? }}{% endcall %}
+              {% call ui::card(id="spec-c05", inner_class="p-4") %}{{ self.card_spec_c05()? }}{% endcall %}
+              {% call ui::card(id="spec-c06", inner_class="p-4") %}{{ self.card_spec_c06()? }}{% endcall %}
+            </div>
+          </section>
+
+          <section id="spec-structure-data" class="space-y-3">
+            <h3 class="text-sm font-semibold text-ink">Structure and data</h3>
+            <div class="grid gap-3 lg:grid-cols-2">
+              {% call ui::card(id="spec-d03", inner_class="p-4") %}{{ self.card_spec_d03()? }}{% endcall %}
+              {% call ui::card(id="spec-d04", inner_class="p-4") %}{{ self.card_spec_d04()? }}{% endcall %}
+            </div>
+          </section>
+
+          <section id="spec-experience" class="space-y-3">
+            <h3 class="text-sm font-semibold text-ink">Experience</h3>
+            <div class="grid gap-3 lg:grid-cols-2">
+              {% call ui::card(id="spec-d05", inner_class="p-4") %}{{ self.card_spec_d05()? }}{% endcall %}
+              {% call ui::card(id="spec-d06", inner_class="p-4") %}{{ self.card_spec_d06()? }}{% endcall %}
+            </div>
+          </section>
+        </section>
+      </section>

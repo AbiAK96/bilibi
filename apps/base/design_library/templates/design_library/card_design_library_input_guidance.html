@@ -1,0 +1,44 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Text</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use for a short value that is genuinely open-ended.
+                  </p>
+                </div>
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Select</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use for one choice from a short, stable list.
+                  </p>
+                </div>
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Multi-select</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use when several listed choices may apply together.
+                  </p>
+                </div>
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Checkbox</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use for one independent on-or-off setting.
+                  </p>
+                </div>
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Radio group</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use for two to five exclusive choices that should stay visible.
+                  </p>
+                </div>
+                <div class="rounded-lg border border-line bg-canvas p-3">
+                  <h3 class="text-sm font-semibold text-ink">Date and time</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    Use native calendar and time controls when precision matters.
+                  </p>
+                </div>
+              </div>
+            

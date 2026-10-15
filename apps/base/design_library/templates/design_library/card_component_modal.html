@@ -1,0 +1,22 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <p class="text-xs text-ink-muted">
+                A short workflow over the current screen. Focus enters the dialog, the page
+                behind is inert, and Escape or Cancel returns focus to the control that opened it.
+                The open dialog carries its own connection banners, revealed above it rather than
+                dimmed behind it if the connection drops.
+              </p>
+              <div class="flex flex-wrap gap-2">
+                {% call ui::button(id="design-library-open-modal", button_type="button", event="open-modal") %}
+                  Open dialog
+                {% endcall %}
+                {% call ui::button(id="design-library-open-wide-modal", button_type="button", event="open-modal", name="width", value="wide") %}
+                  Open wide dialog
+                {% endcall %}
+              </div>
+              {% if self.state.modal == "narrow" %}{% call d::modal(id="design-library-modal", title="Rename example company", cancel_event="close-modal", description="Changes stay in this preview.") %}{{ self.part_43()? }}{% endcall %}{% endif %}
+              {% if self.state.modal == "wide" %}{% call d::modal(id="design-library-wide-modal", title="Edit example company", cancel_event="close-modal", width=bilibi_ui::ModalWidth::Wide) %}{{ self.part_44()? }}{% endcall %}{% endif %}
+            

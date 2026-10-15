@@ -1,0 +1,314 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+      <section id="foundations" class="space-y-8">
+        <section id="theme-surfaces-lines" class="space-y-4">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Surfaces &amp; Lines</h2>
+            <p class="text-sm text-ink-muted">
+              Background surfaces and the structural lines drawn on them.
+            </p>
+          </div>
+
+          <div class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
+            <div>
+              <h3 class="mb-2 text-sm font-semibold text-ink">Surfaces and line contrast</h3>
+              <div id="theme-line-contrast" class="mb-3 space-y-2">
+                <p class="text-xs text-ink-muted">
+                  Each surface below is paired with all three line contrasts, from high to low.
+                </p>
+                <div id="theme-structure" class="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <p class="text-sm text-ink">High-contrast line</p>
+                    <p class="text-xs text-ink-muted">Clear separation from the surface</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-ink">Standard line</p>
+                    <p class="text-xs text-ink-muted">Everyday separation from the surface</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-ink">Low-contrast line</p>
+                    <p class="text-xs text-ink-muted">Quiet separation from the surface</p>
+                  </div>
+                </div>
+              </div>
+              <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <div class="overflow-hidden rounded-lg border border-line">
+                  <div class="flex h-16 flex-col justify-between bg-canvas p-3">
+                    <span class="h-px bg-high-contrast-line"></span>
+                    <span class="h-px bg-line"></span>
+                    <span class="h-px bg-low-contrast-line"></span>
+                  </div>
+                  <div class="border-t border-line bg-surface p-2">
+                    <p class="text-sm font-medium text-ink">Canvas</p>
+                    <p class="text-xs text-ink-muted">Page background</p>
+                  </div>
+                </div>
+                <div class="overflow-hidden rounded-lg border border-line">
+                  <div class="flex h-16 flex-col justify-between bg-surface p-3">
+                    <span class="h-px bg-high-contrast-line"></span>
+                    <span class="h-px bg-line"></span>
+                    <span class="h-px bg-low-contrast-line"></span>
+                  </div>
+                  <div class="border-t border-line bg-surface p-2">
+                    <p class="text-sm font-medium text-ink">Surface</p>
+                    <p class="text-xs text-ink-muted">Cards and controls</p>
+                  </div>
+                </div>
+                <div class="overflow-hidden rounded-lg border border-line">
+                  <div class="flex h-16 flex-col justify-between bg-surface-sunken p-3">
+                    <span class="h-px bg-high-contrast-line"></span>
+                    <span class="h-px bg-line"></span>
+                    <span class="h-px bg-low-contrast-line"></span>
+                  </div>
+                  <div class="border-t border-line bg-surface p-2">
+                    <p class="text-sm font-medium text-ink">Sunken</p>
+                    <p class="text-xs text-ink-muted">Table heads and wells</p>
+                  </div>
+                </div>
+                <div class="overflow-hidden rounded-lg border border-line">
+                  <div class="flex h-16 flex-col justify-between bg-surface-muted p-3">
+                    <span class="h-px bg-high-contrast-line"></span>
+                    <span class="h-px bg-line"></span>
+                    <span class="h-px bg-low-contrast-line"></span>
+                  </div>
+                  <div class="border-t border-line bg-surface p-2">
+                    <p class="text-sm font-medium text-ink">Muted</p>
+                    <p class="text-xs text-ink-muted">Quiet grouping</p>
+                  </div>
+                </div>
+                <div class="overflow-hidden rounded-lg border border-line">
+                  <div class="flex h-16 flex-col justify-between bg-surface-sidebar p-3">
+                    <span class="h-px bg-high-contrast-line"></span>
+                    <span class="h-px bg-line"></span>
+                    <span class="h-px bg-low-contrast-line"></span>
+                  </div>
+                  <div class="border-t border-line bg-surface p-2">
+                    <p class="text-sm font-medium text-ink">Sidebar</p>
+                    <p class="text-xs text-ink-muted">Navigation</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="theme-line-thickness" class="border-t border-line pt-4">
+              <h3 class="mb-2 text-sm font-semibold text-ink">Line thickness</h3>
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div class="rounded-lg bg-canvas p-3">
+                  <div class="mb-2 flex items-center gap-3">
+                    <span class="text-sm text-ink">Hairline</span>
+                    <span class="h-px flex-1 bg-line"></span>
+                    <span class="text-xs tabular-nums text-ink-muted">1px</span>
+                  </div>
+                  <p class="text-xs text-ink-muted">Structural borders and dividers</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="theme-identity" class="space-y-4">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Identity &amp; Action</h2>
+            <p class="text-sm text-ink-muted">Primary action, selection, and brand roles.</p>
+          </div>
+          <div class="grid gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs sm:grid-cols-3">
+            <div class="space-y-2">
+              <div class="rounded-lg bg-action p-3 text-action-ink">
+                <p class="text-sm font-semibold">Primary action</p>
+                <p class="text-xs opacity-80">The next committed step</p>
+              </div>
+              <div id="theme-primary-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Primary line</span>
+                <span class="h-px flex-1 bg-primary-line"></span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="rounded-lg border border-selection-line bg-brand-surface p-3 text-brand-ink">
+                <p class="text-sm font-semibold">Selection</p>
+                <p class="text-xs opacity-80">Current place or choice</p>
+              </div>
+              <div id="theme-selection-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Selection line</span>
+                <span class="h-px flex-1 bg-selection-line"></span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="rounded-lg bg-brand p-3 text-brand-ink">
+                <p class="text-sm font-semibold">Brand accent</p>
+                <p class="text-xs opacity-80">Bilimbi identity</p>
+              </div>
+              <div id="theme-brand-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Brand line</span>
+                <span class="h-px flex-1 bg-brand-line"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="theme-feedback" class="space-y-4">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Feedback</h2>
+            <p class="text-sm text-ink-muted">Success, warning, and danger roles.</p>
+          </div>
+          <div class="grid gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs sm:grid-cols-3">
+            <div class="space-y-2">
+              <div class="rounded-lg border border-success-line bg-success-surface p-3 text-success-ink">
+                <p class="text-sm font-semibold">Success</p>
+                <p class="text-xs opacity-80">Completed as intended</p>
+              </div>
+              <div id="theme-success-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Success line</span>
+                <span class="h-px flex-1 bg-success-line"></span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="rounded-lg border border-warning-line bg-warning-surface p-3 text-warning-ink">
+                <p class="text-sm font-semibold">Warning</p>
+                <p class="text-xs opacity-80">Attention is needed</p>
+              </div>
+              <div id="theme-warning-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Warning line</span>
+                <span class="h-px flex-1 bg-warning-line"></span>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="rounded-lg border border-danger-line bg-danger-surface p-3 text-danger-ink">
+                <p class="text-sm font-semibold">Danger</p>
+                <p class="text-xs opacity-80">Failure or destructive work</p>
+              </div>
+              <div id="theme-danger-line" class="flex items-center gap-2 px-1">
+                <span class="shrink-0 text-xs text-ink-muted">Danger line</span>
+                <span class="h-px flex-1 bg-danger-line"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="theme-typography" class="space-y-4">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Typography</h2>
+            <p class="text-sm text-ink-muted">
+              Ink hierarchy and Instrument Sans throughout Bilimbi.
+            </p>
+          </div>
+          <div class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
+            <div id="theme-text">
+              <h3 class="mb-2 text-sm font-semibold text-ink">Ink hierarchy</h3>
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <p class="text-sm font-semibold text-ink-strong">Strong ink</p>
+                  <p class="text-xs text-ink-muted">Headings and emphasis</p>
+                </div>
+                <div>
+                  <p class="text-sm text-ink">Primary ink</p>
+                  <p class="text-xs text-ink-muted">Everyday reading</p>
+                </div>
+                <div>
+                  <p class="text-sm text-ink-muted">Muted ink</p>
+                  <p class="text-xs text-ink-subtle">Supporting context</p>
+                </div>
+                <div>
+                  <p class="text-sm text-ink-subtle">Subtle ink</p>
+                  <p class="text-xs text-ink-muted">Secondary detail</p>
+                </div>
+                <div>
+                  <p class="text-sm text-ink-faint">Faint ink</p>
+                  <p class="text-xs text-ink-muted">Placeholder and disabled detail</p>
+                </div>
+                <div class="rounded-md bg-danger px-2 py-1.5">
+                  <p class="text-sm text-ink-inverse">Inverse ink</p>
+                  <p class="text-xs text-ink-inverse/70">Text on danger actions</p>
+                </div>
+              </div>
+
+              <div class="mt-4">
+                <h4 class="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  Navigation text
+                </h4>
+                <div id="theme-navigation-text" class="grid gap-3 rounded-lg bg-surface-sidebar p-3 sm:grid-cols-3">
+                  <div>
+                    <p class="text-sm text-link">Link</p>
+                    <p class="text-xs text-ink-muted">Default navigation and links</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-muted">Muted</p>
+                    <p class="text-xs text-ink-muted">Pinned headings and secondary detail</p>
+                  </div>
+                  <div>
+                    <p class="text-sm text-brand-strong">Active</p>
+                    <p class="text-xs text-ink-muted">Current navigation choice</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="theme-type" class="border-t border-line pt-4">
+              <h3 class="mb-3 text-sm font-semibold text-ink">Type</h3>
+              <div class="grid gap-3 lg:grid-cols-2">
+                <div class="space-y-4">
+                  <div>
+                    <p class="text-xs text-ink-muted">Page heading</p>
+                    <p class="text-lg font-semibold leading-8 tracking-tight text-action">
+                      Company directory
+                    </p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-ink-muted">Section heading</p>
+                    <p class="text-base font-semibold text-ink-strong">Contact information</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-ink-muted">Body</p>
+                    <p class="text-sm text-ink">
+                      Clear operational text for long working sessions.
+                    </p>
+                  </div>
+                </div>
+                <div class="space-y-4">
+                  <div>
+                    <p class="text-xs text-ink-muted">Label</p>
+                    <p class="text-sm font-medium text-ink">Company name</p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-ink-muted">Supporting text</p>
+                    <p class="text-sm text-ink-muted">
+                      This appears below the primary information.
+                    </p>
+                  </div>
+                  <div>
+                    <p class="text-xs text-ink-muted">Numbers and dates</p>
+                    <p class="text-sm tabular-nums text-ink">24/08/2026 · 1,024 · 99.50</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="theme-shape" class="space-y-4">
+          <div>
+            <h2 class="text-base font-semibold text-ink-strong">Shape &amp; Density</h2>
+            <p class="text-sm text-ink-muted">
+              Current shared shapes. Unresolved control differences are listed under Components.
+            </p>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-3">
+            <div class="rounded-lg border border-line bg-surface p-4">
+              <div class="mb-3 h-9 rounded-lg border border-line bg-surface shadow-xs"></div>
+              <p class="text-sm font-medium text-ink">Standard field</p>
+              <p class="text-xs text-ink-muted">Comfortable form entry</p>
+            </div>
+            <div class="rounded-lg border border-line bg-surface p-4">
+              <div class="mb-3 h-7 rounded-md border border-line bg-surface"></div>
+              <p class="text-sm font-medium text-ink">Compact control</p>
+              <p class="text-xs text-ink-muted">Dense navigation and tables</p>
+            </div>
+            <div class="rounded-xl border border-line bg-surface p-4 shadow-xs">
+              <div class="mb-3 h-7 rounded-lg bg-surface-sunken"></div>
+              <p class="text-sm font-medium text-ink">Grouped surface</p>
+              <p class="text-xs text-ink-muted">Related work stays together</p>
+            </div>
+          </div>
+        </section>
+      </section>

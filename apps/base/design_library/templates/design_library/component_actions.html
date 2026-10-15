@@ -1,0 +1,20 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+<section id="component-actions" class="scroll-mt-4 space-y-4">
+            <div>
+              <h2 id="component-button" class="text-base font-semibold text-ink-strong">
+                Actions
+              </h2><p class="text-sm text-ink-muted">
+                Primary, secondary, destructive, disabled, navigation, in-flight, and busy examples. Consequence copy is the confirmation dialog under Overlays; typed acknowledgement is not built.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4 shadow-xs">
+              {% call ui::button() %}Secondary{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary) %}Primary{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger) %}Danger{% endcall %}{% call ui::button(disabled=true) %}Disabled{% endcall %}{% call ui::button(href="/system/design-library") %}Navigation{% endcall %}{% call ui::button(event="test_click", variant=bilibi_ui::ButtonVariant::Primary, working="Working…") %}Clicked: {{ self.text("@click_count") }}{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, busy=true) %}Saving…{% endcall %}
+            </div>
+            <p class="text-xs text-ink-muted">
+              Clicked goes in flight for one round trip: LiveView disables it and shows "Working…" until the server replies, and the shell mirrors that wait onto <code>aria-busy</code>; it is announced but still wears the dimmed disabled look. Busy is the wait the server knows about, such as a sign-in that is opening the workspace: the control spins at full strength, is disabled and carries <code>aria-busy</code>. Disabled means the action is not available at all, so it dims and never spins.
+            </p>
+            {% call ui::card(id="component-icon-button", title="Compact icon actions", inner_class="p-4") %}{{ self.card_component_icon_button()? }}{% endcall %}
+          </section>

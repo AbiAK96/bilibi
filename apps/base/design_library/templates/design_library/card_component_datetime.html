@@ -1,0 +1,17 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <div class="flex justify-between gap-4 text-sm">
+                  <span class="text-ink-muted">Date and time</span>{{ self.control("design-library-date-time")? }}
+                </div><div class="flex justify-between gap-4 text-sm">
+                  <span class="text-ink-muted">Date</span>{{ self.control("design-library-date")? }}
+                </div><div class="flex justify-between gap-4 text-sm">
+                  <span class="text-ink-muted">Time</span>{{ self.control("design-library-time")? }}
+                </div><div class="flex justify-between gap-4 text-sm">
+                  <span class="text-ink-muted">To the second</span>{{ self.control("design-library-date-time-second")? }}
+                </div><div class="flex justify-between gap-4 text-sm">
+                  <span class="text-ink-muted">Not set</span>{{ self.control("design-library-date-empty")? }}
+                </div>
+              

@@ -1,0 +1,16 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <div>
+                <p class="mb-2 text-xs text-ink-muted">
+                  Linked strip with multiple numeric values
+                </p>
+                {{ self.control("design-library-stat-linked")? }}
+              </div>
+              <div class="border-t border-line pt-4">
+                <p class="mb-2 text-xs text-ink-muted">Read-only strip with one text value</p>
+                {{ self.control("design-library-stat-unlinked")? }}
+              </div>
+            

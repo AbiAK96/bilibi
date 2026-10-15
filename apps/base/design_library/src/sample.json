@@ -1,0 +1,37 @@
+{
+  "text_field": "Sample text value",
+  "search_field": "Search query",
+  "email_field": "hello@example.com",
+  "tel_field": "+60 12-345 6789",
+  "url_field": "https://bilimbi.test",
+  "number_field": "25",
+  "password_field": "secret-value",
+  "api_key_field": "sk-sample-0000",
+  "select_field": "standard",
+  "roles": [
+    "admin",
+    "reviewer"
+  ],
+  "required_roles": [
+    "admin"
+  ],
+  "plain_roles": [],
+  "example_interests": [
+    "platform"
+  ],
+  "checkbox_field": "true",
+  "radio_field": "system",
+  "textarea_field": "Multi-line sample content demonstrating textarea rendering.",
+  "date_field": "2026-08-17",
+  "time_field": "14:30",
+  "datetime_field": "2026-08-17T14:30",
+  "month_field": "2026-08",
+  "week_field": "2026-W34",
+  "chip_roles": [
+    "admin",
+    "reviewer"
+  ],
+  "example_teams_chips": [
+    "platform"
+  ]
+}

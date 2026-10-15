@@ -1,0 +1,23 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <p class="text-xs text-ink-muted">
+                The read state is the trigger. Choose a value to commit, or press Escape or leave the control to cancel.
+              </p>
+              <div class="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Read state</p>
+                  {{ self.control("design-library-inline-choice-read")? }}
+                </div>
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Editing and cancel</p>
+                  {{ self.control("design-library-inline-choice-edit")? }}
+                </div>
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Commit refused</p>
+                  {{ self.control("design-library-inline-choice-error")? }}
+                </div>
+              </div>
+            

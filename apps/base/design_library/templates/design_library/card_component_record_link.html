@@ -1,0 +1,20 @@
+{% import "lists.html" as lists %}
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <p class="text-xs text-ink-muted">
+                The link from a list row to its record. Inside a tiled workspace the same call renders a selection button: when another tile follows that kind of record it opens the record there and the list stays put, otherwise it opens the record here as the link would. Alone, it is a plain navigation.
+              </p>
+              <p id="design-library-record-link-alone" class="text-sm">
+                {% call lists::record_link(workspace=false, kind="core/company", record_id="1", href="/system/design-library/components", class="font-medium text-ink-strong hover:underline") %}
+                  A company, opened alone
+                {% endcall %}
+              </p>
+              <p id="design-library-record-link-followed" class="text-sm">
+                {% call lists::record_link(workspace=true, kind="core/company", record_id="1", href="/system/design-library/components", class="font-medium text-ink-strong hover:underline") %}
+                  A company, selected inside a workspace
+                {% endcall %}
+              </p>
+            

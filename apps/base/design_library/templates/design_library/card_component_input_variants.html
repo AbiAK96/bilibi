@@ -1,0 +1,19 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {{ self.control("example_role")? }}
+                  {{ self.control("example_teams")? }}
+                  {{ self.control("example_interests")? }}
+                  {{ self.control("example_teams_chips")? }}
+                  {{ self.control("quick_search")? }}
+                </div>
+                <p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">
+                  A prompt names the empty choice, the native multiple select shows what
+                  is chosen by highlighting its rows, the multi-select reports the count on
+                  its trigger, and the search box takes an <code>aria-label</code> rather
+                  than a visible one.
+                </p>
+              

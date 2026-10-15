@@ -7,6 +7,7 @@ pub use bilibi_authz as authz;
 pub use bilibi_dashboard as dashboard;
 pub use bilibi_database as database;
 pub use bilibi_datetime as datetime;
+pub use bilibi_design_library as design_library;
 pub use bilibi_grid as grid;
 pub use bilibi_integration as integration;
 pub use bilibi_locale as locale;

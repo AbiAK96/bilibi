@@ -1,0 +1,15 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                {{ self.control("sample_text_field")? }}
+                {{ self.control("sample_search_field")? }}
+                {{ self.control("sample_email_field")? }}
+                <div class="grid gap-x-3 sm:grid-cols-2">
+                  {{ self.control("sample_tel_field")? }}
+                  {{ self.control("sample_number_field")? }}
+                </div>
+                {{ self.control("sample_url_field")? }}
+                {{ self.control("sample_textarea_field")? }}
+              

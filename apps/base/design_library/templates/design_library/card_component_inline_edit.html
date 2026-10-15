@@ -1,0 +1,22 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <div>
+                <p class="mb-2 text-xs text-ink-muted">
+                  Click the value, type, then press Enter or leave the field. Nothing is painted until the server replies: the field reads "Saving…" for the round trip, then reports the outcome on itself.
+                </p>{{ self.control("design-library-inline-edit")? }}
+              </div>
+              <div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Saved</p>{{ self.control("design-library-inline-edit-saved")? }}
+                </div>
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Adds rather than edits</p>{{ self.control("design-library-inline-edit-add")? }}
+                </div>
+                <div>
+                  <p class="mb-2 text-xs text-ink-muted">Refused, empty allowed</p>{{ self.control("design-library-inline-edit-error")? }}
+                </div>
+              </div>
+            

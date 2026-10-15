@@ -355,6 +355,7 @@ dependencies = [
  "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
+ "bilibi-design-library",
  "bilibi-grid",
  "bilibi-integration",
  "bilibi-locale",
@@ -455,6 +456,23 @@ dependencies = [
  "jiff",
  "serde_json",
  "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-design-library"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde_json",
 ]
 
 [[package]]

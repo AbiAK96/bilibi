@@ -1,0 +1,15 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+<section id="component-interaction-patterns" class="scroll-mt-4 space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-ink-strong">
+                Interaction patterns
+              </h2>
+              <p class="text-sm text-ink-muted">
+                Inline text editing is the shared interaction primitive today; the demoted back link is a link, so it sits under Navigation and links. Inline select, combobox and textarea editing, grouped fact editing, disclosure, filter and period patterns, and unsaved-change flows have no specimen yet; the filter composition is shown as part of the index page under Composite patterns.
+              </p>
+            </div>
+            {% call ui::card(id="component-inline-edit", title="Inline edit", inner_class="space-y-4 p-4") %}{{ self.card_component_inline_edit()? }}{% endcall %}
+          </section>

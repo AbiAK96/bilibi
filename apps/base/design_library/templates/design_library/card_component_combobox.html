@@ -1,0 +1,17 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <p class="mb-3 text-xs text-ink-muted">
+                  Type to filter, use the arrow keys to move, and press Enter to commit. Escape or
+                  leaving the field restores the last committed choice. The unlabelled inline editor
+                  also reports the cancel to its LiveView, as an inline field editor does.
+                </p>
+                <div class="grid gap-x-3 sm:grid-cols-3">
+                  {{ self.control("design-library-combobox-country")? }}
+                  {{ self.control("design-library-combobox-selected")? }}
+                  {{ self.control("design-library-combobox-empty")? }}
+                  {{ self.control("design-library-combobox-inline")? }}
+                </div>
+              

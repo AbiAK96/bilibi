@@ -1,0 +1,20 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+              <div id="design-library-header-default">
+                <p class="mb-2 text-xs text-ink-muted">Title, subtitle, and trailing action</p>
+                {% call ui::header(subtitle="Manage identity and regional defaults.", actions=self.part_7()?) %}
+                  Company settings
+                {% endcall %}
+              </div>
+              <div id="design-library-header-title-action" class="border-t border-line pt-4">
+                <p class="mb-2 text-xs text-ink-muted">
+                  Title action without a trailing action
+                </p>
+                {% call ui::header(title_actions=self.part_8()?) %}
+                  Company details
+                {% endcall %}
+              </div>
+            

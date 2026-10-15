@@ -1,0 +1,10 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+<div id="design-library-context" data-shared-ui data-csrf="{{ state.csrf }}">
+{% call ui::page(id="design-library", class="space-y-6") %}
+{% call ui::header(subtitle=self.description(), actions=self.stage()?) %}{{ self.title() }}{% endcall %}
+{{ self.action_flash()? }}
+{% if state.area == "theme" %}{{ self.theme()? }}{% elif state.area == "components" %}{{ self.components()? }}{% elif state.area == "graphic" %}{{ self.graphic()? }}{% else %}{{ self.design_spec()? }}{% endif %}
+{% endcall %}
+
+</div>

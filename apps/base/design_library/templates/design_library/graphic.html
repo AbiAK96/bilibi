@@ -1,0 +1,129 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+      <section id="graphics" class="space-y-8">
+        <div id="component-icon" class="space-y-8">
+          <section id="graphic-mark" class="space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-ink-strong">Bilimbi mark</h2><p class="text-sm text-ink-muted">
+                One mark, shown at the sizes and surfaces currently in use.
+              </p>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="grid min-h-36 place-items-center rounded-xl border border-line bg-canvas p-4">
+                <div class="text-center">
+                  <img src="/assets/logo.svg" alt="Bilimbi" class="mx-auto size-9" /><p class="mt-3 text-xs text-ink-muted">
+                    Sign in · 36px
+                  </p>
+                </div>
+              </div>
+              <div class="grid min-h-36 place-items-center rounded-xl border border-line bg-surface-sidebar p-4">
+                <div class="text-center">
+                  <img src="/assets/logo.svg" alt="Bilimbi" class="mx-auto size-6" /><p class="mt-3 text-xs text-ink-muted">
+                    App bar · 24px
+                  </p>
+                </div>
+              </div>
+              <div class="grid min-h-36 place-items-center rounded-xl border border-line bg-surface p-4 shadow-xs">
+                <div class="text-center">
+                  <img src="/favicon.svg" alt="Bilimbi favicon" class="mx-auto size-8" /><p class="mt-3 text-xs text-ink-muted">
+                    Browser icon · 32px
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-xl border border-line bg-surface p-4 shadow-xs">
+              <h3 class="mb-2 text-sm font-semibold text-ink">Bilimbi-specific icons</h3>
+              <div class="flex flex-wrap gap-5">
+                <div class="flex items-center gap-2">
+                  {% call ui::icon(name="bilimbi-pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span>
+                </div><div class="flex items-center gap-2">
+                  {% call ui::icon(name="bilimbi-impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="graphic-icons" class="space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-ink-strong">Icons</h2><p class="text-sm text-ink-muted">
+                Outline icons are the current default. Familiar actions share one named glyph so the mapping cannot drift.
+              </p>
+            </div>
+            <div class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
+              <div>
+                <h3 class="mb-2 text-sm font-semibold text-ink">Navigation</h3><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div class="flex items-center gap-3 rounded-lg bg-canvas p-3">
+                    {% call ui::icon(name="hero-building-office-2", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Companies</span>
+                  </div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">
+                    {% call ui::icon(name="hero-users", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Users</span>
+                  </div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">
+                    {% call ui::icon(name="hero-shield-check", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Authorization</span>
+                  </div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">
+                    {% call ui::icon(name="hero-cog-6-tooth", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">System</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <h3 class="mb-2 text-sm font-semibold text-ink">Actions</h3><div class="flex flex-wrap gap-2">
+                  {% call ui::button() %}{% call ui::icon(name="create") %}{% endcall %} Add{% endcall %}
+                  {% call ui::button() %}{% call ui::icon(name="edit") %}{% endcall %} Edit{% endcall %}
+                  {% call ui::button() %}{% call ui::icon(name="search") %}{% endcall %} Search{% endcall %}
+                  {% call ui::button(variant=bilibi_ui::ButtonVariant::Danger) %}{% call ui::icon(name="delete") %}{% endcall %} Delete{% endcall %}
+                </div>
+              </div>
+              <div>
+                <h3 class="mb-2 text-sm font-semibold text-ink">Status</h3><div class="flex flex-wrap gap-5">
+                  <div class="flex items-center gap-2 text-success-ink">
+                    {% call ui::icon(name="success", class="size-5") %}{% endcall %}<span class="text-sm">Completed</span>
+                  </div><div class="flex items-center gap-2 text-warning-ink">
+                    {% call ui::icon(name="warning", class="size-5") %}{% endcall %}<span class="text-sm">Attention</span>
+                  </div><div class="flex items-center gap-2 text-danger-ink">
+                    {% call ui::icon(name="error", class="size-5") %}{% endcall %}<span class="text-sm">Failed</span>
+                  </div><div class="flex items-center gap-2 text-ink-muted">
+                    {% call ui::icon(name="information", class="size-5") %}{% endcall %}<span class="text-sm">Information</span>
+                  </div>
+                </div>
+              </div>
+              <div id="graphic-icon-variants" class="border-t border-line pt-4">
+                <h3 class="mb-2 text-sm font-semibold text-ink">Icon treatments</h3>
+                <div class="flex flex-wrap items-end gap-6">
+                  <div class="text-center">
+                    {% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}
+                    <p class="mt-1 text-xs text-ink-muted">Outline — the default</p>
+                  </div>
+                  <div class="text-center">
+                    {% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}
+                    <p class="mt-1 text-xs text-ink-muted">Solid</p>
+                  </div>
+                  <div class="text-center">
+                    {% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}
+                    <p class="mt-1 text-xs text-ink-muted">Mini</p>
+                  </div>
+                </div>
+                <p class="mt-3 text-xs text-ink-muted">
+                  Outline and solid use regular dimensions; Mini is a smaller-optimized drawing intended for compact use.
+                </p>
+                <h3 class="mb-2 mt-4 text-sm font-semibold text-ink">
+                  Size and color are set where the icon is used
+                </h3>
+                <div class="flex flex-wrap items-end gap-6">
+                  <div class="text-center">
+                    {% call ui::icon(name="hero-check-circle", class="mx-auto size-4 text-success") %}{% endcall %}
+                    <p class="mt-1 text-xs text-ink-muted">Small, success green</p>
+                  </div>
+                  <div class="text-center">
+                    {% call ui::icon(name="hero-check-circle", class="mx-auto size-7 text-muted") %}{% endcall %}
+                    <p class="mt-1 text-xs text-ink-muted">Large, muted</p>
+                  </div>
+                </div>
+                <p class="mt-3 text-xs text-ink-muted">
+                  Icons have no built-in interaction or disabled state; the name chooses the drawing and the screen sets its size and color.
+                </p>
+              </div>
+            </div>
+          </section>
+
+<section id="graphic-icon-catalog">{{ self.catalog()? }}</section>
+</div></section>

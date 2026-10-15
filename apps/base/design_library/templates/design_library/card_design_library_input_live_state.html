@@ -1,0 +1,23 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                {% call ui::facts() %}
+                  {% call ui::fact(title="Text") %}
+                    <span class="block truncate">{{ self.text("@sample_form[:text_field].value") }}</span>
+                  {% endcall %}
+                  {% call ui::fact(title="Search") %}
+                    <span class="block truncate">{{ self.text("@sample_form[:search_field].value") }}</span>
+                  {% endcall %}
+                  {% call ui::fact(title="Select") %}{{ self.text("@sample_form[:select_field].value") }}{% endcall %}
+                  {% call ui::fact(title="Multi-select") %}
+                    {{ self.text("Enum.join(List.wrap(@sample_form[:roles].value), \", \")") }}
+                  {% endcall %}
+                  {% call ui::fact(title="Checkbox") %}{{ self.text("@sample_form[:checkbox_field].value") }}{% endcall %}
+                  {% call ui::fact(title="Radio") %}{{ self.text("@sample_form[:radio_field].value") }}{% endcall %}
+                  {% call ui::fact(title="Date and time") %}
+                    {{ self.control("design-library-input-datetime")? }}
+                  {% endcall %}
+                {% endcall %}
+              

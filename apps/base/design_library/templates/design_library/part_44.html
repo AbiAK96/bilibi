@@ -1,0 +1,16 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <form id="design-library-wide-modal-form" data-event="close-modal" class="mt-4 space-y-4">
+                  <div class="grid gap-4 sm:grid-cols-2">
+                    {{ self.control("design-library-wide-modal-name")? }}
+                    {{ self.control("design-library-wide-modal-code")? }}
+                  </div>
+                  <div class="flex justify-end gap-2">
+                    {% call ui::button(button_type="button", event="close-modal") %}Cancel{% endcall %}
+                    {% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary) %}Save{% endcall %}
+                  </div>
+                </form>
+              

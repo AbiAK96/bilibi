@@ -1,0 +1,12 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                {{ self.control("design-library-radio-locked")? }}
+                <p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">
+                  Locked, so every choice is inert. The card heading names the group on
+                  screen and an <code>aria-label</code> names it for assistive tech, so it
+                  passes no label of its own, and the hint says who decided.
+                </p>
+              

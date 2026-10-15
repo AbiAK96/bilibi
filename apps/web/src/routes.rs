@@ -1,5 +1,5 @@
 //! Discovered HTTP pages: validate/bind once, authorize before owner dispatch.
-use crate::{document, origin, token, App, HttpError};
+use crate::{origin, token, App, HttpError};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
@@ -263,7 +263,10 @@ async fn dispatch(
             .activity(&**client, &credential)
             .await?;
     }
-    let mut response = document(&shell.html, shell.theme)?.into_response();
+    let mut response = crate::document_themed(
+        bound.page.0.title(bound.route.operation).unwrap_or("Bilibi"),
+        &shell.html,shell.theme,
+    )?.into_response();
     if framed {
         response.headers_mut().insert(
             header::HeaderName::from_static("x-bilibi-framed"),

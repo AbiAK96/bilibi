@@ -264,9 +264,6 @@ impl IntoResponse for HttpError {
 fn render<T: Template>(template: T) -> Result<String> {
     template.render().map_err(|_| Error::Internal)
 }
-fn document(body: &str, theme: &str) -> Result<Html<String>> {
-    document_themed("Bilibi", body, theme)
-}
 fn document_titled(title: &str, body: &str) -> Result<Html<String>> {
     document_themed(title, body, "system")
 }
