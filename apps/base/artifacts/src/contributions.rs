@@ -25,5 +25,35 @@ macro_rules! setting {
     };
 }
 setting!("artifacts.storage_root",String,json!(""),false,None,None,"Private document directory","Existing absolute 0700 directory, outside public/static/assets. Old documents keep their original root.");
-setting!("artifacts.retention_days",Integer,Value::Null,true,Some(1.0),Some(36500.0),"Document retention days","Required before publication; expiry is captured at reservation. Records-grade retention follows in A2.");
+setting!("artifacts.retention_days",Integer,Value::Null,true,Some(1.0),Some(36500.0),"Document retention days","Required before publication; expiry is captured at reservation. Records-grade documents carry a retain-until instead.");
 setting!("artifacts.max_bytes",Integer,json!(10_485_760),false,Some(1.0),Some(536_870_912.0),"Maximum document bytes","Maximum buffered upload/generated document size, up to 512 MiB. Owners validate content before storage.");
+setting!(
+    "artifacts.purge_batch_size",
+    Integer,
+    json!(100),
+    false,
+    Some(1.0),
+    Some(1000.0),
+    "Document purge batch size",
+    "Maximum documents considered by each owner-scoped retention call."
+);
+setting!(
+    "artifacts.purge_retry_minutes",
+    Integer,
+    json!(60),
+    false,
+    Some(1.0),
+    Some(525_600.0),
+    "Document purge retry interval (minutes)",
+    "Minimum wait before retention retries a document whose purge failed or was refused."
+);
+setting!(
+    "artifacts.purge_max_attempts",
+    Integer,
+    json!(5),
+    false,
+    Some(1.0),
+    Some(1000.0),
+    "Document purge attempts before hold",
+    "Failed or refused purges after which a document is held for an operator to retry or resolve."
+);

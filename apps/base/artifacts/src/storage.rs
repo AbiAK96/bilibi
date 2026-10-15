@@ -102,3 +102,11 @@ pub(crate) fn delete(root: &str, id: &str) -> Result<()> {
     // Also sync a previously unlinked entry after an ambiguous DB commit.
     sync_root(root)
 }
+/// Succeeds only when no entry (not even a dangling link) remains at the path.
+pub(crate) fn absent(root: &str, id: &str) -> Result<()> {
+    match fs::symlink_metadata(path(root, id)?) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(_) => Err(Error::BytesPresent),
+    }
+}

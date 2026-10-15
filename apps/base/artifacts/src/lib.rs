@@ -2,7 +2,10 @@
 //! reservations/tombstones must commit independently of filesystem work.
 mod contributions;
 pub mod pdf;
+mod retention;
 mod storage;
+
+pub use retention::{PurgeHold, Retention, RetentionEvent};
 
 use bilibi_database::{Change, MutationBoundary, MutationTransaction};
 use bilibi_module_registry::Service;
@@ -41,6 +44,45 @@ pub enum Error {
     Integrity,
     #[error("Physical cleanup pending")]
     CleanupPending,
+    #[error("Artifact is under legal hold")]
+    LegalHold,
+    #[error("Artifact is retained until its retain-until time")]
+    Retained,
+    #[error("Retention needs a future time and a bounded reason")]
+    InvalidRetention,
+    #[error("Retain-until must move later")]
+    RetentionNotExtended,
+    #[error("Artifact is not retained")]
+    NotRetained,
+    #[error("Artifact is already on legal hold")]
+    AlreadyOnHold,
+    #[error("Artifact is not on legal hold")]
+    NotOnHold,
+    #[error("Private bytes are still present")]
+    BytesPresent,
+}
+impl Error {
+    /// Stable, content-free label kept as a purge attempt's last error.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Database(bilibi_database::Error::Forbidden) => "forbidden",
+            Self::Database(_) | Self::Sql(_) => "database",
+            Self::Storage(_) | Self::CleanupPending => "storage",
+            Self::UnsafeRoot => "unsafe_root",
+            Self::Policy => "policy",
+            Self::Invalid => "invalid",
+            Self::NotFound => "not_found",
+            Self::Integrity => "integrity",
+            Self::LegalHold => "legal_hold",
+            Self::Retained => "retained",
+            Self::InvalidRetention => "invalid_retention",
+            Self::RetentionNotExtended => "retention_not_extended",
+            Self::NotRetained => "not_retained",
+            Self::AlreadyOnHold => "already_on_hold",
+            Self::NotOnHold => "not_on_hold",
+            Self::BytesPresent => "bytes_present",
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
@@ -92,7 +134,10 @@ pub struct Metadata {
     pub content_type: String,
     pub byte_size: i64,
     pub sha256: String,
-    pub expires_at: String,
+    /// Set for an ordinary document; a records-grade one has none.
+    pub expires_at: Option<String>,
+    pub retain_until: Option<String>,
+    pub legal_hold_at: Option<String>,
 }
 /// Intentionally has no Debug implementation: document contents are private.
 pub struct Document {
@@ -107,8 +152,29 @@ struct Stored {
     deleted: bool,
     purged: bool,
     expired: bool,
+    /// Retain-until still lies in the future.
+    retained: bool,
+    attempts: i32,
+    last_error: Option<String>,
+    attempted_at: Option<String>,
+    held_at: Option<String>,
 }
-const COLUMNS: &str = "id,public_id,subject,kind,content_type,byte_size,sha256,storage_root,expires_at::text,ready_at IS NOT NULL AS ready,deleted_at IS NOT NULL AS deleted,purged_at IS NOT NULL AS purged,expires_at <= clock_timestamp() AS expired";
+impl Stored {
+    fn on_hold(&self) -> bool {
+        self.metadata.legal_hold_at.is_some()
+    }
+    /// A hold or an unreached retain-until refuses deletion and purge.
+    fn refusal(&self) -> Option<Error> {
+        if self.on_hold() {
+            Some(Error::LegalHold)
+        } else if self.retained {
+            Some(Error::Retained)
+        } else {
+            None
+        }
+    }
+}
+const COLUMNS: &str = "id,public_id,subject,kind,content_type,byte_size,sha256,storage_root,expires_at::text,retain_until::text,legal_hold_at::text,ready_at IS NOT NULL AS ready,deleted_at IS NOT NULL AS deleted,purged_at IS NOT NULL AS purged,COALESCE(expires_at <= clock_timestamp(),false) AS expired,COALESCE(retain_until > clock_timestamp(),false) AS retained,purge_attempts,purge_last_error,purge_attempted_at::text,purge_held_at::text";
 fn stored(row: Row) -> Stored {
     Stored {
         key: row.get("id"),
@@ -122,17 +188,25 @@ fn stored(row: Row) -> Stored {
             byte_size: row.get("byte_size"),
             sha256: row.get("sha256"),
             expires_at: row.get("expires_at"),
+            retain_until: row.get("retain_until"),
+            legal_hold_at: row.get("legal_hold_at"),
         },
         root: row.get("storage_root"),
         ready: row.get("ready"),
         deleted: row.get("deleted"),
         purged: row.get("purged"),
         expired: row.get("expired"),
+        retained: row.get("retained"),
+        attempts: row.get("purge_attempts"),
+        last_error: row.get("purge_last_error"),
+        attempted_at: row.get("purge_attempted_at"),
+        held_at: row.get("purge_held_at"),
     }
 }
 fn evidence(row: &Stored) -> Value {
     // Deliberately exclude subject, kind, content, MIME, digest and path.
-    json!({"artifact_id":row.metadata.id,"ready":row.ready,"deleted":row.deleted,"purged":row.purged})
+    json!({"artifact_id":row.metadata.id,"ready":row.ready,"deleted":row.deleted,"purged":row.purged,
+        "retain_until":row.metadata.retain_until,"legal_hold":row.on_hold(),"purge_held":row.held_at.is_some()})
 }
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -245,7 +319,16 @@ impl<O: Owner> Owned<'_, O> {
         Ok(())
     }
     async fn fetch(&self, tx: &MutationTransaction<'_>, id: &str) -> Result<Stored> {
-        tx.sql().query_opt(&format!("SELECT {COLUMNS} FROM base_artifacts WHERE public_id=$1 AND tenant_id=$2 AND company_id=$3 AND owner_id=$4 AND owner_adapter=$5 FOR UPDATE"), &[&id,&self.scope.tenant(),&self.company.get(),&self.owner.owner_id(),&type_name::<O>()]).await?.map(stored).ok_or(Error::NotFound)
+        self.find(tx.sql(), id, " FOR UPDATE").await
+    }
+    /// `lock` is a module-chosen suffix, never client text.
+    async fn find(
+        &self,
+        sql: &(impl GenericClient + Sync),
+        id: &str,
+        lock: &str,
+    ) -> Result<Stored> {
+        sql.query_opt(&format!("SELECT {COLUMNS} FROM base_artifacts WHERE public_id=$1 AND tenant_id=$2 AND company_id=$3 AND owner_id=$4 AND owner_adapter=$5{lock}"), &[&id,&self.scope.tenant(),&self.company.get(),&self.owner.owner_id(),&type_name::<O>()]).await?.map(stored).ok_or(Error::NotFound)
     }
     async fn begin<'c>(
         &self,
@@ -259,8 +342,29 @@ impl<O: Owner> Owned<'_, O> {
             .await?)
     }
     async fn audit(&self, tx: &MutationTransaction<'_>, row: &Stored, action: &str) -> Result<()> {
-        bilibi_audit::record_action(tx.sql(), &bilibi_audit::Attribution::from_context(tx.context())?, None, action,
-            json!({"artifact_id":row.metadata.id,"company_id":self.company.get(),"owner_id":self.owner.owner_id()}), false).await?;
+        self.audit_with(tx, row, action, json!({})).await
+    }
+    /// `details` are content-free facts such as times, counts and reason codes.
+    async fn audit_with(
+        &self,
+        tx: &MutationTransaction<'_>,
+        row: &Stored,
+        action: &str,
+        details: Value,
+    ) -> Result<()> {
+        let mut payload = json!({"artifact_id":row.metadata.id,"company_id":self.company.get(),"owner_id":self.owner.owner_id()});
+        if let (Some(payload), Some(details)) = (payload.as_object_mut(), details.as_object()) {
+            payload.extend(details.clone());
+        }
+        bilibi_audit::record_action(
+            tx.sql(),
+            &bilibi_audit::Attribution::from_context(tx.context())?,
+            None,
+            action,
+            payload,
+            false,
+        )
+        .await?;
         Ok(())
     }
     async fn transition(
@@ -297,6 +401,34 @@ impl<O: Owner> Owned<'_, O> {
         bytes: &[u8],
         content_type: &str,
     ) -> Result<Metadata> {
+        self.store(client, reference, bytes, content_type, None)
+            .await
+    }
+    /// Like `put`, but the document is records-grade from publication: it has a
+    /// retain-until (and optionally a legal hold) instead of an expiry. The
+    /// owner must also authorize `Operation::Retain`. Retention is applied in
+    /// the publication transaction, so a failed upload stays an ordinary
+    /// reservation that recovery can tombstone.
+    pub async fn put_retained(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        bytes: &[u8],
+        content_type: &str,
+        retention: Retention,
+    ) -> Result<Metadata> {
+        retention.validate()?;
+        self.store(client, reference, bytes, content_type, Some(retention))
+            .await
+    }
+    async fn store(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        bytes: &[u8],
+        content_type: &str,
+        retention: Option<Retention>,
+    ) -> Result<Metadata> {
         if !bounded(&reference.subject, 255)
             || !bounded(&reference.kind, 100)
             || !bounded(content_type, 255)
@@ -308,6 +440,10 @@ impl<O: Owner> Owned<'_, O> {
         let mut tx = self.begin(client, "artifacts.reserve").await?;
         self.authorize(tx.sql(), Operation::Create, Some(&reference))
             .await?;
+        if retention.is_some() {
+            self.authorize(tx.sql(), Operation::Retain, Some(&reference))
+                .await?;
+        }
         let root = self
             .store
             .settings
@@ -361,7 +497,12 @@ impl<O: Owner> Owned<'_, O> {
         storage::io(|| storage::write(&row.root, &id, bytes))?;
         self.authorize(tx.sql(), Operation::Create, Some(&row.metadata.reference))
             .await?;
-        let row = self.transition(&mut tx, &row, "ready").await?;
+        let mut row = self.transition(&mut tx, &row, "ready").await?;
+        if let Some(retention) = &retention {
+            self.authorize(tx.sql(), Operation::Retain, Some(&row.metadata.reference))
+                .await?;
+            row = self.retain_published(&mut tx, row, retention).await?;
+        }
         self.audit(&tx, &row, "artifacts.publish").await?;
         tx.commit().await?;
         Ok(row.metadata)
@@ -395,6 +536,18 @@ impl<O: Owner> Owned<'_, O> {
         self.authorize(tx.sql(), Operation::Delete, Some(&row.metadata.reference))
             .await?;
         if !row.deleted {
+            if let Some(refusal) = row.refusal() {
+                // The refusal itself is evidence: commit it, then refuse.
+                self.audit_with(
+                    &tx,
+                    &row,
+                    "artifacts.delete_refused",
+                    json!({"reason":refusal.code()}),
+                )
+                .await?;
+                tx.commit().await?;
+                return Err(refusal);
+            }
             let row = self.transition(&mut tx, &row, "deleted").await?;
             self.audit(&tx, &row, "artifacts.delete").await?;
         }
@@ -418,14 +571,16 @@ impl<O: Owner> Owned<'_, O> {
         Ok(())
     }
     /// Owner-scoped bounded maintenance. Reconciles tombstones and reservations
-    /// older than one hour; ready documents are left to A2 retention policy.
-    /// Candidate locking rechecks state so a delayed writer cannot be purged.
+    /// older than one hour; ready documents are left to `purge_expired`'s
+    /// retention policy. Documents whose purge an operator must resolve
+    /// (`list_purge_holds`) are skipped. Candidate locking rechecks state so a
+    /// delayed writer cannot be purged.
     pub async fn recover(&self, client: &mut Client, limit: i64) -> Result<Recovery> {
         if !(1..=1000).contains(&limit) {
             return Err(Error::Invalid);
         }
         self.authorize(&*client, Operation::Purge, None).await?;
-        let rows = client.query("SELECT public_id FROM base_artifacts WHERE tenant_id=$1 AND company_id=$2 AND owner_id=$3 AND owner_adapter=$4 AND purged_at IS NULL AND (deleted_at IS NOT NULL OR (ready_at IS NULL AND created_at < clock_timestamp()-interval '1 hour')) ORDER BY created_at,id LIMIT $5", &[&self.scope.tenant(),&self.company.get(),&self.owner.owner_id(),&type_name::<O>(),&limit]).await?;
+        let rows = client.query("SELECT public_id FROM base_artifacts WHERE tenant_id=$1 AND company_id=$2 AND owner_id=$3 AND owner_adapter=$4 AND purged_at IS NULL AND purge_held_at IS NULL AND (deleted_at IS NOT NULL OR (ready_at IS NULL AND created_at < clock_timestamp()-interval '1 hour')) ORDER BY created_at,id LIMIT $5", &[&self.scope.tenant(),&self.company.get(),&self.owner.owner_id(),&type_name::<O>(),&limit]).await?;
         let mut report = Recovery::default();
         for candidate in rows {
             let id: String = candidate.get(0);
@@ -459,7 +614,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id:"base/artifacts",layer:bilibi_module_registry::Layer::Base,
         dependencies:&["base/audit","base/authz","base/database","base/settings","base/tenancy","base/party_ids"],
-        migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql"))],
+        migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql")),("base-artifacts-002",include_str!("../migrations/002-retention.sql"))],
         services:&[Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
             boundary:services.get("base/database.mutations")?, settings:services.get("base/settings.store")?, authentication:services.get("base/tenancy.authentication")?,
         }))}],
