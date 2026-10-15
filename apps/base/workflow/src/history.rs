@@ -68,12 +68,11 @@ pub(crate) async fn append(
     sql: &Transaction<'_>,
     context: &Context,
     binding: i64,
-    subject: &Subject,
-    status: &str,
-    version: i64,
+    (subject, next): (&Subject, &Subject),
     operation: Operation,
     request: &Request,
 ) -> Result<(Fact, Change)> {
+    let (status, version) = (next.status.as_str(), next.version);
     let kind = match operation {
         Operation::Transition => "transition",
         Operation::RecordInitial => "record_initial",
@@ -123,7 +122,7 @@ impl Engine {
         let (owner, flow) = self.registry.subject(kind)?;
         self.load(&sql, &scope, owner, id, Load::Read, Operation::Read)
             .await?;
-        let rows=sql.query("SELECT h.id,h.from_status,h.status,h.kind,h.subject_version,h.actor_type,h.actor_id,h.impersonator,h.comment,h.comment_tag,h.assignees,h.attachments,h.metadata,h.tat,h.transitioned_at::text FROM base_workflow_status_history h JOIN base_workflow_bindings b ON b.id=h.binding_id WHERE b.tenant_id=$1 AND b.subject_type=$2 AND b.subject_id=$3 AND b.owner=$4 AND b.flow=$5 AND h.id>coalesce($6,0) ORDER BY h.id LIMIT $7",&[&scope.tenant(),&owner.key,&id,&owner.owner,&flow.code,&after,&(limit+1)]).await?;
+        let rows=sql.query("SELECT h.id,h.from_status,h.status,h.kind,h.subject_version,h.actor_type,h.actor_id,h.impersonator,h.comment,h.comment_tag,h.assignees,h.attachments,h.metadata,h.tat,h.transitioned_at::text FROM base_workflow_status_history h JOIN base_workflow_bindings b ON b.id=h.binding_id WHERE b.tenant_id=$1 AND b.subject_type=$2 AND b.subject_id=$3 AND b.owner=$4 AND b.flow=$5 AND h.id>coalesce($6::bigint,0) ORDER BY h.id LIMIT $7",&[&scope.tenant(),&owner.key,&id,&owner.owner,&flow.code,&after,&(limit+1)]).await?;
         let more = rows.len() > limit as usize;
         let entries: Vec<_> = rows.into_iter().take(limit as usize).map(fact).collect();
         let next_cursor = if more {

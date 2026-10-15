@@ -36,6 +36,9 @@ impl Capability {
     }
 }
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
+/// Never call this from a contribution validator: catalog discovery runs every
+/// validator while this snapshot initializes, so the call deadlocks. Prove
+/// capability references in a service factory instead.
 pub fn vocabulary() -> Result<&'static Vocabulary> {
     static SNAPSHOT: OnceLock<bilibi_module_registry::Result<Vocabulary>> = OnceLock::new();
     SNAPSHOT

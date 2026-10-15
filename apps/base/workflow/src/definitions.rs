@@ -127,10 +127,16 @@ impl Registry {
             .filter(|entry| entry.consumer == CONTRIBUTIONS)
             .map(|entry| Ok((entry.provenance.module, entry.get::<Contribution>()?)))
             .collect::<bilibi_module_registry::Result<Vec<_>>>()?;
-        Self::build(&entries)
+        let vocabulary = bilibi_authz::vocabulary()
+            .map_err(|_| invalid("authz vocabulary unavailable for workflow edges"))?;
+        Self::build(&entries, Some(vocabulary))
     }
+    /// `vocabulary` is `None` only inside the boot-time consumer validator:
+    /// discovery runs validators while `bilibi_authz::vocabulary()` initializes,
+    /// so calling it there deadlocks. The engine factory proves capabilities.
     pub fn build(
         entries: &[(&'static str, &Contribution)],
+        vocabulary: Option<&bilibi_authz::Vocabulary>,
     ) -> bilibi_module_registry::Result<Self> {
         let mut registry = Self::default();
         for &(owner, entry) in entries {
@@ -232,9 +238,7 @@ impl Registry {
                     || !object(edge.metadata)
                     || edge.sla_seconds.is_some_and(|s| s < 0)
                     || edge.capability.is_some_and(|k| {
-                        !key(k)
-                            || !bilibi_authz::vocabulary()
-                                .is_ok_and(|v| v.capabilities.contains_key(k))
+                        !key(k) || vocabulary.is_some_and(|v| !v.capabilities.contains_key(k))
                     })
                 {
                     return Err(invalid("invalid edge/status/capability"));
@@ -301,6 +305,6 @@ fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
         .iter()
         .map(|e| Ok((e.provenance.module, e.get::<Contribution>()?)))
         .collect::<bilibi_module_registry::Result<Vec<_>>>()?;
-    Registry::build(&entries).map(|_| ())
+    Registry::build(&entries, None).map(|_| ())
 }
 inventory::submit! { bilibi_module_registry::Consumer::new::<Contribution>(CONTRIBUTIONS,"base/workflow",validate) }

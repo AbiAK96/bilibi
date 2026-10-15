@@ -160,8 +160,7 @@ impl Engine {
         self.apply_in(
             tx,
             scope,
-            kind,
-            id,
+            (kind, id),
             Some(to),
             Operation::Transition,
             request,
@@ -189,17 +188,75 @@ impl Engine {
             )
             .await?;
         let fact = self
-            .apply_in(&mut tx, scope, kind, id, None, operation, request)
+            .apply_in(&mut tx, scope, (kind, id), None, operation, request)
             .await?;
         tx.commit().await?;
         Ok(fact)
     }
-    async fn apply_in(
+    /// Bind an existing subject to its flow without rewriting history. The
+    /// flow may be inactive; the owner authorizes `Operation::Adopt` itself.
+    pub async fn adopt(&self, scope: &Scope, kind: &str, id: i64) -> Result<i64> {
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .boundary
+            .begin(
+                &mut client,
+                scope.mutation_context("workflow.subject.adopted"),
+            )
+            .await?;
+        let binding = self.adopt_in(&mut tx, scope, kind, id).await?;
+        tx.commit().await?;
+        Ok(binding)
+    }
+    pub async fn adopt_in(
         &self,
         tx: &mut MutationTransaction<'_>,
         scope: &Scope,
         kind: &str,
         id: i64,
+    ) -> Result<i64> {
+        let context = tx.context().clone();
+        let engine = self.clone();
+        let scope = scope.clone();
+        let kind = kind.to_owned();
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                engine.writer(&context, &scope, id)?;
+                let scope = engine.live(sql, &scope).await?;
+                let (owner, flow) = engine.registry.subject(&kind)?;
+                engine
+                    .load(sql, &scope, owner, id, Load::Lock, Operation::Adopt)
+                    .await?;
+                engine.flow(sql, owner, flow, false).await?;
+                let binding = history::bind(sql, &scope, owner, flow, id).await?;
+                Ok((
+                    binding,
+                    vec![Change {
+                        kind: "workflow.binding".into(),
+                        id: binding,
+                        old: json!({}),
+                        new: json!({"flow":flow.code,"subject":owner.key,"subject_id":id}),
+                    }],
+                ))
+            })
+        })
+        .await
+    }
+    fn writer(&self, context: &bilibi_database::Context, scope: &Scope, id: i64) -> Result<()> {
+        if context.tenant != scope.tenant()
+            || context.actor.kind != "user"
+            || context.actor.id != scope.user().to_string()
+            || id <= 0
+        {
+            return Err(Error::Forbidden);
+        }
+        Ok(())
+    }
+    async fn apply_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        (kind, id): (&str, i64),
         to: Option<&str>,
         operation: Operation,
         request: Request,
@@ -211,15 +268,14 @@ impl Engine {
         let to = to.map(str::to_owned);
         tx.mutate(move |sql|Box::pin(async move {
             request.validate()?;
-            if context.tenant!=scope.tenant() || context.actor.kind!="user" || context.actor.id!=scope.user().to_string() || id<=0 { return Err(Error::Forbidden); }
+            engine.writer(&context,&scope,id)?;
             let scope=engine.live(sql,&scope).await?;
             let (owner,flow)=engine.registry.subject(&kind)?;
             let subject=engine.load(sql,&scope,owner,id,Load::Lock,operation).await?;
             if request.expected_version.is_some_and(|v|v!=subject.version) { return Err(Error::Conflict); }
-            engine.flow(sql,owner,flow).await?;
+            engine.flow(sql,owner,flow,true).await?;
             engine.status(sql,flow.code,&subject.status).await?;
             let mut changes=Vec::new();
-            let target=to.as_deref().unwrap_or(&subject.status);
             if let Some(to)=to.as_deref() {
                 engine.status(sql,flow.code,to).await?;
                 let edge=engine.edge(sql,owner,flow,&subject.status,to).await?;
@@ -234,14 +290,14 @@ impl Engine {
                 if persisted.status!=to || persisted.version<=subject.version { return Err(Error::Invalid); }
                 next.version=persisted.version;
                 let binding=history::bind(sql,&scope,owner,flow,id).await?;
-                let (fact,change)=history::append(sql,&context,binding,&subject,&next.status,next.version,operation,&request).await?;
+                let (fact,change)=history::append(sql,&context,binding,(&subject,&next),operation,&request).await?;
                 changes.push(change);
                 return Ok((fact,changes));
             }
             if matches!(operation,Operation::RecordComment) && !request.comment.as_ref().is_some_and(|c|!c.trim().is_empty()) { return Err(Error::Invalid); }
             let binding=history::bind(sql,&scope,owner,flow,id).await?;
             if matches!(operation,Operation::RecordInitial) && sql.query_opt("SELECT id FROM base_workflow_status_history WHERE binding_id=$1 LIMIT 1",&[&binding]).await?.is_some() { return Err(Error::Conflict); }
-            let (fact,change)=history::append(sql,&context,binding,&subject,target,subject.version,operation,&request).await?;
+            let (fact,change)=history::append(sql,&context,binding,(&subject,&subject),operation,&request).await?;
             changes.push(change);
             Ok((fact,changes))
         })).await
@@ -286,11 +342,17 @@ impl Engine {
             .await?;
         Ok(subject)
     }
-    async fn flow(&self, sql: &Transaction<'_>, owner: OwnedSubject, flow: Flow) -> Result<()> {
+    async fn flow(
+        &self,
+        sql: &Transaction<'_>,
+        owner: OwnedSubject,
+        flow: Flow,
+        require_active: bool,
+    ) -> Result<()> {
         let row=sql.query_opt("SELECT owner,subject_type,is_active FROM base_workflow_flows WHERE code=$1 FOR SHARE",&[&flow.code]).await?.ok_or(Error::Invalid)?;
         if row.get::<_, String>(0) != owner.owner
             || row.get::<_, String>(1) != owner.key
-            || !row.get::<_, bool>(2)
+            || (require_active && !row.get::<_, bool>(2))
         {
             return Err(Error::Invalid);
         }
@@ -339,7 +401,7 @@ impl Engine {
         let subject = self
             .load(&sql, &scope, owner, id, Load::Read, Operation::Read)
             .await?;
-        self.flow(&sql, owner, flow).await?;
+        self.flow(&sql, owner, flow, true).await?;
         self.status(&sql, flow.code, &subject.status).await?;
         let mut edges = Vec::new();
         let mut candidates: Vec<_> = flow
