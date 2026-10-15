@@ -1,8 +1,8 @@
 # User credentials
 
-`core/user` owns accounts, credentials and the notification bell: the
-password and email services, and the account's self-service settings pages
-that call them. The anonymous sign-in, forgot-password and reset-password
+`core/user` owns accounts, credentials, the notification bell and the account's
+own appearance and pins: the password and email services, and the account's
+self-service settings pages that call them. The anonymous sign-in, forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
 ## Services (`core/user.accounts`, `UserService`)
@@ -24,6 +24,38 @@ Use `password::{hash, verify, check_policy}` for any password work instead of
 calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 (8 characters to 1024 bytes) and `verify(.., None)` costs the same as a real
 check, so timing does not reveal which emails exist.
+
+## Appearance and pins
+
+The signed-in account's theme, time-display mode, locale and sidebar pins
+(`src/preferences.rs`; Bilimbi `DisplayPreferences`, `Pins`). Every call takes
+the sealed session `Scope`, so a request can never name another account, and
+all of it is keyed by the current tenant + account IDs: membership is untouched
+and nothing moves when K9 binds Person/Affiliation.
+
+| Method | Purpose |
+|---|---|
+| `presentation(scope)` | One snapshot: theme, time-display `mode` + company `timezone`, resolved `locale`/`language` and the account's own locale choice |
+| `save_preference(token, csrf, kind, value)` | `theme` (`light`/`dark`/`system`), `timezone` (`company`/`local`/`utc`) or `locale` (empty follows the installation). Unsupported kinds and values are `PreferenceError::Invalid`, never guessed |
+| `list_pins(client, scope)` / `toggle_pin(..)` / `reorder_pins(..)` | Pin or unpin a page (audited), renumber the order (a display preference, so not audited) |
+
+Theme is the Settings value `ui.theme` at the account's scope (`system` is the
+absence of a row); time-display mode and locale are the existing
+`ui.timezone.mode` and `ui.locale` values written through their owners
+(`base/datetime`, `base/locale`). Pins are `user_pins`: one row per normalized
+URL per account (path with trailing slash, fragment and host dropped, query
+sorted; `url_hash` is md5 of it), at most 100, written under a lock on the
+account's row. A URL that would leave the site is refused. Pins to a page this
+deployment no longer serves stay stored and are not drawn.
+
+Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`),
+`GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and
+`POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and
+a 422 `{error}` for a refused value. The shell renders the account's theme
+(`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and
+`/settings/appearance` (`src/appearance.rs`) is the same three choices as a
+live form. Impersonation is not ported; when it lands it must refuse these
+writes for the account being viewed, as Bilimbi does.
 
 ## Token storage
 
@@ -47,7 +79,8 @@ later slice.
 
 ## Pages (`core/user.pages`)
 
-`/settings/password` (`src/web.rs`, `templates/password.html`) is the signed-in
+`/settings/password` (`src/web.rs`, `templates/password.html`) and
+`/settings/appearance` are the signed-in
 account's password change inside the shell, on the settings layout of
 `templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`); later
 settings pages (profile, appearance) render through the same macro and are
