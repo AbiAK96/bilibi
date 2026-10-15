@@ -69,7 +69,7 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
 
 {#- Page container at the width of its workflow kind; data-page names the variant. -#}
 {% macro page(id="", variant=bilibi_ui::PageVariant::List, class="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" class="mx-auto {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
 {% endmacro %}
 
 {#- Page header: the body is the title; title_actions and actions are Html fragments. -#}
