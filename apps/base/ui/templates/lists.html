@@ -40,7 +40,7 @@
 
 {#- The button inside a sortable heading, shared with the flex table; sort is a bilibi_ui::SortView. -#}
 {% macro sort_heading(column, sort) %}
-<button id="{{ sort.button_id(column) }}" type="button" data-event="{{ sort.event }}"{% if !sort.target.is_empty() %} data-target="{{ sort.target }}"{% endif %} data-sort="{{ column.sort }}" class="inline-flex items-center gap-1 rounded transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 {% if column.align_right %}ml-auto{% else %}text-left{% endif %}">{{ column.label }}
+<button id="{{ sort.button_id(column) }}" type="button" data-event="{{ sort.event }}"{% if !sort.op.is_empty() %} data-op="{{ sort.op }}"{% endif %}{% if !sort.target.is_empty() %} data-target="{{ sort.target }}"{% endif %} data-sort="{{ column.sort }}" class="inline-flex items-center gap-1 rounded transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 {% if column.align_right %}ml-auto{% else %}text-left{% endif %}">{{ column.label }}
 {% call ui::icon(name=sort.icon(column.sort), class=sort.icon_class(column.sort)) %}{% endcall %}</button>
 {% endmacro %}
 

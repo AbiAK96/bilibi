@@ -1,63 +1,13 @@
 //! Built-in-only column arrangement. No Grid dependency, queries or persistence.
-//! FlexTable consumes `column_views()` and `load()`; the owning list handles
+//! FlexTable consumes `flex_columns()` and `load()`; the owning list handles
 //! `ColumnsOutcome::Sort` through ListState so its query remains the row order.
+//! The zoom steps are FlexTable's (`crate::flex_table`).
+pub use crate::flex_table::{
+    normalize_zoom, row_class, row_mode, step_zoom, ColumnType, RowMode, DEFAULT_ZOOM, ZOOM_STEPS,
+};
+use crate::flex_table::{ColumnKind, FlexColumn};
 use crate::list_state::SpecError;
 use std::collections::HashMap;
-
-pub const ZOOM_STEPS: [u16; 6] = [18, 22, 26, 32, 36, 40];
-pub const DEFAULT_ZOOM: u16 = 32;
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum RowMode {
-    Compact,
-    #[default]
-    Normal,
-}
-pub fn normalize_zoom(value: i64) -> u16 {
-    *ZOOM_STEPS
-        .iter()
-        .min_by_key(|step| (i128::from(**step) - i128::from(value)).abs())
-        .expect("zoom steps")
-}
-pub fn step_zoom(zoom: u16, taller: bool) -> u16 {
-    let index = ZOOM_STEPS
-        .iter()
-        .position(|step| *step == normalize_zoom(zoom.into()))
-        .expect("zoom step");
-    ZOOM_STEPS[if taller {
-        (index + 1).min(ZOOM_STEPS.len() - 1)
-    } else {
-        index.saturating_sub(1)
-    }]
-}
-pub fn row_mode(zoom: u16) -> RowMode {
-    if normalize_zoom(zoom.into()) < 32 {
-        RowMode::Compact
-    } else {
-        RowMode::Normal
-    }
-}
-pub fn row_class(zoom: u16) -> &'static str {
-    match normalize_zoom(zoom.into()) {
-        18 => "h-4.5",
-        22 => "h-5.5",
-        26 => "h-6.5",
-        32 => "h-8",
-        36 => "h-9",
-        _ => "h-10",
-    }
-}
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ColumnType {
-    #[default]
-    String,
-    Integer,
-    Float,
-    Decimal,
-    Boolean,
-    Date,
-    Datetime,
-    Enum,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BuiltinColumn {
@@ -159,6 +109,15 @@ impl ListColumns {
             .filter_map(|id| self.builtins.iter().find(|c| &c.id == id))
             .collect()
     }
+    /// The visible columns as `FlexTable` takes them: each is drawn by the
+    /// list's own fragment of the same id (`FlexRow::slot`).
+    pub fn flex_columns(&self) -> Vec<FlexColumn> {
+        self.column_views().into_iter().map(flex_column).collect()
+    }
+    /// The add box's offers as `FlexTable` takes them.
+    pub fn flex_suggestions(&self) -> Vec<FlexColumn> {
+        self.suggestions.iter().map(flex_column).collect()
+    }
     pub fn mode(&self) -> RowMode {
         row_mode(self.zoom)
     }
@@ -236,8 +195,8 @@ impl ListColumns {
                 self.zoom = step_zoom(self.zoom, get("dir") == "in");
                 return ColumnsOutcome::Update;
             }
-            "zoom_preset" if matches!(get("preset"), "compact" | "normal") => {
-                self.zoom = if get("preset") == "compact" { 18 } else { 32 };
+            "zoom_preset" if RowMode::parse(get("preset")).is_some() => {
+                self.zoom = RowMode::parse(get("preset")).map_or(DEFAULT_ZOOM, RowMode::zoom);
                 return ColumnsOutcome::Update;
             }
             "reset" => {
@@ -272,4 +231,15 @@ impl ListColumns {
             .cloned()
             .collect()
     }
+}
+
+fn flex_column(builtin: &BuiltinColumn) -> FlexColumn {
+    let mut column = FlexColumn::new(&builtin.id, &builtin.id, &builtin.label)
+        .short(&builtin.short_label)
+        .typed(builtin.kind)
+        .kind(ColumnKind::Slot);
+    column.sortable = builtin.sortable_column();
+    column.align_right = builtin.align_right;
+    column.sort_id = builtin.sort_id.clone();
+    column
 }

@@ -266,6 +266,9 @@ pub struct SortView<'a> {
     pub sort_dir: Option<SortDir>,
     pub event: &'a str,
     pub target: &'a str,
+    /// The `op` a flex table's own event carries for sorting; empty for a
+    /// list's `sort` event.
+    pub op: &'a str,
 }
 
 impl SortView<'_> {

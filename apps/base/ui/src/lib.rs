@@ -13,6 +13,8 @@ mod auth;
 pub mod components;
 mod feedback;
 mod feedback_specimen;
+pub mod flex_sample;
+pub mod flex_table;
 pub mod forms;
 mod html;
 pub mod icons;
@@ -42,6 +44,10 @@ pub use feedback::{
     NoticeKind, PanelNotice, Revealed, StatusKind, Tab, Tabs, AUTO_DISMISS_MS, NO_FLASH,
 };
 pub use feedback_specimen::FeedbackSpecimen;
+pub use flex_table::{
+    Cell, ColumnKind, ColumnType, Cost, FlexColumn, FlexRow, FlexTable, Instant, Lens, Plain,
+    RowMode, Scale, Typed,
+};
 pub use forms::{
     choices, described_by, field_base_class, field_class, field_state_class, translate_error,
     Attrs, Choice, CodeInput, Combobox, Field, InputKind, MultiSelect, RadioGroup, Restricted,
@@ -81,7 +87,9 @@ pub const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/inline.js"),
     "\n;\n",
-    include_str!("../assets/tiling.js")
+    include_str!("../assets/tiling.js"),
+    "\n;\n",
+    include_str!("../assets/flex_table.js")
 );
 /// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");

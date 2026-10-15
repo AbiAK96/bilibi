@@ -31,6 +31,7 @@ pub struct ComponentsSpecimen {
     field_states: Html,
     radio_disabled: Html,
     inline: InlineSamples,
+    flex: crate::flex_sample::FlexSpecimens,
 }
 
 sections! {
@@ -53,6 +54,7 @@ sections! {
         combobox: "ui_components_specimen/combobox.html",
         restricted: "ui_components_specimen/restricted.html",
         inline_facts: "ui_components_specimen/inline_facts.html",
+        flex_tables: "ui_components_specimen/flex_tables.html",
     }
 }
 
@@ -412,6 +414,7 @@ impl ComponentsSpecimen {
             field_states,
             radio_disabled,
             inline: InlineSamples::new()?,
+            flex: crate::flex_sample::FlexSpecimens::new()?,
         })
     }
 }
