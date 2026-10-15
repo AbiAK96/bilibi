@@ -1,8 +1,14 @@
 # User credentials
 
-`core/user` owns accounts, credentials, the notification bell and the account's
-own appearance and pins: the password and email services, and the account's
-self-service settings pages that call them. The anonymous sign-in, forgot-password and reset-password
+`core/user` owns accounts, credentials, notifications and the account's own
+appearance and pins: the password and email services, the account's
+self-service settings pages that call them, the `/notifications` page and the
+top-bar bell (the `shell.notifications` embed), the last two in `src/inbox.rs`
+over `src/notifications.rs`. Other modules notify through `base/notifications`
+(`NotificationBoundary::notify` with a typed `Notice` and recipients, inside
+their own transaction); run `examples/notifications-walkthrough.rs` against a
+disposable database to see the after-commit fan-out. The anonymous sign-in,
+forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
 ## Services (`core/user.accounts`, `UserService`)

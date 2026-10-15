@@ -26,7 +26,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Shell (`templates/shell.html`, `framed.html`, `assets/shell.js`)
 
-- Pages never render chrome: the host wraps every discovered page through `apps/web/src/shell.rs`, which builds `ShellContext` (`src/shell.rs`) from the sealed scope (menu via effective capabilities, operator standing via `tenancy::prove_operator`). Core contributes into the `notifications` slot (`bilibi_user::web::bell`); Base UI never imports Core.
+- Pages never render chrome: the host wraps every discovered page through `apps/web/src/shell.rs`, which builds `ShellContext` (`src/shell.rs`) from the sealed scope (menu via effective capabilities, operator standing via `tenancy::prove_operator`). Core contributes into the `notifications` slot through the `shell.notifications` embed, which Web renders and mounts as a shell panel; Base UI never imports Core.
 - A hook's `apply()`/`updated()` must write the DOM only on change: `ui.js` reports any child-list mutation inside a hooked element as `updated`, so an unconditional `replaceChildren` or `textContent` write there loops forever and hangs the tab (see `renderPinnedItems` in `assets/shell.js`).
 - Theme, time-display mode and pins belong to the signed-in account (`bilibi_user::presentation`, `list_pins`, saved through `/preferences` and `/api/pins`); the shell renders them into `data-theme-choice`, `data-display-mode` and `data-pins`. Do not keep them in `localStorage`, which differs per device and per account on one browser.
 

@@ -41,8 +41,10 @@ Client intents use these shapes (an optional unsigned `request_id` is echoed):
 
 Mount/navigation creates new state and drops old state/subscriptions. Params
 updates the current owner. `page` targets its state; any other module target must
-be a mounted server-declared panel ID. The temporary `shell` target owns only the
-existing notification-read action, outside framed pages. Client payloads cannot
+be a mounted panel ID: a server-declared page panel, or a shell panel. Outside
+framed pages Web mounts every `EmbedContext::Shell` contribution once per socket
+under its element id (slot `shell.notifications` is `#app-notifications`, the
+bell) and drops it when its access is refused. Client payloads cannot
 choose an embed, operation, service, tenant, account or record binding.
 
 Responses are `page` (complete `#app`, canonical URL, notice and row count),
@@ -132,8 +134,9 @@ the reply message, or with an `error` if the socket drops before the reply.
 contributed embed ID and owner-supplied path/query arguments. Live embeds use a
 `PageService<Scope, Error>` service and implement mount; their render body must
 contain the root element named by the panel ID. The owner must validate the
-embed's subject arguments on every update. The legacy notification embed remains
-an owner service declaration until C6 supplies its page/panel adapter.
+embed's subject arguments on every update. Shell embeds use the same contract; Web
+renders them into the shell with `Page::render` and mounts them with
+`Page::mount` (`apps/web/src/shell.rs`, `live.rs`).
 
 Each instance owns separate state, even for the same embed/service. An unchanged
 spec preserves that state across parent refresh; a changed or removed spec drops
@@ -151,8 +154,10 @@ refresh rather than treating a lost message as current data. Dropping the mount
 aborts subscription tasks and releases receivers. Modules that own additional
 tasks/resources must release them when their state drops.
 
-The existing recipient-scoped notification channel and 15-second fallback also
-revalidate the page and child panels. Neither notification, subscription nor
+A notification is such a `Change` with its recipient: it wakes that account's
+bell panel and `/notifications` state only, never the page underneath. The
+15-second fallback revalidates the page and child panels (and re-renders the
+shell, so a notification another process wrote shows there). Neither notification, subscription nor
 timer refresh records session activity. Only accepted user navigation/events do.
 
 ## Running reference specimen

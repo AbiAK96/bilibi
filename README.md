@@ -126,8 +126,11 @@ run automatically on app boot.
   Bilimbi's `DESIGN.md` and shell components. System fonts provide a local
   fallback for Instrument Sans; no remote font dependency.
 - A company save creates a durable notification for its actor and pushes the
-  bell to that user's connected pages. Clicking the bell marks that user's
-  notifications read. Subscribers are matched by tenant **and** user.
+  bell to that user's connected pages. The bell opens Bilimbi's dropdown of
+  recent notifications (mark all read, open one, view all); `/notifications`
+  lists them with All/Unread/Read tabs, mark read and paging. A notification
+  wakes only its recipient's bell and list (matched by tenant **and** user), so
+  the page underneath, and any draft on it, is not re-rendered.
 
 The public sign-in, forgotten-password and reset pages, their submissions and
 static assets have no signed-in actor and therefore no capability decision;
@@ -152,9 +155,9 @@ Each connection owns its route, list parameters, loaded redacted records, and
 rendered page. Sort/search/page events reload through the same domain APIs as
 HTTP. List state is reflected in the URL for reloads and sharing. Detail saves
 reload the rendered page, avoiding client-side permission logic. Notifications
-publish after commit; their recipient reloads through authorization. A 15-second
-refresh also catches account suspension, session expiry, logout, changed roles,
-and missed bell events. Denied access clears the displayed page and closes the
+publish after commit and re-render only their recipient's bell and list, through
+authorization. A 15-second refresh also catches account suspension, session
+expiry, logout, changed roles, and notifications written by another process. Denied access clears the displayed page and closes the
 socket. The browser patches replies into the existing DOM, so focus, scroll, unfinished
 drafts (with their version, so concurrent changes still conflict) and iframe
 documents survive bell and refresh patches; every intent is queued and
@@ -196,7 +199,7 @@ dependencies, cycles, duplicate migrations and conflicting service names. It
 orders Base → Core → Domains → Extensions and dependencies before consumers,
 then initializes typed services. The host resolves named services and runs
 module-contributed SQL; it keeps no module or migration list. Company resolves the Base notification boundary; User installs its persistence
-and bell adapter. Boot refuses missing or duplicate bindings. The same bus serves
+adapter and contributes the bell as the `shell.notifications` embed. Boot refuses missing or duplicate bindings. The same bus serves
 both notification writes and Web subscribers. Typed route/embed/seed contributions
 carry module/file/line provenance and are validated into an immutable catalog
 (see `apps/base/module_registry/README.md`). Unknown consumers, wrong payload
