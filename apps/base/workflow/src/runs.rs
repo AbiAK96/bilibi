@@ -162,8 +162,8 @@ pub struct EventPage {
     pub entries: Vec<Event>,
     pub next_cursor: Option<i64>,
 }
-struct Item {
-    fact: WorkItem,
+pub(crate) struct Item {
+    pub(crate) fact: WorkItem,
     tenant: i64,
     has_token: bool,
 }
@@ -411,7 +411,7 @@ impl Engine {
     }
     // Subject, then run, then graph, with the owner's policy asked after the
     // definition is proved and before the graph is returned.
-    async fn proven_run(
+    pub(crate) async fn proven_run(
         &self,
         sql: &Transaction<'_>,
         scope: &Scope,

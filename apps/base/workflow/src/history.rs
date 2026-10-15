@@ -105,6 +105,8 @@ pub struct Page {
 impl Engine {
     /// Stable append order, bounded keyset page, with owner authorization on
     /// every read. Tenant identity is never inferred from historical facts.
+    /// Each fact's `transitioned_at` is RFC 3339 UTC, so a page renders it
+    /// through its display context without a session time zone.
     pub async fn history(
         &self,
         scope: &Scope,
@@ -122,7 +124,7 @@ impl Engine {
         let (owner, flow) = self.registry.subject(kind)?;
         self.load(&sql, &scope, owner, id, Load::Read, Operation::Read)
             .await?;
-        let rows=sql.query("SELECT h.id,h.from_status,h.status,h.kind,h.subject_version,h.actor_type,h.actor_id,h.impersonator,h.comment,h.comment_tag,h.assignees,h.attachments,h.metadata,h.tat,h.transitioned_at::text FROM base_workflow_status_history h JOIN base_workflow_bindings b ON b.id=h.binding_id WHERE b.tenant_id=$1 AND b.subject_type=$2 AND b.subject_id=$3 AND b.owner=$4 AND b.flow=$5 AND h.id>coalesce($6::bigint,0) ORDER BY h.id LIMIT $7",&[&scope.tenant(),&owner.key,&id,&owner.owner,&flow.code,&after,&(limit+1)]).await?;
+        let rows=sql.query("SELECT h.id,h.from_status,h.status,h.kind,h.subject_version,h.actor_type,h.actor_id,h.impersonator,h.comment,h.comment_tag,h.assignees,h.attachments,h.metadata,h.tat,to_char(h.transitioned_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM base_workflow_status_history h JOIN base_workflow_bindings b ON b.id=h.binding_id WHERE b.tenant_id=$1 AND b.subject_type=$2 AND b.subject_id=$3 AND b.owner=$4 AND b.flow=$5 AND h.id>coalesce($6::bigint,0) ORDER BY h.id LIMIT $7",&[&scope.tenant(),&owner.key,&id,&owner.owner,&flow.code,&after,&(limit+1)]).await?;
         let more = rows.len() > limit as usize;
         let entries: Vec<_> = rows.into_iter().take(limit as usize).map(fact).collect();
         let next_cursor = if more {

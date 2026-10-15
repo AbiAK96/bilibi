@@ -8,6 +8,7 @@ pub mod history;
 mod intent;
 pub mod maintenance;
 pub mod outbox;
+pub mod pending;
 pub mod process;
 pub mod runs;
 use bilibi_database::{Change, Result};
@@ -17,6 +18,7 @@ pub use definitions::{
     Registry, Status, Transition, CONTRIBUTIONS,
 };
 pub use engine::{Engine, Request};
+pub use pending::{PendingCursor, PendingEntry, PendingPage, PendingQuery};
 pub use process::{
     Dependency, DependencyMode, Process, ProcessAdapter, ProcessDefinition, RunFacts, Step,
     StepDefinition,
