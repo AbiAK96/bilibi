@@ -11,8 +11,10 @@ bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-settings = { path = "../settings" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
 inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio-postgres.workspace = true

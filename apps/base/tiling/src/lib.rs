@@ -7,6 +7,8 @@
 //! monocle, and writes the tree back into `?t=` after every change, so a
 //! reload or a copied address restores the screen. This module owns no tables.
 pub mod layout;
+pub mod layouts;
+mod shared_web;
 mod web;
 
 use bilibi_module_registry::contributions::{Access, Catalog, Method, Route, ROUTES};
@@ -15,7 +17,7 @@ use std::sync::Arc;
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/tiling", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/ui", "base/database", "base/tenancy", "base/authz", "base/menu"],
+        dependencies: &["base/module_registry", "base/ui", "base/database", "base/tenancy", "base/authz", "base/menu", "base/settings"],
         migrations: &[], services: &[
             bilibi_module_registry::Service { id: "base/tiling.pages", factory: |services| {
                 // Services installs its catalog only after every factory has
@@ -27,9 +29,10 @@ inventory::submit! {
                 let routes = catalog.entries::<Route>(ROUTES)?.iter()
                     .map(|entry| Ok((entry.provenance.module, entry.get::<Route>()?)))
                     .collect::<bilibi_module_registry::Result<Vec<_>>>()?;
+                let db = services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone();
+                let layouts = Arc::new(layouts::Layouts::new(db.clone(), services.get("base/settings.store")?, services.get("base/database.mutations")?));
                 Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages::new(
-                    services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
-                    Arc::new(menu), routes,
+                    db, Arc::new(menu), routes, layouts,
                 )))))
             }},
         ],
@@ -42,3 +45,18 @@ inventory::submit! {
 inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.workspace",
 bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
 &Route { method: Method::Get, path: "/workspace", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
+// A saved layout's address and a shared layout's address are the same page:
+// the host lets it move between these three routes without remounting, so the
+// frames on screen survive saving, opening and deleting a layout.
+inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.workspace.saved",
+bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
+&Route { method: Method::Get, path: "/workspace/{slug}", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.workspace.shared",
+bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
+&Route { method: Method::Get, path: "/workspace/shared/{shared}", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
+// Publishing is a company write behind `ui.workspace.publish`; the literal
+// path wins over `/workspace/{slug}`, and the slug is reserved so a saved
+// layout can never take it.
+inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.shared_layouts",
+bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
+&Route { method: Method::Get, path: "/workspace/shared-layouts", service: "base/tiling.pages", operation: "shared_layouts", access: Access::Capability(layouts::PUBLISH), framed: true }) }

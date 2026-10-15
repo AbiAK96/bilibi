@@ -841,11 +841,13 @@ dependencies = [
  "bilibi-database",
  "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",
  "serde",
  "serde_json",
+ "tokio-postgres",
 ]
 
 [[package]]
