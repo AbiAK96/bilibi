@@ -11,6 +11,7 @@ mod contributions;
 mod oauth_client;
 mod secrets;
 mod throttle;
+pub mod web;
 pub use contributions::MANAGE;
 pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams};
 /// `code_challenge` is the S256 form a public client sends for its verifier.
@@ -1034,7 +1035,7 @@ impl AgentAccess {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "core/user", "core/company"],
+        dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "core/user", "core/company"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| Ok(Arc::new(AgentAccess {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -1042,6 +1043,12 @@ inventory::submit! {
             settings: services.get("base/settings.store")?,
             authentication: services.get("base/tenancy.authentication")?,
             parties: services.get("base/tenancy.parties")?,
-        })) }],
+        })) }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
+            access: services.get("core/agent_access.grants")?,
+            db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            display: services.get("base/datetime.display")?,
+            locales: services.get("base/locale.locales")?,
+            origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
+        })))) }],
     }
 }

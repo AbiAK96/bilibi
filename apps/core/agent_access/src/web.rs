@@ -1,0 +1,733 @@
+//! The person-facing pages (E4): device consent at `/oauth/device`, client
+//! consent at `/oauth/authorize` and the person's connections at
+//! `/settings/agent-connections`, ported from Bilimbi
+//! `apps/core/agent_access/lib/agent_access/web/{device,authorize,connections}_live.ex`.
+//! Opening a link never approves anything: only an explicit submit decides,
+//! the server computes and displays the connection's end time, and a submitted
+//! expiry is refused. The host proves the session before any adapter call and
+//! `AgentAccess` keeps the self-service gate; this file owns only page state.
+use crate::{
+    AgentAccess, AuthorizationRequest, AuthorizeParams, Decision, DeviceReview, OAuthError,
+};
+use askama::Template;
+use bilibi_database::{Db, Error, Result};
+use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
+use bilibi_locale::Locales;
+use bilibi_tenancy::Scope;
+use bilibi_ui::{
+    page::{
+        LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
+        PageFuture, PageRequest,
+    },
+    CodeInput, FlashMap, StatusKind, NO_FLASH,
+};
+use serde::Deserialize;
+use serde_json::Value;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::SystemTime,
+};
+use tokio_postgres::GenericClient;
+
+/// `core/agent_access.pages`: one adapter for the three routes; the operation
+/// names the page. Every field is shared by the mounted states.
+#[derive(Clone)]
+pub struct Pages {
+    pub access: Arc<AgentAccess>,
+    pub db: Db,
+    pub display: Arc<DisplayPolicy>,
+    pub locales: Arc<Locales>,
+    /// `APP_ORIGIN`, the OAuth issuer; the MCP resource is `{origin}/mcp`.
+    /// Never the request's Host header.
+    pub origin: String,
+}
+impl Pages {
+    async fn display(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<DisplayContext> {
+        let locale = self.locales.resolve(client, scope, None).await?.locale;
+        self.display.display(client, scope, None, locale).await
+    }
+    fn resource(&self) -> String {
+        format!("{}/mcp", self.origin)
+    }
+}
+type State = Box<dyn LiveState<Scope, Error>>;
+impl Page<Scope, Error> for Pages {
+    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
+        Box::pin(async move {
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            let html = match request.operation {
+                "device" => {
+                    DevicePage::new(self.clone(), request.query)?
+                        .view(scope)
+                        .await?
+                }
+                "authorize" => {
+                    AuthorizePage::new(self.clone(), request.query)
+                        .await?
+                        .view(scope)
+                        .await?
+                }
+                "connections" => {
+                    ConnectionsPage::new(self.clone(), request.query)?
+                        .view(scope)
+                        .await?
+                }
+                _ => return Err(Error::NotFound),
+            };
+            Ok(PageBody { html, live: true })
+        })
+    }
+    fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
+        Box::pin(async move {
+            let state: State = match request.operation {
+                "device" => Box::new(DevicePage::new(self.clone(), request.query)?),
+                "authorize" => Box::new(AuthorizePage::new(self.clone(), request.query).await?),
+                "connections" => Box::new(ConnectionsPage::new(self.clone(), request.query)?),
+                _ => return Err(Error::NotFound),
+            };
+            Ok(Some(state))
+        })
+    }
+}
+
+/// One rendered instant, the Bilimbi `<.datetime>` contract
+/// (`templates/datetime.html`): both server-decidable texts travel with the
+/// element so the shell's display-mode control can swap them later.
+pub struct Instant {
+    pub id: String,
+    pub iso: String,
+    pub text: String,
+    pub company: String,
+    pub utc: String,
+    pub mode: &'static str,
+}
+fn instant(display: &DisplayContext, id: impl Into<String>, at: SystemTime) -> Result<Instant> {
+    let timestamp = jiff::Timestamp::try_from(at).map_err(|_| Error::Internal)?;
+    let rendered = display.render(timestamp, Format::DateTime, Precision::Minute);
+    Ok(Instant {
+        id: id.into(),
+        iso: rendered.iso,
+        text: rendered.text,
+        company: rendered.company,
+        utc: rendered.utc,
+        mode: rendered.mode.as_str(),
+    })
+}
+
+/// The page's one flash, shown until dismissed or the page is left.
+#[derive(Clone, Copy)]
+struct Flash {
+    kind: StatusKind,
+    message: &'static str,
+}
+fn flash_map(flash: Option<Flash>) -> FlashMap<'static> {
+    let mut messages = NO_FLASH;
+    if let Some(flash) = flash {
+        match flash.kind {
+            StatusKind::Success => messages.success = flash.message,
+            StatusKind::Error => messages.error = flash.message,
+            StatusKind::Warning => messages.warning = flash.message,
+            StatusKind::Info => messages.info = flash.message,
+        }
+    }
+    messages
+}
+fn clear_flash(flash: &mut Option<Flash>, key: &str) {
+    if flash.is_some_and(|f| f.kind.name() == key) {
+        *flash = None;
+    }
+}
+/// A storage failure stays an error for the host; every OAuth refusal becomes
+/// page copy.
+fn refusal(error: OAuthError) -> Result<OAuthError> {
+    match error {
+        OAuthError::Other(error) => Err(error),
+        other => Ok(other),
+    }
+}
+/// Expiry belongs to server state. An approve carrying any field is an old or
+/// forged date-bearing form (Bilimbi `params == %{}`).
+fn submitted(fields: &BTreeMap<String, Value>) -> bool {
+    fields.keys().any(|key| key != "type")
+}
+fn html<T: Template>(template: T) -> Result<String> {
+    template.render().map_err(|_| Error::Internal)
+}
+fn only(query: &HashMap<String, String>, allowed: &[&str]) -> Result<()> {
+    if query.keys().all(|key| allowed.contains(&key.as_str())) {
+        Ok(())
+    } else {
+        Err(Error::Invalid)
+    }
+}
+
+// ---- /oauth/device -----------------------------------------------------------
+
+struct Completed {
+    approved: bool,
+    agent_id: String,
+    expires_at: SystemTime,
+}
+struct DevicePage {
+    pages: Pages,
+    code: String,
+    device: Option<DeviceReview>,
+    expires_at: Option<SystemTime>,
+    completed: Option<Completed>,
+    error: Option<&'static str>,
+    flash: Option<Flash>,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum DeviceEvent {
+    Lookup {
+        #[serde(default)]
+        user_code: String,
+    },
+    Approve {
+        #[serde(flatten)]
+        fields: BTreeMap<String, Value>,
+    },
+    Deny,
+    Another,
+    Dismiss,
+    ClearFlash {
+        key: String,
+    },
+}
+pub struct CompletedView<'a> {
+    pub approved: bool,
+    pub agent_id: &'a str,
+    pub expiry: Option<Instant>,
+}
+impl CompletedView<'_> {
+    pub fn title(&self) -> &'static str {
+        if self.approved {
+            "Agent connected"
+        } else {
+            "Connection refused"
+        }
+    }
+}
+#[derive(Template)]
+#[template(path = "device.html")]
+struct DeviceView<'a> {
+    flash: FlashMap<'static>,
+    error: Option<&'static str>,
+    code: &'a str,
+    code_input: CodeInput,
+    device: Option<&'a DeviceReview>,
+    expiry: Option<Instant>,
+    completed: Option<CompletedView<'a>>,
+}
+fn device_message(error: &OAuthError) -> &'static str {
+    match error {
+        OAuthError::PersonRequired => {
+            "Connect from your own signed-in account. Impersonation cannot approve connections."
+        }
+        OAuthError::InvalidExpiry => {
+            "The connection end time cannot be changed here. Check the code again."
+        }
+        _ => "This code expired or has already been used. Request a new code from your agent.",
+    }
+}
+impl DevicePage {
+    /// `?user_code=` only fills the field (Bilimbi `handle_params`).
+    fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
+        only(query, &["user_code"])?;
+        let code = Self::code(query.get("user_code").map_or("", String::as_str))?;
+        Ok(Self {
+            pages,
+            code,
+            device: None,
+            expires_at: None,
+            completed: None,
+            error: None,
+            flash: None,
+        })
+    }
+    fn code(raw: &str) -> Result<String> {
+        if raw.len() > 64 {
+            return Err(Error::Invalid);
+        }
+        Ok(crate::normalize_user_code(raw))
+    }
+    async fn view(&self, scope: &Scope) -> Result<String> {
+        let client = self.pages.db.get().await?;
+        let display = self.pages.display(&**client, scope).await?;
+        let expiry = self
+            .expires_at
+            .map(|at| instant(&display, "device-expiry", at))
+            .transpose()?;
+        let completed = match &self.completed {
+            Some(done) => Some(CompletedView {
+                approved: done.approved,
+                agent_id: &done.agent_id,
+                expiry: done
+                    .approved
+                    .then(|| instant(&display, "device-completed-expiry", done.expires_at))
+                    .transpose()?,
+            }),
+            None => None,
+        };
+        html(DeviceView {
+            flash: flash_map(self.flash),
+            error: self.error,
+            code: &self.code,
+            code_input: CodeInput::new(
+                "device_user_code",
+                "user_code",
+                "Code shown by your agent",
+                8,
+            )
+            .value(&self.code)
+            .group_size(4),
+            device: self.device.as_ref(),
+            expiry,
+            completed,
+        })
+    }
+    async fn lookup(&mut self, scope: &Scope, raw: &str) -> Result<()> {
+        self.code = Self::code(raw)?;
+        match self.pages.access.device(scope, &self.code).await {
+            Ok(device) => {
+                self.device = Some(device);
+                self.error = None;
+                self.expires_at = Some(self.pages.access.connection_expiry().await?);
+            }
+            Err(error) => {
+                self.device = None;
+                self.error = Some(device_message(&refusal(error)?));
+            }
+        }
+        Ok(())
+    }
+    async fn decide(&mut self, scope: &Scope, decision: Decision) -> Result<()> {
+        let (Some(device), Some(expires_at)) = (&self.device, self.expires_at) else {
+            return Ok(());
+        };
+        match self
+            .pages
+            .access
+            .decide(scope, &self.code, decision, expires_at)
+            .await
+        {
+            Ok(()) => {
+                let approved = decision == Decision::Approve;
+                self.completed = Some(Completed {
+                    approved,
+                    agent_id: device.agent_id.clone(),
+                    expires_at,
+                });
+                self.device = None;
+                self.code = String::new();
+                self.error = None;
+                self.flash = Some(Flash {
+                    kind: StatusKind::Success,
+                    message: if approved {
+                        "Agent connected."
+                    } else {
+                        "Connection refused."
+                    },
+                });
+            }
+            Err(error) => self.error = Some(device_message(&refusal(error)?)),
+        }
+        Ok(())
+    }
+    fn reset(&mut self) {
+        self.device = None;
+        self.expires_at = None;
+        self.completed = None;
+        self.code = String::new();
+        self.error = None;
+    }
+}
+impl LiveState<Scope, Error> for DevicePage {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(values) => {
+                    only(values, &["user_code"])?;
+                    self.code = Self::code(values.get("user_code").map_or("", String::as_str))?;
+                }
+                LiveInput::Event(value) => {
+                    match serde_json::from_value::<DeviceEvent>(value.clone())
+                        .map_err(|_| Error::Invalid)?
+                    {
+                        DeviceEvent::Lookup { user_code } => {
+                            self.lookup(request.scope, &user_code).await?
+                        }
+                        DeviceEvent::Approve { fields } if submitted(&fields) => {
+                            self.error = Some(device_message(&OAuthError::InvalidExpiry));
+                        }
+                        DeviceEvent::Approve { .. } => {
+                            self.decide(request.scope, Decision::Approve).await?
+                        }
+                        DeviceEvent::Deny => self.decide(request.scope, Decision::Deny).await?,
+                        DeviceEvent::Another => self.reset(),
+                        DeviceEvent::Dismiss => self.error = None,
+                        DeviceEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
+                    }
+                }
+            }
+            let mut query = HashMap::new();
+            if !self.code.is_empty() {
+                query.insert("user_code".into(), self.code.clone());
+            }
+            Ok(LiveBody {
+                html: self.view(request.scope).await?,
+                query,
+                ..LiveBody::default()
+            })
+        })
+    }
+}
+
+// ---- /oauth/authorize --------------------------------------------------------
+
+struct AuthorizePage {
+    pages: Pages,
+    query: HashMap<String, String>,
+    params: AuthorizeParams,
+    request: Option<AuthorizationRequest>,
+    expires_at: Option<SystemTime>,
+    error: Option<&'static str>,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AuthorizeEvent {
+    Approve {
+        #[serde(flatten)]
+        fields: BTreeMap<String, Value>,
+    },
+    Deny,
+    Dismiss,
+}
+#[derive(Template)]
+#[template(path = "authorize.html")]
+struct AuthorizeView<'a> {
+    error: Option<&'static str>,
+    request: Option<&'a AuthorizationRequest>,
+    expiry: Option<Instant>,
+}
+fn authorize_message(error: &OAuthError) -> &'static str {
+    match error {
+        OAuthError::PersonRequired => {
+            "Connect from your own account. Impersonation and agents cannot approve connections."
+        }
+        OAuthError::InvalidExpiry => {
+            "The connection end time cannot be changed here. Start a new connection."
+        }
+        OAuthError::InvalidClient => {
+            "This client is not registered. Ask the platform operator to register its OAuth client and callback address."
+        }
+        _ => "This connection request is invalid. Return to your client and start a new connection.",
+    }
+}
+/// RFC 3986 unreserved characters pass; everything else is percent-encoded.
+fn encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+impl AuthorizePage {
+    /// The request is validated against the operator's client registry before
+    /// consent renders; an invalid one shows an error and never redirects.
+    async fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
+        if query.values().any(|value| value.len() > 2048) {
+            return Err(Error::Invalid);
+        }
+        let params: AuthorizeParams =
+            serde_json::from_value(serde_json::to_value(query).map_err(|_| Error::Invalid)?)
+                .map_err(|_| Error::Invalid)?;
+        let mut page = Self {
+            query: query.clone(),
+            params,
+            request: None,
+            expires_at: None,
+            error: None,
+            pages,
+        };
+        page.validate().await?;
+        Ok(page)
+    }
+    async fn validate(&mut self) -> Result<()> {
+        match self
+            .pages
+            .access
+            .authorization_request(&self.params, &self.pages.resource())
+            .await
+        {
+            Ok(request) => {
+                self.request = Some(request);
+                self.expires_at = Some(self.pages.access.connection_expiry().await?);
+                self.error = None;
+            }
+            Err(error) => {
+                self.request = None;
+                self.error = Some(authorize_message(&refusal(error)?));
+            }
+        }
+        Ok(())
+    }
+    async fn view(&self, scope: &Scope) -> Result<String> {
+        let client = self.pages.db.get().await?;
+        let display = self.pages.display(&**client, scope).await?;
+        let expiry = self
+            .expires_at
+            .map(|at| instant(&display, "oauth-expiry", at))
+            .transpose()?;
+        html(AuthorizeView {
+            error: self.error,
+            request: self.request.as_ref(),
+            expiry,
+        })
+    }
+    /// The registered callback with the result, the client's `state` and the
+    /// issuer (RFC 9207); any earlier value of those keys is replaced.
+    fn return_to_client(&self, request: &AuthorizationRequest, result: (&str, &str)) -> String {
+        let (base, existing) = request
+            .redirect_uri
+            .split_once('?')
+            .map_or((request.redirect_uri.as_str(), ""), |(base, query)| {
+                (base, query)
+            });
+        let mut pairs: Vec<String> = existing
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .filter(|pair| {
+                let key = pair.split('=').next().unwrap_or("");
+                !["code", "error", "state", "iss"].contains(&key)
+            })
+            .map(str::to_owned)
+            .collect();
+        for (key, value) in [
+            result,
+            ("state", request.state.as_str()),
+            ("iss", self.pages.origin.as_str()),
+        ] {
+            pairs.push(format!("{}={}", encode(key), encode(value)));
+        }
+        format!("{base}?{}", pairs.join("&"))
+    }
+    async fn approve(&mut self, scope: &Scope) -> Result<Option<String>> {
+        let Some(request) = self.request.clone() else {
+            return Ok(None);
+        };
+        let expires_at = self.expires_at.ok_or(Error::Internal)?;
+        match self
+            .pages
+            .access
+            .authorize(scope, &self.params, &self.pages.resource(), expires_at)
+            .await
+        {
+            Ok(code) => Ok(Some(self.return_to_client(&request, ("code", &code)))),
+            Err(error) => {
+                self.error = Some(authorize_message(&refusal(error)?));
+                Ok(None)
+            }
+        }
+    }
+    /// Refusal revalidates the operator's callback allowlist too.
+    async fn deny(&mut self) -> Result<Option<String>> {
+        if self.request.is_none() {
+            return Ok(None);
+        }
+        self.validate().await?;
+        Ok(self
+            .request
+            .as_ref()
+            .map(|request| self.return_to_client(request, ("error", "access_denied"))))
+    }
+}
+impl LiveState<Scope, Error> for AuthorizePage {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            let mut redirect = None;
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(_) => return Err(Error::Invalid),
+                LiveInput::Event(value) => {
+                    match serde_json::from_value::<AuthorizeEvent>(value.clone())
+                        .map_err(|_| Error::Invalid)?
+                    {
+                        AuthorizeEvent::Approve { fields } if submitted(&fields) => {
+                            self.error = Some(authorize_message(&OAuthError::InvalidExpiry));
+                        }
+                        AuthorizeEvent::Approve { .. } => {
+                            redirect = self.approve(request.scope).await?
+                        }
+                        AuthorizeEvent::Deny => redirect = self.deny().await?,
+                        AuthorizeEvent::Dismiss => self.error = None,
+                    }
+                }
+            }
+            Ok(LiveBody {
+                html: self.view(request.scope).await?,
+                query: self.query.clone(),
+                redirect,
+                ..LiveBody::default()
+            })
+        })
+    }
+}
+
+// ---- /settings/agent-connections ----------------------------------------------
+
+struct ConnectionsPage {
+    pages: Pages,
+    pending: Option<i64>,
+    flash: Option<Flash>,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ConnectionsEvent {
+    Revoke { id: String },
+    CancelRevoke,
+    ConfirmRevoke,
+    ClearFlash { key: String },
+}
+pub struct ConnectionRow {
+    pub id: String,
+    pub dom_id: String,
+    pub revoke_id: String,
+    pub agent_id: String,
+    pub expiry: Instant,
+    pub status: &'static str,
+    /// Other stated IDs, sorted, comma-separated; empty when none.
+    pub seen: String,
+    pub revoked: bool,
+}
+#[derive(Template)]
+#[template(path = "connections.html")]
+struct ConnectionsView {
+    flash: FlashMap<'static>,
+    error: Option<&'static str>,
+    rows: Vec<ConnectionRow>,
+    pending: Option<i64>,
+}
+impl ConnectionsPage {
+    fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
+        only(query, &[])?;
+        Ok(Self {
+            pages,
+            pending: None,
+            flash: None,
+        })
+    }
+    async fn view(&self, scope: &Scope) -> Result<String> {
+        let client = self.pages.db.get().await?;
+        let display = self.pages.display(&**client, scope).await?;
+        let (rows, error) = match self.pages.access.list_connections(scope).await {
+            Ok(rows) => (rows, None),
+            Err(error) => {
+                refusal(error)?;
+                (
+                    Vec::new(),
+                    Some("Use your own account to manage connections."),
+                )
+            }
+        };
+        let now = SystemTime::now();
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                Ok(ConnectionRow {
+                    id: row.id.to_string(),
+                    dom_id: format!("connections-{}", row.id),
+                    revoke_id: format!("revoke-{}", row.id),
+                    expiry: instant(
+                        &display,
+                        format!("connection-expiry-{}", row.id),
+                        row.expires_at,
+                    )?,
+                    status: if row.revoked_at.is_some() {
+                        "Revoked"
+                    } else if row.expires_at > now {
+                        "Connected"
+                    } else {
+                        "Expired"
+                    },
+                    seen: row
+                        .seen_agent_ids
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    revoked: row.revoked_at.is_some(),
+                    agent_id: row.agent_id,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        html(ConnectionsView {
+            flash: flash_map(self.flash),
+            error,
+            rows,
+            pending: self.pending,
+        })
+    }
+    async fn confirm(&mut self, scope: &Scope) -> Result<()> {
+        let Some(id) = self.pending.take() else {
+            return Ok(());
+        };
+        self.flash = Some(match self.pages.access.revoke(scope, id).await {
+            Ok(()) => Flash {
+                kind: StatusKind::Success,
+                message: "Connection revoked.",
+            },
+            Err(error) => {
+                refusal(error)?;
+                Flash {
+                    kind: StatusKind::Error,
+                    message: "Connection was not revoked. It may already be revoked.",
+                }
+            }
+        });
+        Ok(())
+    }
+}
+impl LiveState<Scope, Error> for ConnectionsPage {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(_) => return Err(Error::Invalid),
+                LiveInput::Event(value) => {
+                    match serde_json::from_value::<ConnectionsEvent>(value.clone())
+                        .map_err(|_| Error::Invalid)?
+                    {
+                        ConnectionsEvent::Revoke { id } => {
+                            self.pending = Some(
+                                id.parse::<i64>()
+                                    .ok()
+                                    .filter(|id| *id > 0)
+                                    .ok_or(Error::Invalid)?,
+                            );
+                        }
+                        ConnectionsEvent::CancelRevoke => self.pending = None,
+                        ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
+                        ConnectionsEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
+                    }
+                }
+            }
+            Ok(LiveBody {
+                html: self.view(request.scope).await?,
+                ..LiveBody::default()
+            })
+        })
+    }
+}

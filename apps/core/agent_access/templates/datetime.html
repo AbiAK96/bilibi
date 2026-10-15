@@ -1,0 +1,8 @@
+{#- One instant for a person to read: Bilimbi apps/base/ui/lib/ui/components.ex
+    `datetime` at the pinned source. The server renders both texts it can
+    decide (company zone and UTC) and the mode's own pick; data-follow-shell
+    and the DateTime hook name let the shell's display-mode control (P10/C5)
+    swap the text later without re-rendering. instant is a web::Instant. -#}
+{% macro datetime(instant, class="") %}
+<time id="{{ instant.id }}" datetime="{{ instant.iso }}" data-format="datetime" data-precision="minute" data-mode="{{ instant.mode }}" data-text-company="{{ instant.company }}" data-text-utc="{{ instant.utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums{% if !class.is_empty() %} {{ class }}{% endif %}">{{ instant.text }}</time>
+{% endmacro %}
