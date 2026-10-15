@@ -393,8 +393,16 @@ async fn main() -> Result<(), Failure> {
             &[],
         )
         .await?;
-    let (system, created) = people.ensure_platform_orchestrator(&manager).await?;
+    let (first_provision, concurrent_provision) = tokio::join!(
+        people.ensure_platform_orchestrator(&manager),
+        people.ensure_platform_orchestrator(&manager)
+    );
+    let (system, created) = first_provision?;
     show("operator system identity created", (&system, created));
+    show(
+        "concurrent provisioning resolves same identity",
+        concurrent_provision?,
+    );
     show(
         "repeat system provisioning preserves identity",
         people.ensure_platform_orchestrator(&manager).await?,
@@ -427,6 +435,22 @@ async fn main() -> Result<(), Failure> {
         identity::lock_for_account_binding(&tx, &manager, system.id).await,
     );
     tx.rollback().await?;
+    client
+        .execute(
+            "UPDATE platform_operator SET tenant_id=2 WHERE singleton",
+            &[],
+        )
+        .await?;
+    show(
+        "operator transfer cannot manufacture second system identity",
+        people.ensure_platform_orchestrator(&other).await,
+    );
+    client
+        .execute(
+            "UPDATE platform_operator SET tenant_id=1 WHERE singleton",
+            &[],
+        )
+        .await?;
     client
         .execute("DELETE FROM platform_operator WHERE tenant_id=1", &[])
         .await?;
