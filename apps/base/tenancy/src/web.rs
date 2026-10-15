@@ -441,8 +441,10 @@ impl TenantsPage {
                 };
                 let posted = params::form_values(value, "tenant");
                 let field = |key: &str| posted.get(key).cloned().unwrap_or_default();
+                // The source's changeset trims the name before validation, so
+                // the draft echoed back with an error is the trimmed one.
                 let mut draft = Draft {
-                    name: field("name"),
+                    name: field("name").trim().to_owned(),
                     parent_id: field("parent_id"),
                     status: field("status"),
                     errors: TenantErrors::default(),
