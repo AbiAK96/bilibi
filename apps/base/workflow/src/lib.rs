@@ -160,7 +160,7 @@ inventory::submit! {
 
 inventory::submit! { bilibi_module_registry::Contribution::new(
 bilibi_authz::VOCABULARY,"workflow.vocabulary",bilibi_module_registry::Provenance {module:"base/workflow",source:file!(),line:line!()},
-&bilibi_authz::VocabularyContribution {domains:&["workflow"],verbs:&[],
+&bilibi_authz::VocabularyContribution {domains:&["workflow"],verbs:&["approve"],
     capabilities:&[bilibi_authz::CapabilityDefinition::platform("admin.workflow.definition.manage"),
         bilibi_authz::CapabilityDefinition::tenant(web::APPROVE)],
     roles:&[],system_principals:&[]}) }
