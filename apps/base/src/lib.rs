@@ -7,6 +7,7 @@ pub use bilibi_dashboard as dashboard;
 pub use bilibi_database as database;
 pub use bilibi_datetime as datetime;
 pub use bilibi_grid as grid;
+pub use bilibi_integration as integration;
 pub use bilibi_locale as locale;
 pub use bilibi_mail as mail;
 pub use bilibi_media as media;
