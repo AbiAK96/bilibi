@@ -129,7 +129,9 @@ pub struct MutationTransaction<'a> {
     tx: Transaction<'a>,
     context: Context,
     capture: Arc<dyn Capture>,
-    callbacks: Vec<Box<dyn FnOnce() + Send>>,
+    /// A `Mutex` keeps the transaction `Sync`, so an owner future that holds
+    /// `&MutationTransaction` across an await (the Artifacts facade does) is `Send`.
+    callbacks: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     poisoned: bool,
 }
 impl<'a> MutationTransaction<'a> {
@@ -143,7 +145,7 @@ impl<'a> MutationTransaction<'a> {
             tx: client.transaction().await?,
             context,
             capture,
-            callbacks: Vec::new(),
+            callbacks: std::sync::Mutex::new(Vec::new()),
             poisoned: false,
         })
     }
@@ -215,7 +217,10 @@ impl<'a> MutationTransaction<'a> {
     /// In-process, infallible fan-out only. Durable work belongs in a
     /// transactionally inserted queue/outbox, not in these callbacks.
     pub fn after_commit(&mut self, callback: impl FnOnce() + Send + 'static) {
-        self.callbacks.push(Box::new(callback));
+        self.callbacks
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(Box::new(callback));
     }
     pub async fn rollback(self) -> Result<()> {
         self.tx.rollback().await?;
@@ -228,7 +233,11 @@ impl<'a> MutationTransaction<'a> {
         }
         self.capture.action(&self.tx, &self.context).await?;
         self.tx.commit().await?;
-        for callback in self.callbacks {
+        let callbacks = self
+            .callbacks
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for callback in callbacks {
             callback();
         }
         Ok(())
