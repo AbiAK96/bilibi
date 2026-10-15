@@ -717,13 +717,22 @@ dependencies = [
 name = "bilibi-session"
 version = "0.1.0"
 dependencies = [
+ "askama",
+ "bilibi-authz",
+ "bilibi-dashboard",
  "bilibi-database",
+ "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-principal-directory",
  "bilibi-queue",
  "bilibi-schedule",
+ "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "serde_json",
+ "sha2",
+ "tokio",
  "tokio-postgres",
 ]
 

@@ -1,5 +1,6 @@
 //! The scheduled sweep of expired sessions (Bilimbi `Session.ExpiryWorker`):
-//! every five minutes, once an operator enables it on the Schedule board.
+//! every five minutes, once an operator enables it on the Schedule board. The
+//! cutoff is the live `session.lifetime_minutes` setting, read by the sweep.
 use crate::Sessions;
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -33,7 +34,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/session-expiry", provenance!(), &Definition {
     name: "Prune expired sessions", expression: "*/5 * * * *", timezone: "Etc/UTC",
     task_name: "Base Session expiry", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: Some(crate::contributions::PATH),
 }) }
 
 pub(crate) struct Expiry {

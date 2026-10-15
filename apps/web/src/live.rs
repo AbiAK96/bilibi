@@ -451,6 +451,12 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
         generation: 0,
         sender,
     };
+    // A termination of this socket's session (logout elsewhere, an operator,
+    // a credential change) signs this page out at once: the browser is sent
+    // back through the page it holds, whose guard forwards it to sign-in with
+    // the expired-session message. A lagged receiver is covered by the next
+    // guarded action or refresh, which refuses an ended session anyway.
+    let mut terminations = app.security.sessions.subscribe_terminations();
     let mut refresh = tokio::time::interval(Duration::from_secs(15));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     refresh.tick().await;
@@ -495,6 +501,18 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
             _ = refresh.tick() => {
                 if session.page.is_none() {continue;}
                 session.update(&app, &token, "page", LiveInput::Refresh).await
+            },
+            terminated = terminations.recv() => {
+                match terminated {
+                    Ok(event) if event.id == token => {
+                        let path = if session.path.is_empty() { "/".to_owned() } else { session.path.clone() };
+                        let message = json!({"type":"page", "target":"app", "html":"", "url":Value::Null, "notice":"", "rows":0, "redirect":path, "request_id":Value::Null, "history":"replace"});
+                        let _ = socket.send(Message::Text(message.to_string().into())).await;
+                        break;
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => continue,
+                }
             },
         };
         let (mut messages, close) = match result {

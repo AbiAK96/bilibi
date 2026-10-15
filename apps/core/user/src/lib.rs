@@ -99,13 +99,8 @@ pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Re
         return Err(Error::Forbidden);
     }
     authorize(&**client, &scope, Capability::SessionLogout).await?;
-    client
-        .execute(
-            "DELETE FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND id=$3",
-            &[&scope.tenant(), &scope.user(), &token],
-        )
-        .await?;
-    Ok(())
+    // Through Session, so every other live page of this session is signed out.
+    sessions.delete(&**client, &scope, token).await
 }
 
 pub struct UserService {

@@ -162,6 +162,28 @@ fn bounded(value: &str) -> String {
 
 // ---- sign-in -----------------------------------------------------------------
 
+/// The address the operator session list shows: the first `X-Forwarded-For`
+/// hop, or `X-Real-IP`, as the reverse proxy (the launcher's Caddy) reports
+/// it. A direct connection without a proxy records none; the host is not
+/// served with connection info, and a spoofable header is listed, never
+/// trusted for anything.
+fn client_address(headers: &HeaderMap) -> Option<String> {
+    let forwarded = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+        })?;
+    forwarded
+        .trim()
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .map(|ip| ip.to_string())
+}
+
 /// `/` and `/login`: the sign-in card, or the workspace for a signed-in visitor.
 pub async fn home(
     State(app): State<App>,
@@ -236,6 +258,18 @@ pub async fn login(
         .await
     {
         Ok(session) => {
+            let client = app.db.get().await.map_err(Error::from)?;
+            app.security
+                .sessions
+                .describe(
+                    &**client,
+                    &session.token,
+                    client_address(&headers).as_deref(),
+                    headers
+                        .get(header::USER_AGENT)
+                        .and_then(|value| value.to_str().ok()),
+                )
+                .await?;
             let cookie = format!(
                 "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
                 session.token,

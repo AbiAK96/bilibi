@@ -17,7 +17,11 @@ a route capability or a parent page is not a record/subject proof. State should
 change only after validation and successful reads/writes. A transient invalid
 intent or edit conflict preserves the mounted state. A revoked session, denied
 parent route, missing parent record or unavailable parent data clears the page
-and closes the socket.
+and closes the socket. A session ended on purpose (logout, an operator's
+termination, a credential change) is announced by Base Session; every socket of
+that session is sent back through the page it holds and closed, and the page's
+guard forwards the browser to sign-in with the expired-session message
+(`apps/base/session/README.md`).
 
 ## Transport
 
