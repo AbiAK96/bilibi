@@ -118,7 +118,10 @@ inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime"],
-        migrations: &[("base-grid-001", include_str!("../migrations/001-reference.sql"))],
+        migrations: &[
+            ("base-grid-001", include_str!("../migrations/001-reference.sql")),
+            ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),
+        ],
         services: &[],
     }
 }

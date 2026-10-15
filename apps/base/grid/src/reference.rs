@@ -1,7 +1,7 @@
 //! The reference tables: non-business stock data owned by Grid so every later
 //! slice (query, lenses, page columns, Design Library specimen) has a catalog to
 //! run against. Groups, items and movements exercise a one-link, many-links, a
-//! chained one-link after a many-link, an enum, decimals, dates and a restrictable
+//! chained one-link after a many-link, an enum, decimals, dates, a timestamp and a restrictable
 //! field (`reference_items.unit_cost`). A manager, viewer or staff member may read
 //! them after `authz-reconcile`.
 use crate::model::{
@@ -51,13 +51,14 @@ static GRID: GridContribution = GridContribution {
             "reference_movements",
             "Reference movements",
             READ,
-            Source::tenant("SELECT id, item_id, delta, moved_on FROM base_grid_ref_movements WHERE tenant_id = $1"),
+            Source::tenant("SELECT id, item_id, delta, moved_on, recorded_at FROM base_grid_ref_movements WHERE tenant_id = $1"),
             "id",
             &[
                 Field::new("id", "ID", Integer),
                 Field::new("item_id", "Item", Integer).hidden(),
                 Field::new("delta", "Change", Integer),
                 Field::new("moved_on", "Moved on", Date),
+                Field::new("recorded_at", "Recorded at", DateTime),
             ],
         )
         .time_field("moved_on"),

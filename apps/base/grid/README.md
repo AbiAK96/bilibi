@@ -1,11 +1,11 @@
-# Grid catalog and page projections (G1–G2)
+# Grid catalog, page projections and lenses (G1–G3)
 
 Grid owns flexible columns on list pages: the catalog every module declares its
 tables into, the paths a person walks through it to pick columns without writing
 a join, and the one projection statement that answers them for the rows a
 list already shows. It has no page of its own. G1 is the catalog, the scoped view
-of it, and the bounded column-path parser. Query/rollups are implemented by G2; lenses (G3) and
-per-page arrangement (G4, including the `ui.grid.page_columns` setting) build on these contracts.
+of it, and the bounded column-path parser. Query/rollups are implemented by G2, lenses by G3;
+per-page arrangement (G4, including the `ui.grid.page_columns` setting) builds on these contracts.
 
 ## Contributing a table
 
@@ -134,8 +134,7 @@ The estimate is an admission check, not a promise about runtime; the timeout is
 the execution backstop. Owners must still index their sources and join keys.
 
 The query returns typed `QueryError`s and converts to the shared database error
-for page handlers. It does not sort/filter walked columns, scan a whole table for
-lens ranges, persist layouts or provide monthly lens series (G3/G4).
+for page handlers. It does not sort/filter walked columns or persist layouts (G4).
 
 Run the live projection walkthrough against a **disposable** migrated/seeded
 PostgreSQL database:
@@ -150,3 +149,55 @@ IDs and an empty group; applies/revokes restrictions and grants; exercises scope
 edges and global text keys; then demonstrates cardinality refusal, input bounds,
 cost rejection, timeout and a successful projection after failure. It removes its
 reference rows on success. No unit tests or test runner are involved.
+
+## Lenses (G3)
+
+A lens is how a column's values are read: `value`, `bar` (scaled to the
+column's range), `band` (a colour band), and, for a `count`/`sum` over a dated
+many-link with no tail (`lens::trends`), `trend` (twelve calendar months as a
+sparkline) and `delta` (the change since a date). `lens::available` and
+`lens::normalize` decide what a column offers; `lens::flex_column` builds its
+FlexTable column (walked columns never sort; numeric ones align right).
+
+A host reads lenses in three steps, as Bilimbi's `PageColumns` does:
+
+1. `project_lenses(&db, &scope, root, &ids, &specs, &Lenses { trend, delta, since })`
+   is `project` plus, per row, `series` (the aggregate for each of
+   `Projection::months`, a month without rows counting zero) and `before` (the
+   aggregate over rows dated strictly before `since`, default thirty days
+   back). They are correlated subqueries in the same bounded statement.
+   Months and dates are UTC calendar days: every Grid read sets `TimeZone` to
+   UTC locally.
+2. `stats(&db, &scope, root, &specs)` only for columns worn as a bar or band:
+   min/max of each numeric column over **every** row the scope may read, with
+   the planner estimate. Above the 100,000 admission bound it is `skipped`
+   (cells then draw without a position); `lens::cost` turns the estimate into
+   the FlexTable's heavy-query warning above 20,000.
+3. `lens::cell(value, column, range, lens, Extras { series, before }, &display)`
+   per cell. Pass the request's `DisplayContext`: a date becomes a zone-free
+   `Typed::Date` (`dd/mm/yyyy`) and a timestamp a `Typed::Instant` with both
+   server clock texts, so a clock change re-renders it through every lens. Do
+   not format a date into text yourself. Numbers position on the range (dates
+   as days, timestamps as seconds; equal ends are 0.5), sequential bands are
+   `min(trunc(n*5), 4)`, text/enum/list values band categorically by Erlang
+   `phash2` (`bilibi_ui::flex_table::category`) and booleans binary, exactly
+   as Bilimbi's `Lens.cell`. Decimals and floats show two places; the delta
+   lens appends the signed change (`+3`, `−2.50`, `±0`).
+
+The reference movements carry `moved_on` (date, the time field) and
+`recorded_at` (timestamptz) so every typed path has data.
+
+Run the live lens page against a **disposable** migrated/seeded database
+(sign in as a seeded manager after the example reconciles roles):
+
+```sh
+BILIBI_GRID_DEMO=disposable DATABASE_URL=... APP_ORIGIN=... BIND_ADDR=... \
+  cargo run -p bilibi-web --example g3-lenses
+```
+
+It replaces the reference fixture with twelve tenant-1 items and fourteen
+months of movements relative to today, then serves `/g3-lenses`: switch a
+column's lens from its chip, set the change-since date, step the row height and
+flip the timestamp clock; each reply re-projects for the signed-in scope.
+`G3_DUMP=<file>` first writes every cell through every lens it allows, with
+its inputs, as JSON lines for comparison against Bilimbi's `Lens.cell`.
