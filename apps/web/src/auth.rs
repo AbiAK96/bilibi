@@ -26,8 +26,9 @@ const BLANK: &str = "can't be blank";
 const INVALID: &str = "is invalid";
 const EMAIL_FORMAT: &str = "must be a valid email address";
 const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
-/// Where a signed-in visitor to a credential page is sent.
-const WORKSPACE: &str = "/companies";
+/// Where a signed-in visitor to a credential page is sent: the dashboard, as
+/// Bilimbi's `UserAuth` signs every account in.
+const WORKSPACE: &str = "/dashboard";
 
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
 /// the key to its copy and clears the cookie. Free text never travels in it.

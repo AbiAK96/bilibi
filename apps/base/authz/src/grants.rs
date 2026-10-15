@@ -2,7 +2,7 @@
 use crate::{
     authorize_key,
     roles::{NewRole, RoleErrors},
-    vocabulary::Vocabulary,
+    vocabulary::{SystemRole, Vocabulary},
 };
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
@@ -257,10 +257,7 @@ impl Grants {
         Ok(())
     }
     pub async fn reconcile_in(&self, tx: &Transaction<'_>) -> Result<()> {
-        tx.execute("SELECT pg_advisory_xact_lock(841319)", &[])
-            .await?;
-        // Existing demo roles used explicit IDs, which did not advance identity.
-        tx.batch_execute("LOCK TABLE roles IN SHARE ROW EXCLUSIVE MODE; SELECT setval(pg_get_serial_sequence('roles','id'),GREATEST(COALESCE((SELECT max(id) FROM roles),1),nextval(pg_get_serial_sequence('roles','id'))),true)").await?;
+        lock_roles(tx).await?;
         let tenants = tx
             .query(
                 "SELECT id FROM tenants WHERE deleted_at IS NULL ORDER BY id",
@@ -268,38 +265,63 @@ impl Grants {
             )
             .await?;
         for tenant in tenants {
-            let tenant: i64 = tenant.get(0);
             for role in self.vocabulary.roles.values() {
-                let d = role.definition;
-                let existing=tx.query_opt("SELECT id,code,to_jsonb(roles) FROM roles WHERE tenant_id=$1 AND (code=$2 OR name=$3) ORDER BY id LIMIT 1 FOR UPDATE",&[&tenant,&d.code,&d.name]).await?;
-                let (id, old) = match existing {
-                    Some(row) => {
-                        let code: Option<String> = row.get(1);
-                        if code.as_deref().is_some_and(|code| code != d.code) {
-                            return Err(Error::Invalid);
-                        }
-                        (row.get::<_, i64>(0), row.get::<_, serde_json::Value>(2))
-                    }
-                    None => {
-                        let row=tx.query_one("INSERT INTO roles(tenant_id,name,code,is_system,grant_all,description) VALUES($1,$2,$3,true,$4,$5) RETURNING id",&[&tenant,&d.name,&d.code,&d.grant_all,&d.description]).await?;
-                        (row.get(0), json!({}))
-                    }
-                };
-                tx.execute("UPDATE roles SET name=$3,code=$4,is_system=true,grant_all=$5,description=$6 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&d.name,&d.code,&d.grant_all,&d.description]).await?;
-                let desired: Vec<&str> = if d.grant_all {
-                    Vec::new()
-                } else {
-                    role.capabilities.iter().copied().collect()
-                };
-                tx.execute("DELETE FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2 AND NOT(capability=ANY($3))",&[&tenant,&id,&desired]).await?;
-                tx.execute("INSERT INTO role_capabilities(tenant_id,role_id,capability) SELECT $1,$2,unnest($3::text[]) ON CONFLICT DO NOTHING",&[&tenant,&id,&desired]).await?;
-                let mut who = Attribution::system(Some("authz-reconcile"))?;
-                who.tenant = Some(tenant);
-                record_action(tx,&who,None,"authz.system_role.reconciled",json!({"role_id":id,"code":d.code,"before":old,"capabilities":desired,"grant_all":d.grant_all}),true).await?;
+                reconcile_role(tx, tenant.get(0), role).await?;
             }
         }
         Ok(())
     }
+    /// Reconcile one contributed system role in one tenant, as `reconcile_in`
+    /// does for every role, and return its id. The dev seed uses it to ensure
+    /// `core_admin` without rewriting the demo roles' extra grants.
+    pub async fn ensure_system_role_in(
+        &self,
+        tx: &Transaction<'_>,
+        tenant: i64,
+        code: &str,
+    ) -> Result<i64> {
+        let role = self.vocabulary.roles.get(code).ok_or(Error::Invalid)?;
+        lock_roles(tx).await?;
+        reconcile_role(tx, tenant, role).await
+    }
+}
+
+async fn lock_roles(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute("SELECT pg_advisory_xact_lock(841319)", &[])
+        .await?;
+    // Existing demo roles used explicit IDs, which did not advance identity.
+    tx.batch_execute("LOCK TABLE roles IN SHARE ROW EXCLUSIVE MODE; SELECT setval(pg_get_serial_sequence('roles','id'),GREATEST(COALESCE((SELECT max(id) FROM roles),1),nextval(pg_get_serial_sequence('roles','id'))),true)").await?;
+    Ok(())
+}
+
+async fn reconcile_role(tx: &Transaction<'_>, tenant: i64, role: &SystemRole) -> Result<i64> {
+    let d = role.definition;
+    let existing=tx.query_opt("SELECT id,code,to_jsonb(roles) FROM roles WHERE tenant_id=$1 AND (code=$2 OR name=$3) ORDER BY id LIMIT 1 FOR UPDATE",&[&tenant,&d.code,&d.name]).await?;
+    let (id, old) = match existing {
+        Some(row) => {
+            let code: Option<String> = row.get(1);
+            if code.as_deref().is_some_and(|code| code != d.code) {
+                return Err(Error::Invalid);
+            }
+            (row.get::<_, i64>(0), row.get::<_, serde_json::Value>(2))
+        }
+        None => {
+            let row=tx.query_one("INSERT INTO roles(tenant_id,name,code,is_system,grant_all,description) VALUES($1,$2,$3,true,$4,$5) RETURNING id",&[&tenant,&d.name,&d.code,&d.grant_all,&d.description]).await?;
+            (row.get(0), json!({}))
+        }
+    };
+    tx.execute("UPDATE roles SET name=$3,code=$4,is_system=true,grant_all=$5,description=$6 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&d.name,&d.code,&d.grant_all,&d.description]).await?;
+    let desired: Vec<&str> = if d.grant_all {
+        Vec::new()
+    } else {
+        role.capabilities.iter().copied().collect()
+    };
+    tx.execute("DELETE FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2 AND NOT(capability=ANY($3))",&[&tenant,&id,&desired]).await?;
+    tx.execute("INSERT INTO role_capabilities(tenant_id,role_id,capability) SELECT $1,$2,unnest($3::text[]) ON CONFLICT DO NOTHING",&[&tenant,&id,&desired]).await?;
+    let mut who = Attribution::system(Some("authz-reconcile"))?;
+    who.tenant = Some(tenant);
+    record_action(tx,&who,None,"authz.system_role.reconciled",json!({"role_id":id,"code":d.code,"before":old,"capabilities":desired,"grant_all":d.grant_all}),true).await?;
+    Ok(id)
 }
 
 impl bilibi_database::seeds::SeedExecutor for Grants {

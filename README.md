@@ -59,7 +59,7 @@ password `bilibi-dev`:
 
 | Email | Role | Access |
 |---|---|---|
-| ai@agent.my | manager | View and edit all company fields |
+| ai@agent.my | core_admin | Platform operator administrator: all capabilities, including platform ones |
 | manager@example.test | manager | View and edit all company fields |
 | staff@example.test | staff | View and edit, with tax ID and revenue restricted |
 | viewer@example.test | viewer | Read only; email, phone, tax ID and revenue masked |
