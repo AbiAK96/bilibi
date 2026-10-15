@@ -10,8 +10,7 @@
 //! The screen people reach for when someone says "it says I can't": the
 //! result filter narrows to denials and every row shows its reason. The route
 //! guard checks `admin.authz.decision-log.list` on every request and live event.
-//! Bilimbi renders this list in its flexible table; until the shared FlexTable
-//! (U7) lands it uses the shared table with the same columns, ids and sorts.
+//! The shared FlexTable preserves Bilimbi's built-in columns and customization.
 //! Bilimbi's platform-operator caution is not shown: Bilibi records every
 //! decision against a tenant, so no row here is beyond the tenant's reach.
 use crate::decision_logs::{self, DecisionLogSummary, Query, Sort};
@@ -28,14 +27,52 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, BadgeKind, Card, Column, FilterToolbar, Header, Html, ListSpec, ListState, PageCounts,
-    Pagination, Row, SortDir, Table, TableEmpty, ToolbarControl,
+    params, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, FilterToolbar, FlexRow,
+    FlexTable, Header, Html, ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir,
+    TableEmpty, ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
     time::SystemTime,
 };
+
+pub(crate) fn columns() -> ListColumns {
+    let builtins = vec![
+        {
+            let mut column = BuiltinColumn::new("occurred_at", "When").sortable("occurred_at");
+            column.sort_id = Some("logs-sort-occurred_at".into());
+            column.kind = ColumnType::Datetime;
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("actor_type", "Actor").sortable("actor_type");
+            column.sort_id = Some("logs-sort-actor_type".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("capability", "Capability").sortable("capability");
+            column.sort_id = Some("logs-sort-capability".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("allowed", "Result").sortable("allowed");
+            column.sort_id = Some("logs-sort-allowed".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("reason", "Reason").sortable("reason");
+            column.sort_id = Some("logs-sort-reason".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("resource", "Resource").sortable("resource");
+            column.sort_id = Some("logs-sort-resource".into());
+            column
+        },
+    ];
+    ListColumns::mount("decision-logs", builtins).expect("decision-logs columns")
+}
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 
@@ -74,7 +111,12 @@ pub struct Pages {
     pub restrictions: Arc<crate::restrictions::FieldRestrictions>,
 }
 impl Pages {
-    async fn view(&self, scope: &Scope, state: &mut ListState) -> Result<String> {
+    async fn view(
+        &self,
+        scope: &Scope,
+        state: &mut ListState,
+        columns: &ListColumns,
+    ) -> Result<String> {
         let client = self.db.get().await?;
         let locale = self.locales.resolve(&**client, scope, None).await?.locale;
         let display = self.display.display(&**client, scope, None, locale).await?;
@@ -85,7 +127,7 @@ impl Pages {
         if state.clamp_to_last_page(pages, true) {
             page = decision_logs::list(&**client, scope, &query(state)).await?;
         }
-        render_page(state, &display, &page.entries, page.total_entries)
+        render_page(state, columns, &display, &page.entries, page.total_entries)
     }
 }
 
@@ -195,51 +237,64 @@ fn when(display: &DisplayContext, id: i64, at: SystemTime) -> Result<Html> {
     })
 }
 
-fn row(display: &DisplayContext, log: &DecisionLogSummary) -> Result<Row> {
-    Ok(Row {
-        id: format!("logs-{}", log.id),
-        cells: vec![
-            when(display, log.id, log.occurred_at)?,
-            render(ActorCell {
-                label: actor_label(&log.actor_type),
-                principal: log.system_principal.as_deref(),
-                actor_id: log.actor_id,
-                acting_for: log.acting_for_user_id,
-            })?,
-            render(TextCell {
-                class: "font-mono text-xs text-ink",
-                text: &log.capability,
-            })?,
-            render(if log.allowed {
-                ResultCell {
-                    kind: BadgeKind::Success,
-                    label: "Allowed",
-                }
+fn row(display: &DisplayContext, log: &DecisionLogSummary) -> Result<FlexRow> {
+    let mut row = FlexRow::new(log.id.to_string());
+    row.dom_id = Some(format!("logs-{}", log.id));
+    let cells = vec![
+        when(display, log.id, log.occurred_at)?,
+        render(ActorCell {
+            label: actor_label(&log.actor_type),
+            principal: log.system_principal.as_deref(),
+            actor_id: log.actor_id,
+            acting_for: log.acting_for_user_id,
+        })?,
+        render(TextCell {
+            class: "font-mono text-xs text-ink",
+            text: &log.capability,
+        })?,
+        render(if log.allowed {
+            ResultCell {
+                kind: BadgeKind::Success,
+                label: "Allowed",
+            }
+        } else {
+            ResultCell {
+                kind: BadgeKind::Danger,
+                label: "Denied",
+            }
+        })?,
+        render(TextCell {
+            class: "font-mono text-xs text-ink-muted",
+            text: if log.reason.is_empty() {
+                "—"
             } else {
-                ResultCell {
-                    kind: BadgeKind::Danger,
-                    label: "Denied",
-                }
-            })?,
-            render(TextCell {
-                class: "font-mono text-xs text-ink-muted",
-                text: if log.reason.is_empty() {
-                    "—"
-                } else {
-                    &log.reason
-                },
-            })?,
-            render(TextCell {
-                class: "text-ink-muted",
-                text: &resource_label(log),
-            })?,
-        ],
-        actions: Html::EMPTY,
-    })
+                &log.reason
+            },
+        })?,
+        render(TextCell {
+            class: "text-ink-muted",
+            text: &resource_label(log),
+        })?,
+    ];
+    for (id, cell) in [
+        "occurred_at",
+        "actor_type",
+        "capability",
+        "allowed",
+        "reason",
+        "resource",
+    ]
+    .into_iter()
+    .zip(cells)
+    {
+        row = row.slot(id, cell);
+    }
+    Ok(row)
 }
 
 fn render_page(
     state: &ListState,
+    columns: &ListColumns,
     display: &DisplayContext,
     entries: &[DecisionLogSummary],
     total: u64,
@@ -273,35 +328,20 @@ fn render_page(
             ),
         ],
     ))?);
-    let mut table = Table::new(
+    let mut table = FlexTable::new(
         "decision-logs",
-        vec![
-            Column::new("When")
-                .sort("occurred_at")
-                .sort_id("logs-sort-occurred_at"),
-            Column::new("Actor")
-                .sort("actor_type")
-                .sort_id("logs-sort-actor_type"),
-            Column::new("Capability")
-                .sort("capability")
-                .sort_id("logs-sort-capability"),
-            Column::new("Result")
-                .sort("allowed")
-                .sort_id("logs-sort-allowed"),
-            Column::new("Reason")
-                .sort("reason")
-                .sort_id("logs-sort-reason"),
-            Column::new("Resource")
-                .sort("resource")
-                .sort_id("logs-sort-resource"),
-        ],
+        columns.flex_columns(),
+        entries
+            .iter()
+            .map(|log| row(display, log))
+            .collect::<Result<Vec<_>>>()?,
     )
     .sorted(state.sort_by.as_deref(), state.sort_dir);
+    table.zoom = columns.zoom;
+    table.suggestions = columns.flex_suggestions();
+    table.add_query = &columns.add_query;
     table.caption = "Authorization decisions";
     table.framed = false;
-    for log in entries {
-        table.rows.push(row(display, log)?);
-    }
     if total == 0 {
         table.empty = Some(TableEmpty::Content(Html::text(
             if state.search.is_empty() && state.filters["result"].is_empty() {
@@ -335,6 +375,7 @@ fn render_page(
 struct DecisionLogs {
     pages: Pages,
     state: ListState,
+    columns: ListColumns,
 }
 
 /// The role id of `/authz/roles/{id}`; anything else is the same not-found
@@ -348,16 +389,31 @@ impl Page<Scope, Error> for Pages {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let html = match request.operation {
-                "decision-logs" => self.view(scope, &mut parse(request.query)?).await?,
-                "capabilities" => crate::capabilities_web::view(
-                    &mut crate::capabilities_web::parse(request.query)?,
-                )?,
-                "roles" => {
-                    self.roles_view(scope, &mut crate::roles_web::parse(request.query)?)
+                "decision-logs" => {
+                    self.view(scope, &mut parse(request.query)?, &columns())
                         .await?
                 }
+                "capabilities" => crate::capabilities_web::view(
+                    &mut crate::capabilities_web::parse(request.query)?,
+                    &crate::capabilities_web::columns(),
+                )?,
+                "roles" => {
+                    self.roles_view(
+                        scope,
+                        &mut crate::roles_web::parse(request.query)?,
+                        &crate::roles_web::columns(),
+                    )
+                    .await?
+                }
                 "role-create" => crate::roles_web::create_view()?,
-                "role" => self.role_view(scope, role_id(&request)?).await?,
+                "role" => {
+                    self.role_view(
+                        scope,
+                        role_id(&request)?,
+                        &crate::roles_web::principal_columns(),
+                    )
+                    .await?
+                }
                 restrictions_web::OPERATION => {
                     restrictions_web::Screen::mount(self, scope)
                         .await?
@@ -375,13 +431,16 @@ impl Page<Scope, Error> for Pages {
                 "decision-logs" => Box::new(DecisionLogs {
                     pages: self.clone(),
                     state: parse(request.query)?,
+                    columns: columns(),
                 }),
                 "capabilities" => Box::new(crate::capabilities_web::Capabilities {
                     state: crate::capabilities_web::parse(request.query)?,
+                    columns: crate::capabilities_web::columns(),
                 }),
                 "roles" => Box::new(crate::roles_web::Roles {
                     pages: self.clone(),
                     state: crate::roles_web::parse(request.query)?,
+                    columns: crate::roles_web::columns(),
                 }),
                 "role-create" => Box::new(crate::roles_web::RoleCreate {
                     pages: self.clone(),
@@ -392,6 +451,7 @@ impl Page<Scope, Error> for Pages {
                 "role" => Box::new(crate::roles_web::RoleShow {
                     pages: self.clone(),
                     id: role_id(&request)?,
+                    columns: crate::roles_web::principal_columns(),
                 }),
                 restrictions_web::OPERATION => {
                     let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -421,12 +481,30 @@ impl LiveState<Scope, Error> for DecisionLogs {
                                 return Err(Error::Invalid);
                             }
                         }
+                        Some("grid") => {
+                            let values = value
+                                .as_object()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|(key, value)| {
+                                    Some((key.clone(), value.as_str()?.to_owned()))
+                                })
+                                .collect();
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(&values) {
+                                if !self.state.next_sort(&key) {
+                                    return Err(Error::Invalid);
+                                }
+                            }
+                        }
                         Some("page") => self.state.put_page(get("page")),
                         _ => return Err(Error::Invalid),
                     }
                 }
             }
-            let html = self.pages.view(request.scope, &mut self.state).await?;
+            let html = self
+                .pages
+                .view(request.scope, &mut self.state, &self.columns)
+                .await?;
             Ok(LiveBody {
                 html,
                 query: self.state.to_params(),

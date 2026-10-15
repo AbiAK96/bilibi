@@ -3,9 +3,8 @@
 //! Bilimbi `apps/base/authz/lib/authz/web/capabilities_live.{ex,html.heex}`.
 //!
 //! The route guard checks `admin.authz.capability.list` on every request and
-//! live event. Bilimbi renders this list in its flexible table; until the
-//! shared FlexTable (U7) lands it uses the shared table with the same columns,
-//! ids and sorts.
+//! live event. The shared FlexTable preserves Bilimbi's built-in columns
+//! and customization.
 use crate::{
     capabilities::{self, CapabilitySummary, Sort},
     web::{render, TextCell},
@@ -16,13 +15,44 @@ use bilibi_ui::{
     choices,
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Card, Column, FilterToolbar, Header, ListSpec, ListState, Pagination, Row, SortDir,
-    Table, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, Card, ColumnsOutcome, FilterToolbar, FlexRow, FlexTable, Header,
+    ListColumns, ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+
+pub(crate) fn columns() -> ListColumns {
+    let builtins = vec![
+        {
+            let mut column = BuiltinColumn::new("key", "Capability").sortable("key");
+            column.sort_id = Some("capabilities-sort-key".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("domain", "Domain").sortable("domain");
+            column.sort_id = Some("capabilities-sort-domain".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("resource", "Resource").sortable("resource");
+            column.sort_id = Some("capabilities-sort-resource".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("action", "Action").sortable("action");
+            column.sort_id = Some("capabilities-sort-action".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("module", "Module").sortable("module");
+            column.sort_id = Some("capabilities-sort-module".into());
+            column
+        },
+    ];
+    ListColumns::mount("capabilities", builtins).expect("capabilities columns")
+}
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 
@@ -49,7 +79,7 @@ pub(crate) fn parse(values: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)
 }
 
-pub(crate) fn view(state: &mut ListState) -> Result<String> {
+pub(crate) fn view(state: &mut ListState, columns: &ListColumns) -> Result<String> {
     let vocabulary = crate::vocabulary()?;
     let domains = capabilities::domains(vocabulary);
     let all = capabilities::list(
@@ -92,20 +122,16 @@ pub(crate) fn view(state: &mut ListState) -> Result<String> {
             ),
         ],
     ))?);
-    let mut table = Table::new(
+    let mut table = FlexTable::new(
         "capabilities-table",
-        ["key", "domain", "resource", "action", "module"]
-            .into_iter()
-            .zip(SORT_IDS)
-            .zip(["Capability", "Domain", "Resource", "Action", "Module"])
-            .map(|((sort, id), label)| Column::new(label).sort(sort).sort_id(id))
-            .collect(),
+        columns.flex_columns(),
+        page.entries.iter().map(row).collect::<Result<Vec<_>>>()?,
     )
     .sorted(state.sort_by.as_deref(), state.sort_dir);
+    table.zoom = columns.zoom;
+    table.suggestions = columns.flex_suggestions();
+    table.add_query = &columns.add_query;
     table.framed = false;
-    for capability in page.entries {
-        table.rows.push(row(capability)?);
-    }
     if page.counts.total_entries == 0 {
         table.empty = Some(TableEmpty::Content(bilibi_ui::Html::text(
             if state.search.is_empty() && state.filters["domain"].is_empty() {
@@ -136,39 +162,37 @@ pub(crate) fn view(state: &mut ListState) -> Result<String> {
     .to_owned())
 }
 
-const SORT_IDS: [&str; 5] = [
-    "capabilities-sort-key",
-    "capabilities-sort-domain",
-    "capabilities-sort-resource",
-    "capabilities-sort-action",
-    "capabilities-sort-module",
-];
-
-fn row(capability: &CapabilitySummary) -> Result<Row> {
+fn row(capability: &CapabilitySummary) -> Result<FlexRow> {
     let muted = |text: &str| {
         render(TextCell {
             class: "text-sm text-ink-muted",
             text,
         })
     };
-    Ok(Row {
-        id: format!("capabilities-{}", capability.key),
-        cells: vec![
-            render(TextCell {
-                class: "font-mono text-xs text-ink",
-                text: capability.key,
-            })?,
-            muted(capability.domain)?,
-            muted(capability.resource)?,
-            muted(capability.action)?,
-            muted(&capability.module)?,
-        ],
-        actions: bilibi_ui::Html::EMPTY,
-    })
+    let mut row = FlexRow::new(capability.key);
+    row.dom_id = Some(format!("capabilities-{}", capability.key));
+    let cells = vec![
+        render(TextCell {
+            class: "font-mono text-xs text-ink",
+            text: capability.key,
+        })?,
+        muted(capability.domain)?,
+        muted(capability.resource)?,
+        muted(capability.action)?,
+        muted(&capability.module)?,
+    ];
+    for (id, cell) in ["key", "domain", "resource", "action", "module"]
+        .into_iter()
+        .zip(cells)
+    {
+        row = row.slot(id, cell);
+    }
+    Ok(row)
 }
 
 pub(crate) struct Capabilities {
     pub(crate) state: ListState,
+    pub(crate) columns: ListColumns,
 }
 
 impl LiveState<Scope, Error> for Capabilities {
@@ -202,12 +226,27 @@ impl LiveState<Scope, Error> for Capabilities {
                                 return Err(Error::Invalid);
                             }
                         }
+                        Some("grid") => {
+                            let values = value
+                                .as_object()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|(key, value)| {
+                                    Some((key.clone(), value.as_str()?.to_owned()))
+                                })
+                                .collect();
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(&values) {
+                                if !self.state.next_sort(&key) {
+                                    return Err(Error::Invalid);
+                                }
+                            }
+                        }
                         Some("page") => self.state.put_page(get("page")),
                         _ => return Err(Error::Invalid),
                     }
                 }
             }
-            let html = view(&mut self.state)?;
+            let html = view(&mut self.state, &self.columns)?;
             Ok(LiveBody {
                 html,
                 query: self.state.to_params(),

@@ -12,8 +12,7 @@
 //! Bilimbi asks for an owning company on create and labels company-less custom
 //! roles "Unowned"; Bilibi keeps custom roles in the tenant until K15 binds
 //! them to a company, so the picker, the Unowned label and the operator's
-//! principal-count caution have nothing to show yet. Bilimbi's flexible table
-//! is the shared table until FlexTable (U7) lands.
+//! principal-count caution have nothing to show yet.
 use crate::{
     grants::CreatedRole,
     roles::{self, NewRole, Query, RoleDetails, RoleErrors, RoleSummary, Sort},
@@ -25,15 +24,62 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Column, CreateButton, Fact,
-    Facts, Field, FilterToolbar, FlashGroup, FlashMap, Header, Html, InputKind, ListSpec,
-    ListState, PageCounts, PageVariant, Pagination, Row, SectionHeading, SortDir, Table,
-    TableEmpty, ToolbarControl,
+    params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
+    ColumnsOutcome, CreateButton, Fact, Facts, Field, FilterToolbar, FlashGroup, FlashMap, FlexRow,
+    FlexTable, Header, Html, InputKind, ListColumns, ListSpec, ListState, PageCounts, PageVariant,
+    Pagination, RowMode, SectionHeading, SortDir, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
 };
+
+pub(crate) fn columns() -> ListColumns {
+    let builtins = vec![
+        {
+            let mut column = BuiltinColumn::new("name", "Name").sortable("name");
+            column.sort_id = Some("roles-sort-name".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("code", "Code").sortable("code");
+            column.sort_id = Some("roles-sort-code".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("is_system", "Scope").sortable("is_system");
+            column.sort_id = Some("roles-sort-is_system".into());
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("capabilities", "Capabilities").right();
+            column.kind = ColumnType::Integer;
+            column
+        },
+        {
+            let mut column = BuiltinColumn::new("principals", "Principals").right();
+            column.kind = ColumnType::Integer;
+            column
+        },
+    ];
+    ListColumns::mount("roles", builtins).expect("roles columns")
+}
+
+pub(crate) fn principal_columns() -> ListColumns {
+    let mut principal = BuiltinColumn::new("principal_id", "Principal");
+    principal.kind = ColumnType::Integer;
+    let mut company = BuiltinColumn::new("company_id", "Company");
+    company.kind = ColumnType::Integer;
+    ListColumns::mount(
+        "role-principals",
+        vec![
+            BuiltinColumn::new("principal_type", "Type"),
+            principal,
+            company,
+        ],
+    )
+    .expect("role principal columns")
+}
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 
@@ -114,41 +160,55 @@ struct CapabilityCountCell {
     count: i64,
 }
 
-fn role_row(role: &RoleSummary) -> Result<Row> {
+fn role_row(role: &RoleSummary, mode: RowMode) -> Result<FlexRow> {
     let mut grants_all = Badge::status(BadgeKind::Warning, "Grants all");
     grants_all.class = "ml-1";
-    Ok(Row {
-        id: format!("roles-{}", role.id),
-        cells: vec![
-            render(NameCell {
-                id: role.id,
-                name: &role.name,
-                description: &role.description,
-            })?,
-            render(TextCell {
-                class: "font-mono text-xs text-ink-muted",
-                text: role.code.as_deref().unwrap_or_default(),
-            })?,
-            render(ScopeCell {
-                scope: render(scope_badge(role))?,
-                grant_all: role.grant_all,
-                grants_all: render(grants_all)?,
-            })?,
-            render(CapabilityCountCell {
-                grant_all: role.grant_all,
-                count: role.capability_count,
-            })?,
-            render(TextCell {
-                class: "tabular-nums text-ink-muted",
-                text: &role.principal_count.to_string(),
-            })?,
-        ],
-        actions: Html::EMPTY,
-    })
+    let mut row = FlexRow::new(role.id.to_string());
+    row.dom_id = Some(format!("roles-{}", role.id));
+    let cells = vec![
+        render(NameCell {
+            id: role.id,
+            name: &role.name,
+            description: if mode == RowMode::Normal {
+                &role.description
+            } else {
+                ""
+            },
+        })?,
+        render(TextCell {
+            class: "font-mono text-xs text-ink-muted",
+            text: role.code.as_deref().unwrap_or_default(),
+        })?,
+        render(ScopeCell {
+            scope: render(scope_badge(role))?,
+            grant_all: role.grant_all,
+            grants_all: render(grants_all)?,
+        })?,
+        render(CapabilityCountCell {
+            grant_all: role.grant_all,
+            count: role.capability_count,
+        })?,
+        render(TextCell {
+            class: "tabular-nums text-ink-muted",
+            text: &role.principal_count.to_string(),
+        })?,
+    ];
+    for (id, cell) in ["name", "code", "is_system", "capabilities", "principals"]
+        .into_iter()
+        .zip(cells)
+    {
+        row = row.slot(id, cell);
+    }
+    Ok(row)
 }
 
 impl Pages {
-    pub(crate) async fn roles_view(&self, scope: &Scope, state: &mut ListState) -> Result<String> {
+    pub(crate) async fn roles_view(
+        &self,
+        scope: &Scope,
+        state: &mut ListState,
+        columns: &ListColumns,
+    ) -> Result<String> {
         let client = self.db.get().await?;
         let can_create = crate::decide(&**client, scope, roles::CREATE)
             .await?
@@ -188,24 +248,20 @@ impl Pages {
         );
         toolbar.event = "search";
         html.push(&render(toolbar)?);
-        let mut table = Table::new(
+        let mut table = FlexTable::new(
             "roles",
-            vec![
-                Column::new("Name").sort("name").sort_id("roles-sort-name"),
-                Column::new("Code").sort("code").sort_id("roles-sort-code"),
-                Column::new("Scope")
-                    .sort("is_system")
-                    .sort_id("roles-sort-is_system"),
-                Column::new("Capabilities").right(),
-                Column::new("Principals").right(),
-            ],
+            columns.flex_columns(),
+            page.entries
+                .iter()
+                .map(|role| role_row(role, columns.mode()))
+                .collect::<Result<Vec<_>>>()?,
         )
         .sorted(state.sort_by.as_deref(), state.sort_dir);
+        table.zoom = columns.zoom;
+        table.suggestions = columns.flex_suggestions();
+        table.add_query = &columns.add_query;
         table.caption = "Roles";
         table.framed = false;
-        for role in &page.entries {
-            table.rows.push(role_row(role)?);
-        }
         if page.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(
                 &if state.search.is_empty() {
@@ -238,13 +294,18 @@ impl Pages {
         .to_owned())
     }
 
-    pub(crate) async fn role_view(&self, scope: &Scope, id: i64) -> Result<String> {
+    pub(crate) async fn role_view(
+        &self,
+        scope: &Scope,
+        id: i64,
+        columns: &ListColumns,
+    ) -> Result<String> {
         let client = self.db.get().await?;
         // Another tenant's id and a missing id are the same answer.
         let details = roles::get(&**client, scope, id)
             .await?
             .ok_or(Error::NotFound)?;
-        render_role(&details)
+        render_role(&details, columns)
     }
 }
 
@@ -274,7 +335,7 @@ fn section(id: &str, card: &str, title: &str, body: Html) -> Result<Html> {
     })
 }
 
-fn render_role(details: &RoleDetails) -> Result<String> {
+fn render_role(details: &RoleDetails, columns: &ListColumns) -> Result<String> {
     let role = &details.role;
     let back = render(BackLink {
         href: "/authz/roles",
@@ -333,32 +394,38 @@ fn render_role(details: &RoleDetails) -> Result<String> {
             capabilities: &details.capabilities,
         })?,
     )?);
-    let mut principals = Table::new(
-        "role-principals",
-        vec![
-            Column::new("Type"),
-            Column::new("Principal"),
-            Column::new("Company"),
-        ],
-    );
+    let rows = details
+        .principals
+        .iter()
+        .map(|user| {
+            let mut row = FlexRow::new(user.to_string())
+                .slot(
+                    "principal_type",
+                    render(Badge::status(BadgeKind::Neutral, "User"))?,
+                )
+                .slot(
+                    "principal_id",
+                    render(TextCell {
+                        class: "tabular-nums text-ink-muted",
+                        text: &user.to_string(),
+                    })?,
+                )
+                .slot(
+                    "company_id",
+                    render(TextCell {
+                        class: "tabular-nums text-ink-muted",
+                        text: "—",
+                    })?,
+                );
+            row.dom_id = Some(format!("principal-role-{user}"));
+            Ok(row)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut principals = FlexTable::new("role-principals", columns.flex_columns(), rows);
+    principals.zoom = columns.zoom;
+    principals.suggestions = columns.flex_suggestions();
+    principals.add_query = &columns.add_query;
     principals.caption = "Principals";
-    for user in &details.principals {
-        principals.rows.push(Row {
-            id: format!("principal-role-{user}"),
-            cells: vec![
-                render(Badge::status(BadgeKind::Neutral, "User"))?,
-                render(TextCell {
-                    class: "tabular-nums text-ink-muted",
-                    text: &user.to_string(),
-                })?,
-                render(TextCell {
-                    class: "tabular-nums text-ink-muted",
-                    text: "—",
-                })?,
-            ],
-            actions: Html::EMPTY,
-        });
-    }
     if details.principals.is_empty() {
         principals.empty = Some(TableEmpty::Content(Html::text(
             "Nobody in this tenant holds this role.",
@@ -455,11 +522,12 @@ pub(crate) fn create_view() -> Result<String> {
     render_create(&NewRole::default(), &RoleErrors::default(), false)
 }
 
-/// Mounted list state: the URL carries the whole view, so a filtered, sorted
-/// page is a link someone can send, and Back works.
+/// Filters, sorting and paging stay in the URL for links and Back; column
+/// arrangement and density stay in the mounted screen, as in Bilimbi.
 pub(crate) struct Roles {
     pub(crate) pages: Pages,
     pub(crate) state: ListState,
+    pub(crate) columns: ListColumns,
 }
 
 impl LiveState<Scope, Error> for Roles {
@@ -479,6 +547,21 @@ impl LiveState<Scope, Error> for Roles {
                                 return Err(Error::Invalid);
                             }
                         }
+                        Some("grid") => {
+                            let values = value
+                                .as_object()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|(key, value)| {
+                                    Some((key.clone(), value.as_str()?.to_owned()))
+                                })
+                                .collect();
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(&values) {
+                                if !self.state.next_sort(&key) {
+                                    return Err(Error::Invalid);
+                                }
+                            }
+                        }
                         Some("page") => self.state.put_page(get("page")),
                         _ => return Err(Error::Invalid),
                     }
@@ -486,7 +569,7 @@ impl LiveState<Scope, Error> for Roles {
             }
             let html = self
                 .pages
-                .roles_view(request.scope, &mut self.state)
+                .roles_view(request.scope, &mut self.state, &self.columns)
                 .await?;
             Ok(LiveBody {
                 html,
@@ -502,6 +585,7 @@ impl LiveState<Scope, Error> for Roles {
 pub(crate) struct RoleShow {
     pub(crate) pages: Pages,
     pub(crate) id: i64,
+    pub(crate) columns: ListColumns,
 }
 
 impl LiveState<Scope, Error> for RoleShow {
@@ -509,10 +593,25 @@ impl LiveState<Scope, Error> for RoleShow {
         Box::pin(async move {
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(_) | LiveInput::Event(_) => return Err(Error::Invalid),
+                LiveInput::Params(_) => return Err(Error::Invalid),
+                LiveInput::Event(value) => {
+                    if value.get("type").and_then(|value| value.as_str()) != Some("grid") {
+                        return Err(Error::Invalid);
+                    }
+                    let values = value
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+                        .collect();
+                    self.columns.handle(&values);
+                }
             }
             Ok(LiveBody {
-                html: self.pages.role_view(request.scope, self.id).await?,
+                html: self
+                    .pages
+                    .role_view(request.scope, self.id, &self.columns)
+                    .await?,
                 ..LiveBody::default()
             })
         })
