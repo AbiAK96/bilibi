@@ -4,6 +4,8 @@ use bilibi_tenancy::{Authentication, Scope};
 use std::sync::Arc;
 use tokio_postgres::GenericClient;
 
+mod expiry;
+
 /// P2 will supply operator settings. Until then this matches Bilimbi's default.
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
@@ -57,6 +59,18 @@ impl Sessions {
     ) -> Result<Scope> {
         self.resolve(client, token, true).await
     }
+    /// Deletes sessions that can no longer authenticate: past the absolute
+    /// expiry or idle longer than the policy allows. Expiry never depends on
+    /// this sweep (`check` refuses them already); it only reclaims rows.
+    /// Housekeeping that nobody decided, so no Audit row per session.
+    pub async fn prune_expired(&self, client: &impl GenericClient) -> Result<u64> {
+        Ok(client
+            .execute(
+                "DELETE FROM sessions WHERE expires_at<=now() OR last_activity<=now()-make_interval(secs => $1::double precision)",
+                &[&(self.policy.idle_seconds as f64)],
+            )
+            .await?)
+    }
     async fn resolve(
         &self,
         client: &(impl GenericClient + Sync),
@@ -85,7 +99,14 @@ impl Sessions {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/session", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/database", "base/tenancy"], migrations: &[],
-        services: &[bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, Policy::default()))) }],
+        dependencies: &["base/database", "base/tenancy", "base/queue", "base/schedule"], migrations: &[],
+        services: &[
+            bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, Policy::default()))) },
+            bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(expiry::Expiry {
+                schedule: services.get("base/schedule.store")?,
+                sessions: services.get("base/session.sessions")?,
+                db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+            })))) },
+        ],
     }
 }
