@@ -138,9 +138,9 @@ impl State {
         match ty.as_str() {
             "sample-flex" => self.flex.apply(&get),
             "sample-flex-plain" => self.plain.apply(&get),
-            "test_click" | "toggle_split" | "close_tile" => {
+            // The source preview has no workspace: selection counts as a click.
+            "test_click" | "toggle_split" | "close_tile" | "workspace:select" => {
                 self.clicks += 1;
-                self.notice = format!("Button clicked {} times.", self.clicks);
             }
             "open-modal" => {
                 self.modal = if get("width").as_deref() == Some("wide") {
@@ -261,9 +261,6 @@ impl State {
             }
             "preview-combobox-cancel" => self.notice = "Inline edit cancelled.".into(),
             "edit_field" | "cancel_edit_field" => {}
-            "workspace:select" => {
-                self.redirect = Some("/system/design-library/components".into());
-            }
             "preview-company" => {
                 if let Some(id) = get("id")
                     .and_then(|v| v.parse::<u64>().ok())
