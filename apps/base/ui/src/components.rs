@@ -299,7 +299,7 @@ pub struct Button<'a> {
 /// A compact icon-only action with an accessible label.
 #[derive(Template, Debug)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon=icon, label=label, context=context, kind=kind, chrome=chrome, busy=busy, disabled=disabled, class=class, id=id, href=href, title=title, button_type=button_type, event=event) %}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon=icon, label=label, context=context, kind=kind, chrome=chrome, busy=busy, disabled=disabled, class=class, id=id, href=href, title=title, button_type=button_type, event=event, name=name, value=value, draggable=draggable, data_role=data_role) %}{% endcall %}"#,
     ext = "html"
 )]
 pub struct IconButton<'a> {
@@ -316,6 +316,12 @@ pub struct IconButton<'a> {
     pub title: &'a str,
     pub button_type: &'a str,
     pub event: &'a str,
+    /// Sent as `{name: value}` with the event, like a form button's own value.
+    pub name: &'a str,
+    pub value: &'a str,
+    /// A drag source; `data_role` names it to a controller (`drag-handle`).
+    pub draggable: bool,
+    pub data_role: &'a str,
 }
 
 impl<'a> IconButton<'a> {
@@ -334,6 +340,10 @@ impl<'a> IconButton<'a> {
             title: "",
             button_type: "button",
             event: "",
+            name: "",
+            value: "",
+            draggable: false,
+            data_role: "",
         }
     }
 }

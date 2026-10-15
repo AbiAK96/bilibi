@@ -11,6 +11,7 @@ bilibi-agent-api = { path = "agent_api" }
 bilibi-artifacts = { path = "artifacts" }
 bilibi-audit = { path = "audit" }
 bilibi-authz = { path = "authz" }
+bilibi-dashboard = { path = "dashboard" }
 bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }
 bilibi-grid = { path = "grid" }

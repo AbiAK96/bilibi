@@ -1,6 +1,6 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss, adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
+// DisclosureDismiss (plus the dashboard's DashboardSort), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
@@ -536,9 +536,62 @@
     },
   }
 
+  // Drag-to-reorder for the dashboard widget grid (Bilimbi DashboardSort).
+  // Server-driven: the hook only computes the DOM order after a drop and
+  // reports it as `reorder_widgets`; the dashboard validates the order is a
+  // permutation of its current widget ids before persisting anything, so a
+  // stale or forged report changes nothing. Dragging starts only from a card's
+  // drag handle (the one draggable control); HTML5 drag and drop has no touch
+  // support, so the move buttons remain the accessible reorder path.
+  const DashboardSort = {
+    mounted() {
+      this.dragged = null
+      this.onDragStart = event => {
+        const item = event.target.closest("[data-widget-id]")
+        if (!item || !this.el.contains(item)) return
+        this.dragged = item
+        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.setData("text/plain", item.dataset.widgetId)
+        item.classList.add("opacity-40")
+      }
+      this.onDragOver = event => {
+        if (!this.dragged) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "move"
+        const target = event.target.closest("[data-widget-id]")
+        if (!target || target === this.dragged || !this.el.contains(target)) return
+        // Before or after the hovered card by the pointer's half of it, so the
+        // card follows the cursor the way people expect.
+        const rect = target.getBoundingClientRect()
+        const before = event.clientY < rect.top + rect.height / 2
+        target.parentNode.insertBefore(this.dragged, before ? target : target.nextSibling)
+      }
+      this.onDrop = event => {
+        if (this.dragged) event.preventDefault()
+      }
+      this.onDragEnd = () => {
+        if (!this.dragged) return
+        this.dragged.classList.remove("opacity-40")
+        this.dragged = null
+        this.emit("reorder_widgets", {ids: [...this.el.querySelectorAll("[data-widget-id]")].map(item => item.dataset.widgetId)})
+      }
+      this.el.addEventListener("dragstart", this.onDragStart)
+      this.el.addEventListener("dragover", this.onDragOver)
+      this.el.addEventListener("drop", this.onDrop)
+      this.el.addEventListener("dragend", this.onDragEnd)
+    },
+
+    destroyed() {
+      this.el.removeEventListener("dragstart", this.onDragStart)
+      this.el.removeEventListener("dragover", this.onDragOver)
+      this.el.removeEventListener("drop", this.onDrop)
+      this.el.removeEventListener("dragend", this.onDragEnd)
+    },
+  }
+
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss})) {
+  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort})) {
     registry.registerHook(name, hook)
   }
 })()

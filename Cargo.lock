@@ -320,6 +320,7 @@ dependencies = [
  "bilibi-artifacts",
  "bilibi-audit",
  "bilibi-authz",
+ "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-grid",
@@ -367,6 +368,24 @@ dependencies = [
  "bilibi-company",
  "bilibi-party",
  "bilibi-user",
+]
+
+[[package]]
+name = "bilibi-dashboard"
+version = "0.1.0"
+dependencies = [
+ "askama",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
