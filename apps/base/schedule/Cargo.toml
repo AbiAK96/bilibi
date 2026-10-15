@@ -1,0 +1,24 @@
+[package]
+name = "bilibi-schedule"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-audit.workspace = true
+bilibi-authz = { path = "../authz" }
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-queue = { path = "../queue" }
+bilibi-tenancy = { path = "../tenancy" }
+inventory.workspace = true
+jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
+serde_json.workspace = true
+sha2 = "0.11.1"
+tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
+tokio.workspace = true

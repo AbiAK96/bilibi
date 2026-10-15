@@ -296,6 +296,7 @@ dependencies = [
  "bilibi-party-ids",
  "bilibi-principal-directory",
  "bilibi-queue",
+ "bilibi-schedule",
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
@@ -507,6 +508,26 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-schedule"
+version = "0.1.0"
+dependencies = [
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-queue",
+ "bilibi-tenancy",
+ "inventory",
+ "jiff",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
