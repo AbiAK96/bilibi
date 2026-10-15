@@ -25,6 +25,9 @@
 //     the status region says how many, so nothing is discarded silently. In
 //     development the reconnect reloads the page to pick up rebuilt assets.
 //
+// Back within a page marked `data-history="params"` is a params update in
+// place; inside a workspace tile no address change adds a history entry.
+//
 // Hooks: ui.js mounts and destroys `data-hook` controllers from DOM mutations;
 // this patcher reports the hooks whose attributes or subtree it touched through
 // BilibiUI.patched so each receives exactly one `updated` per patch.
@@ -47,6 +50,12 @@
   let retryDelay = 500;
   let retryTimer = null;
   let lastHTML = null;
+  // A page shown in a workspace tile shares the tab's history with the
+  // workspace around it (see "Framed pages" below).
+  const framed = window.parent !== window;
+  // The path the mounted page was rendered for, to tell Back within a page
+  // from Back to another.
+  let livePath = location.pathname;
 
   const params = () => Object.fromEntries(new URLSearchParams(location.search));
   const mountIntent = () => ({type: 'mount', path: location.pathname, params: params()});
@@ -118,7 +127,8 @@
 
   function enqueue(intent, meta = {}) {
     const entry = {intent, source: meta.source || null, form: meta.form || null,
-      loading: !!meta.loading, navigation: !!meta.navigation, onReply: meta.onReply};
+      loading: !!meta.loading, navigation: !!meta.navigation, onReply: meta.onReply,
+      history: meta.history === 'replace' ? 'replace' : null};
     if (entry.source) busy(entry.source);
     queued.push(entry);
     flush();
@@ -201,8 +211,13 @@
         lastHTML = message.html;
       }
       if (message.url && message.url !== location.pathname + location.search) {
-        history[message.history === 'push' ? 'pushState' : 'replaceState'](null, '', message.url);
+        // A framed page never adds an entry, and an intent that only records
+        // where something already is asks for the address to be replaced.
+        const push = message.history === 'push' && !framed && !(entry && entry.history === 'replace');
+        history[push ? 'pushState' : 'replaceState'](null, '', message.url);
+        window.dispatchEvent(new CustomEvent('bilibi:location'));
       }
+      livePath = location.pathname;
       if (message.notice) feedback.textContent = message.notice;
     } else if (message.type === 'fragment') {
       // A panel's action can open a local page (a notification's link).
@@ -552,7 +567,15 @@
     enqueue({type: 'event', target: target || 'page', payload}, {source: button});
   });
 
+  // Back and Forward remount the historical URL, except within a page that
+  // marks itself `data-history="params"`: its state lives in its own query, so
+  // the step is a params update in place (Bilimbi's handle_params on a live
+  // patch) and the DOM it keeps, frames included, is reconciled, not rebuilt.
   window.addEventListener('popstate', () => {
+    if (location.pathname === livePath && document.querySelector('#app [data-history="params"]')) {
+      enqueue({type: 'params', params: params()}, {loading: true});
+      return;
+    }
     enqueue(mountIntent(), {loading: true, navigation: true});
   });
 
@@ -568,14 +591,35 @@
     const detail = event.detail || {};
     let payload = detail.payload;
     if (!payload) {
-      const {event: type, target: _target, onReply: _onReply, ...values} = detail;
+      const {event: type, target: _target, onReply: _onReply, history: _history, ...values} = detail;
       if (!type) return;
       payload = {type, ...values};
     }
     const origin = event.target instanceof Element ? event.target : null;
     const owner = origin && origin.closest('[data-target]');
-    enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload}, {onReply: typeof detail.onReply === 'function' ? detail.onReply : null});
+    enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload},
+      {onReply: typeof detail.onReply === 'function' ? detail.onReply : null, history: detail.history});
   });
+
+  // ---- Framed pages --------------------------------------------------------
+  // A page in a workspace tile shares the tab's history with the workspace, so
+  // nothing it does may add an entry: Back then leaves the workspace, as a
+  // person expects (Bilimbi app.js). Live address changes are replaced above;
+  // a plain same-origin link replaces the frame's page instead of adding one.
+  // The workspace reads the tile's address from the frame's `load` and the
+  // `bilibi:location` this file raises after each address change.
+  if (framed) {
+    document.addEventListener('click', (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element && event.target.closest('a[href]');
+      if (!link || link.hasAttribute('download') || (link.target && link.target !== '_self')) return;
+      const url = new URL(link.href, location.href);
+      if (url.origin !== location.origin) return;
+      if (url.hash && url.pathname === location.pathname && url.search === location.search) return;
+      event.preventDefault();
+      location.replace(url.href);
+    });
+  }
 
   connect();
 })();

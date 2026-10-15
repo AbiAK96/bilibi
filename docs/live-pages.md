@@ -53,7 +53,14 @@ Responses are `page` (complete `#app`, canonical URL, notice and row count),
 background updates use null. A rejected intent with a valid request ID also
 acknowledges that ID. Canonical query values are encoded by Web, never supplied
 as a client URL. User navigation/query changes push history when the URL changes;
-mount and background refresh replace it. Browser Back remounts the historical URL.
+mount and background refresh replace it. Browser Back remounts the historical URL,
+except within a page that marks an element `data-history="params"` (the tiled
+workspace): there a Back or Forward to the same path is a `params` update of the
+mounted state, Bilimbi's `handle_params` on a live patch, so the DOM it keeps is
+reconciled rather than rebuilt. A page inside a workspace frame never adds a
+history entry: its address changes are replaced, a plain same-origin link click
+becomes `location.replace`, and `bilibi:location` is raised on its `window`
+after each address change so the workspace can record where the tile went.
 `page` and `fragment` also carry the owner's `LiveBody.events`, which the
 browser dispatches after patching as `window` events `bilibi:<name>` with the
 pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
@@ -132,6 +139,9 @@ nearest `data-target` ancestor. A controller that must know when its own
 intent is answered (the inline editors' "Saving…") adds `onReply`, a function
 that stays in the browser: it is called once, after that reply is patched, with
 the reply message, or with an `error` if the socket drops before the reply.
+A controller whose intent only records where something already is (the
+workspace's frame reports) adds `history: 'replace'`, so a changed canonical
+URL replaces the address instead of pushing an entry.
 
 ## Server-declared panels and background updates
 
