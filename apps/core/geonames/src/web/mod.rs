@@ -149,10 +149,12 @@ pub(crate) fn muted(text: Option<&str>, tabular: bool) -> Html {
     ))
 }
 /// Bilimbi's country cell: the ISO code in mono beside the name, or the code
-/// alone for a row whose country is not imported.
+/// alone for a row whose country is not imported. The space between the two
+/// spans is HEEx's own line break, which the browser renders; keep it, or
+/// the column measures narrower than the source's.
 pub(crate) fn country_cell(iso: &str, name: Option<&str>) -> Html {
     Html::raw(format!(
-        "<div class=\"whitespace-nowrap text-ink-muted\"><span class=\"font-mono text-xs\">{}</span><span class=\"ml-1\">{}</span></div>",
+        "<div class=\"whitespace-nowrap text-ink-muted\"><span class=\"font-mono text-xs\">{}</span> <span class=\"ml-1\">{}</span></div>",
         Html::text(iso),
         Html::text(name.unwrap_or(iso))
     ))
