@@ -7,6 +7,7 @@ pub mod field_catalog;
 pub mod fields;
 pub mod grants;
 pub mod restrictions;
+mod restrictions_web;
 pub mod roles;
 mod roles_web;
 pub mod vocabulary;
@@ -308,6 +309,7 @@ inventory::submit! { bilibi_module_registry::Module {
         db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
         grants: services.get("base/authz.grants")?,
+        restrictions: services.get("base/authz.field_restrictions")?,
     })))) }],
 } }
 
@@ -343,6 +345,12 @@ page_route!(
     roles::CREATE
 );
 page_route!("base/authz.role", "/authz/roles/{id}", "role", roles::VIEW);
+page_route!(
+    "base/authz.field-restrictions",
+    "/authz/field-restrictions",
+    "field-restrictions",
+    restrictions::MANAGE
+);
 // Bilimbi's Authorization menu (`contributions.ex`): items join it as their
 // screens land; the container stays hidden until one is visible.
 bilibi_menu::contribute!(
@@ -383,6 +391,18 @@ bilibi_menu::contribute!(
     .under("admin.authz")
     .requires(bilibi_menu::Requirement::Capability(decision_logs::LIST))
     .order(50)
+);
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::page(
+        "admin.authz.field-restrictions",
+        "Field Restrictions",
+        "/authz/field-restrictions"
+    )
+    .icon("lock-closed")
+    .under("admin.authz")
+    .requires(bilibi_menu::Requirement::Capability(restrictions::MANAGE))
+    .order(60)
 );
 
 inventory::submit! {

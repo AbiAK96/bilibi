@@ -1,0 +1,19 @@
+{#- The restrict dialog: roles first, then tables, then the fields of those
+    tables, each a chip multi-select; the sentence under them reads the whole
+    choice back. The form raises `validate` on every change (Bilimbi
+    phx-change); the save button raises `restrict` on the selection the server
+    already holds, so the two never race. -#}
+{%- import "components.html" as ui -%}
+{%- import "dialog.html" as dialog -%}
+{% call dialog::modal(id="field-restrictions-dialog", title="Restrict fields", cancel_event="close_dialog", description="Fields every reader needs, such as a record's name or code, are not offered.", owns_flash=true, messages=flash) %}
+<form id="field-restrictions-form" data-event="validate" data-change class="mt-4 space-y-4">
+{{ roles }}
+{{ tables }}
+{{ fields }}
+{% if !outcome.is_empty() %}<p id="field-restrictions-outcome" class="rounded-md bg-surface-sunken px-3 py-2 text-sm text-ink">{{ outcome }}</p>{% endif %}
+<div class="flex justify-end gap-2">
+{% call ui::button(id="field-restrictions-cancel", button_type="button", event="close_dialog") %}Cancel{% endcall %}
+{% call ui::button(id="field-restrictions-save", button_type="button", variant=bilibi_ui::ButtonVariant::Primary, disabled=!ready, event="restrict", working="Restricting…") %}{{ submit_label }}{% endcall %}
+</div>
+</form>
+{% endcall %}

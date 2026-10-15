@@ -111,6 +111,8 @@ run automatically on app boot.
 - Any held restricting role masks the field, even alongside an unrestricted
   or admin role. Masked values are removed before rendering and cannot be edited.
   The shared masking API supports other tables, JSON projections and audit values.
+  `/authz/field-restrictions` administers them: roles, then tables, then fields
+  as chips, committed together; see [Authz](apps/base/authz/README.md).
 - Tenant-scoped, soft-delete-aware Companies list with search, status filter,
   sorting and 25/50/100-row pages; detail with inline edits and archived read-only
   behavior. A row lock plus version check rejects stale edits.

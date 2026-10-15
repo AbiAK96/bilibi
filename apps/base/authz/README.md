@@ -60,6 +60,18 @@ company/organisation resource binding is supplied by K15/K9 alongside the User
 binder, using Tenancy owner proofs. Queue execution must rehydrate at execution,
 rather than retaining a Scope captured when enqueued.
 
+`/authz/field-restrictions` (Administration › Authorization › Field Restrictions,
+`src/restrictions_web.rs`, Bilimbi `FieldRestrictionsLive`) is the operator's
+screen for `base/authz.field_restrictions`: one row per restricted field, a
+dialog that asks for the roles, then the tables, then the fields as chips and
+commits the fields picked together as one transaction, a smaller dialog per row
+to change its roles or remove it, and the shared confirmation before removal.
+The route and every live event require `admin.authz.field.manage`; the service
+re-checks it inside each write, so a grant revoked while the page is open is
+refused and the host clears the page. Rows whose table the installed catalog no
+longer offers (the demo's `companies` restrictions until Company contributes a
+Grid table) stay listed by id, can be removed and cannot be re-restricted.
+
 `restrictions_for` and `fields::restricted` read restrictions for any table ID;
 any held restricting role masks, even alongside an admin. `fields::mask` removes
 restricted fields before JSON serialization, including arrays, audit old/new

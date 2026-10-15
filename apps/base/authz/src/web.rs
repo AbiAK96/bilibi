@@ -1,6 +1,7 @@
 //! The `base/authz.pages` adapter: it dispatches each discovered route's
 //! operation to its screen (capabilities in `capabilities_web.rs`, roles in
-//! `roles_web.rs`) and owns the decision-log screen itself.
+//! `roles_web.rs`, field restrictions in `restrictions_web.rs`) and owns the
+//! decision-log screen itself.
 //!
 //! `/authz/decision-logs` (`base/authz.pages`, operation `decision-logs`):
 //! authorization decisions, newest first, ported from Bilimbi
@@ -14,6 +15,7 @@
 //! Bilimbi's platform-operator caution is not shown: Bilibi records every
 //! decision against a tenant, so no row here is beyond the tenant's reach.
 use crate::decision_logs::{self, DecisionLogSummary, Query, Sort};
+use crate::restrictions_web;
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
@@ -69,6 +71,7 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub grants: Arc<crate::grants::Grants>,
+    pub restrictions: Arc<crate::restrictions::FieldRestrictions>,
 }
 impl Pages {
     async fn view(&self, scope: &Scope, state: &mut ListState) -> Result<String> {
@@ -121,13 +124,13 @@ pub(crate) fn render(fragment: impl Template) -> Result<Html> {
     source = r#"<span class="whitespace-nowrap tabular-nums text-ink-muted"><time id="{{ id }}" datetime="{{ iso }}" data-format="datetime" data-precision="minute" data-mode="{{ mode }}" data-text-company="{{ company }}" data-text-utc="{{ utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums">{{ text }}</time></span>"#,
     ext = "html"
 )]
-struct WhenCell {
-    id: String,
-    iso: String,
-    text: String,
-    company: String,
-    utc: String,
-    mode: &'static str,
+pub(crate) struct WhenCell {
+    pub(crate) id: String,
+    pub(crate) iso: String,
+    pub(crate) text: String,
+    pub(crate) company: String,
+    pub(crate) utc: String,
+    pub(crate) mode: &'static str,
 }
 
 #[derive(Template)]
@@ -355,6 +358,12 @@ impl Page<Scope, Error> for Pages {
                 }
                 "role-create" => crate::roles_web::create_view()?,
                 "role" => self.role_view(scope, role_id(&request)?).await?,
+                restrictions_web::OPERATION => {
+                    restrictions_web::Screen::mount(self, scope)
+                        .await?
+                        .body(scope)
+                        .await?
+                }
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody { html, live: true })
@@ -384,6 +393,10 @@ impl Page<Scope, Error> for Pages {
                     pages: self.clone(),
                     id: role_id(&request)?,
                 }),
+                restrictions_web::OPERATION => {
+                    let scope = request.scope.ok_or(Error::Unauthorized)?;
+                    Box::new(restrictions_web::Screen::mount(self, scope).await?)
+                }
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
