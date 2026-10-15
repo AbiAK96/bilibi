@@ -133,14 +133,14 @@ impl Detail {
                             BuiltinColumn::new(&format!("c{i}"), label).sortable(label)
                         })
                         .collect::<Vec<_>>();
-                    if !builtins.is_empty() && builtins.len() <= 64 {
+                    if !builtins.is_empty() && builtins.len() <= 2048 {
                         if self
                             .columns
                             .as_ref()
                             .is_none_or(|state| state.builtins() != builtins)
                         {
                             self.columns = Some(
-                                ListColumns::mount("query-results-table", builtins)
+                                ListColumns::projection("query-results-table", builtins)
                                     .map_err(|_| Error::Internal)?,
                             );
                         }
@@ -155,6 +155,10 @@ impl Detail {
         Ok(())
     }
     fn change(&mut self, value: &Value) -> Result<()> {
+        let sql_changed = value
+            .get("sql_query")
+            .and_then(Value::as_str)
+            .is_some_and(|sql| sql != self.draft.sql_query);
         for (key, target, max) in [
             ("name", &mut self.draft.name, 600),
             ("description", &mut self.draft.description, 400_000),
@@ -181,8 +185,10 @@ impl Detail {
                 || old.sql_query != self.draft.sql_query
         });
         // A new projection may no longer contain the selected result column.
-        self.sort = None;
-        self.descending = false;
+        if sql_changed {
+            self.sort = None;
+            self.descending = false;
+        }
         Ok(())
     }
     async fn event(
@@ -225,13 +231,24 @@ impl Detail {
                 self.run(scope).await?;
             }
             "results_grid" => {
-                if let Some(columns) = &mut self.columns {
-                    if let ColumnsOutcome::Sort(column) = columns.handle(&values(value)) {
-                        self.descending = self.sort.as_ref() == Some(&column) && !self.descending;
-                        self.sort = Some(column);
-                        self.list.page = 1;
-                        self.run(scope).await?;
+                let column = if let Some(columns) = &mut self.columns {
+                    match columns.handle(&values(value)) {
+                        ColumnsOutcome::Sort(column) => Some(column),
+                        _ => None,
                     }
+                } else if get("op") == Some("sort") {
+                    get("sort")
+                        .and_then(|key| key.strip_prefix('c'))
+                        .and_then(|index| index.parse::<usize>().ok())
+                        .and_then(|index| self.result.as_ref()?.columns.get(index).cloned())
+                } else {
+                    None
+                };
+                if let Some(column) = column {
+                    self.descending = self.sort.as_ref() == Some(&column) && !self.descending;
+                    self.sort = Some(column);
+                    self.list.page = 1;
+                    self.run(scope).await?;
                 }
             }
             "save" => {

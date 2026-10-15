@@ -3,11 +3,11 @@ use askama::Template;
 use bilibi_audit::console::ConsoleResult;
 use bilibi_datetime::{Format, Precision};
 use bilibi_ui::{
-    flex_table::{Cell, FlexColumn, FlexRow, FlexTable, Instant},
+    flex_table::{FlexColumn, FlexRow, FlexTable, Instant},
     list_columns::ListColumns,
-    Alert, BackLink, Button, ButtonVariant, Card, ConfirmDialog, CreateButton, EmptyState, Field,
+    Alert, BackLink, Button, ButtonVariant, ConfirmDialog, CreateButton, EmptyState, Field,
     FilterToolbar, FlashGroup, FlashMap, Header, Icon, IconButton, IconKind, InputKind, PageCounts,
-    Pagination, SectionHeading, StatusKind, TableEmpty, ToolbarControl,
+    Pagination, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::Value;
 
@@ -46,6 +46,16 @@ struct Description<'a> {
 struct RowActions {
     duplicate: Html,
     delete: Html,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"{% import "flex_table.html" as flex %}<span class="whitespace-nowrap text-ink-subtle">{% call flex::instant(id=id, i=time) %}{% endcall %}</span>"#,
+    ext = "html"
+)]
+struct DateCell {
+    id: String,
+    time: Instant,
 }
 
 fn flash(success: &str, error: &str) -> Result<Html> {
@@ -118,15 +128,26 @@ pub(super) async fn index(
         ] {
             let stamp = jiff::Timestamp::try_from(at).map_err(|_| Error::Internal)?;
             let time = display.render(stamp, Format::DateTime, Precision::Minute);
-            result = result.cell(
+            result = result.slot(
                 key,
-                Cell::instant(Instant::new(
-                    &time.iso,
-                    &time.text,
-                    &time.company,
-                    &time.utc,
-                    time.mode.as_str(),
-                )),
+                fragment(&DateCell {
+                    id: format!(
+                        "{}-{}",
+                        if key == "created_at" {
+                            "created"
+                        } else {
+                            "updated"
+                        },
+                        query.id
+                    ),
+                    time: Instant::new(
+                        &time.iso,
+                        &time.text,
+                        &time.company,
+                        &time.utc,
+                        time.mode.as_str(),
+                    ),
+                })?,
             );
         }
         if editor {
@@ -244,6 +265,22 @@ struct QueryHeader {
     actions: Html,
 }
 #[derive(Template)]
+#[template(
+    source = r#"<span id="query-results-summary">{{ text }}</span>"#,
+    ext = "html"
+)]
+struct Summary {
+    text: String,
+}
+#[derive(Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::section_heading(id="query-results-heading", title="Results", description_html=summary) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct ResultsHeading {
+    summary: Html,
+}
+#[derive(Template)]
 #[template(path = "database_query_results.html")]
 struct ResultsView {
     heading: Html,
@@ -284,6 +321,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
     })?;
     if editor {
         if state.saved.is_some() {
+            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-duplicate-query",
                 "duplicate",
@@ -291,6 +329,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 "duplicate",
                 ButtonVariant::Secondary,
             )?);
+            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-delete-query",
                 "request_delete",
@@ -299,6 +338,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 ButtonVariant::Danger,
             )?);
         } else {
+            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-discard-query",
                 "delete",
@@ -307,6 +347,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 ButtonVariant::Secondary,
             )?);
         }
+        actions.push(&Html::text(" "));
         actions.push(&action(
             "btn-save-query",
             "save",
@@ -333,8 +374,12 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
         .collect::<Result<Vec<_>>>()?;
     DetailView {
         flash: flash(&state.success, "")?,
-        header: fragment(&Header { title, subtitle: "", title_actions: Html::EMPTY, actions })?,
-        run: action("btn-run-query", "run_query", "Run Query", "play", ButtonVariant::Primary)?,
+        header: fragment(&QueryHeader { title, description, actions })?,
+        run: {
+            let mut body = fragment(&Icon { name: "play", class: "size-3.5 mr-1" })?;
+            body.push(&Html::text("Run Query"));
+            fragment(&Button { id: "btn-run-query", event: "run_query", class: "px-3 py-1 text-xs", variant: ButtonVariant::Primary, body, ..Default::default() })?
+        },
         prompt: fragment(&prompt)?, sql: fragment(&sql)?, parameters,
         caution: fragment(&Alert { id: "database-query-reach-caution", kind: StatusKind::Warning, class: "mt-2", body: Html::text("Not filtered to one company: SQL run here reads across every company and tenant in the database.") })?,
         error: if state.error.is_empty() { Html::EMPTY } else { fragment(&Alert { id: "query-execution-error", kind: StatusKind::Error, class: "", body: Html::text(&state.error) })? },
@@ -358,7 +403,7 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
         .columns
         .iter()
         .enumerate()
-        .map(|(i, name)| FlexColumn::new(&format!("c{i}"), name, name))
+        .map(|(i, name)| FlexColumn::new(&format!("c{i}"), &format!("c{i}"), name).fixed())
         .collect();
     let columns = state
         .columns
@@ -383,8 +428,13 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
         }
         rows.push(row);
     }
+    let sort_key = state
+        .sort
+        .as_ref()
+        .and_then(|name| result.columns.iter().position(|column| column == name))
+        .map(|i| format!("c{i}"));
     let mut table = FlexTable::new("query-results-table", columns, rows)
-        .sorted(state.sort.as_deref(), state.sort_dir());
+        .sorted(sort_key.as_deref(), state.sort_dir());
     table.event = "results_grid";
     table.caption = "Query results";
     table.framed = false;
@@ -408,24 +458,17 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
     );
     pagination.filters_event = "result_page_size";
     pagination.page_event = "page_results";
-    let body = fragment(&ResultsView {
-        heading: fragment(&SectionHeading {
-            id: "query-results-heading",
-            title: "Results",
-            description: &format!(
-                "{} columns · {} total rows",
-                result.columns.len(),
-                result.total
-            ),
-            ..Default::default()
+    fragment(&ResultsView {
+        heading: fragment(&ResultsHeading {
+            summary: fragment(&Summary {
+                text: format!(
+                    "{} columns · {} total rows",
+                    result.columns.len(),
+                    result.total
+                ),
+            })?,
         })?,
         table: fragment(&table)?,
         pagination: fragment(&pagination)?,
-    })?;
-    fragment(&Card {
-        id: "query-results-card",
-        inner_class: "p-0",
-        body,
-        ..Default::default()
     })
 }

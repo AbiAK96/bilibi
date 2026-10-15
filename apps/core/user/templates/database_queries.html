@@ -1,6 +1,7 @@
 {% import "components.html" as ui %}
 {{ flash }}
 {% call ui::page(id="database-queries-index") %}
+  <span data-history="params" hidden></span>
   {{ header }}
   {{ toolbar }}
   {% call ui::card(id="database-queries-card", inner_class="p-0") %}

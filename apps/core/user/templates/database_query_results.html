@@ -1,5 +1,9 @@
-<div class="px-5 pb-4 pt-5 sm:px-6" role="region" aria-labelledby="query-results-heading">
+{% import "components.html" as ui %}
+{% call ui::card(id="query-results-card", inner_class="p-0", role="region", aria_labelledby="query-results-heading") %}
+<div class="px-5 pb-4 pt-5 sm:px-6">
   {{ heading }}
 </div>
 {{ table }}
 {{ pagination }}
+
+{% endcall %}

@@ -10,10 +10,20 @@ use std::sync::LazyLock;
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: ["name", "description", "created_at", "updated_at"]
-            .map(|key| (key.into(), SortDir::Asc))
+            .map(|key| {
+                (
+                    key.into(),
+                    if key.ends_with("_at") {
+                        SortDir::Desc
+                    } else {
+                        SortDir::Asc
+                    },
+                )
+            })
             .into(),
-        default_sort: Some("name".into()),
+        default_sort: Some("updated_at".into()),
         page_size_aliases: vec!["perPage".into()],
+        omit_blank: vec!["search".into()],
         ..ListSpec::default()
     }
     .shared()
@@ -41,7 +51,13 @@ impl Index {
                     ("created_at", "Created"),
                     ("updated_at", "Updated"),
                 ]
-                .map(|(key, label)| BuiltinColumn::new(key, label).sortable(key))
+                .map(|(key, label)| {
+                    let mut column = BuiltinColumn::new(key, label).sortable(key);
+                    if key.ends_with("_at") {
+                        column.kind = bilibi_ui::flex_table::ColumnType::Datetime;
+                    }
+                    column
+                })
                 .to_vec(),
             )
             .map_err(|_| Error::Internal)?,
