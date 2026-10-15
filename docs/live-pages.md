@@ -103,7 +103,11 @@ The socket processes events sequentially with a 16 KiB message/frame limit.
   their values (a record version still conflicts on save). The form whose
   submission was accepted is reset to the stored values. On an existing element
   the patcher leaves an iframe's `src`, a `<details>`/`<dialog>` `open` and a
-  `data-live-ignore` subtree (except its `data-*` attributes) alone, and never
+  `data-live-ignore` subtree (except its `data-*` attributes) alone, keeps the
+  `aria-expanded` a person gave the trigger of a `data-live-expanded`
+  disclosure (a multi-select whose checkboxes raise a `data-change` event stays
+  open through the reply, as a LiveView JS command's attribute survives a
+  patch), and never
   descends into an iframe; a frame whose id and order are unchanged keeps its
   document, including when keyed siblings before it leave (they are removed
   around it rather than it being moved, since a moved frame reloads). Focus and selection are restored by id when the focused element was
@@ -127,7 +131,10 @@ The socket processes events sequentially with a 16 KiB message/frame limit.
 
 Forms raise intent with `data-event`: `params` sends the form values as a
 params update, `save` the Company edit shape, and any other name an event of
-that type carrying the form values; `data-target` picks a mounted panel. A form
+that type carrying the form values; `data-target` picks a mounted panel. A
+control named with a `[]` suffix (a multi-select's checkboxes, Bilimbi's list
+parameter spelling) posts every checked value as one JSON array under that
+name; any other name carries its last value. A form
 also marked `data-change` (Bilimbi's `phx-change`) raises the same intent as
 its values change: at once for a select, after a control's `data-debounce`
 milliseconds of typing, and at once on commit or Enter; identical values raised

@@ -333,6 +333,11 @@
   function pinned(el, name, context) {
     if (name === 'src' && el.tagName === 'IFRAME') return true; // the frame navigated itself
     if (name === 'open' && (el.tagName === 'DETAILS' || el.tagName === 'DIALOG')) return true;
+    // A disclosure marked data-live-expanded (a multi-select whose checkboxes
+    // raise a data-change event) keeps the open state the person gave its
+    // trigger, as LiveView keeps a JS command's attribute across a patch;
+    // the server only ever renders it closed.
+    if (name === 'aria-expanded' && el.hasAttribute('aria-controls') && el.parentElement && el.parentElement.hasAttribute('data-live-expanded')) return true;
     // A draft keeps the context it was written in (its form's hidden values,
     // such as a record version) so a concurrent change still conflicts on save.
     if (name === 'value' && el.tagName === 'INPUT' && el.type === 'hidden' && el.form && drafting(el.form, context)) return true;
@@ -492,6 +497,19 @@
   }
 
   // ---- Intent sources ------------------------------------------------------
+  // A form's values as the server reads them. A control named with a `[]`
+  // suffix (a multi-select's checkboxes, Bilimbi's list parameter spelling)
+  // posts every checked value as one array; any other name keeps its last
+  // value, as Object.fromEntries would.
+  function formValues(form) {
+    const values = {};
+    for (const [name, value] of new FormData(form)) {
+      if (name.endsWith('[]')) (values[name] ||= []).push(value);
+      else values[name] = value;
+    }
+    return values;
+  }
+
   // A form names its event with data-event: `params` sends the list query,
   // `save` the Company edit shape, anything else an event of that name
   // carrying the form's values. data-target picks a mounted panel.
@@ -500,7 +518,7 @@
     if (!form.dataset.event) return;
     event.preventDefault();
     if (form.hasAttribute('data-change')) return sendChange(form);
-    const values = Object.fromEntries(new FormData(form));
+    const values = formValues(form);
     const target = form.dataset.target || 'page';
     const source = event.submitter || form;
     const type = form.dataset.event;
@@ -525,7 +543,7 @@
   function sendChange(form) {
     clearTimeout(changeTimers.get(form));
     const type = form.dataset.event;
-    const values = Object.fromEntries(new FormData(form));
+    const values = formValues(form);
     const key = JSON.stringify(values);
     const last = changeSent.get(form);
     if (last && last.key === key && performance.now() - last.at < 500) return;
