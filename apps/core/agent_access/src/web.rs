@@ -196,6 +196,8 @@ enum DeviceEvent {
     Deny,
     Another,
     Dismiss,
+    /// The flash outlet's own dismissal (`data-event="clear-flash"`).
+    #[serde(rename = "clear-flash")]
     ClearFlash {
         key: String,
     },
@@ -596,10 +598,15 @@ struct ConnectionsPage {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ConnectionsEvent {
-    Revoke { id: String },
+    Revoke {
+        id: String,
+    },
     CancelRevoke,
     ConfirmRevoke,
-    ClearFlash { key: String },
+    #[serde(rename = "clear-flash")]
+    ClearFlash {
+        key: String,
+    },
 }
 pub struct ConnectionRow {
     pub id: String,

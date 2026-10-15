@@ -4,6 +4,7 @@
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as feedback -%}
 {%- import "datetime.html" as time -%}
+<div data-shared-ui>
 {% call feedback::flash_group() %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call ui::header() %}Connect an app{% endcall %}
@@ -40,3 +41,4 @@
 {% endif %}
 <a href="/settings/agent-connections">Your connections</a>
 {% endcall %}
+</div>

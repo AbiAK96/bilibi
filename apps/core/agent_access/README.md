@@ -1,13 +1,14 @@
-# Agent connections (E3)
+# Agent connections (E3, E4)
 
 `core/agent_access` owns OAuth device codes, per-person connections, opaque
 access/refresh tokens and PKCE authorization codes, ported from Bilimbi's
-`apps/core/agent_access` (ADR 0021). This slice is the service layer; the
+`apps/core/agent_access` (ADR 0021). E3 is the service layer; E4 adds the
 `/oauth/device`, `/oauth/authorize` and `/settings/agent-connections` pages
-(E4) and the host OAuth metadata/device/token endpoints and `AgentAuth` (E5)
-call it. Use `AgentAccess` (`core/agent_access.grants`, `src/lib.rs`) for every
-code, token and connection decision; never query `core_agent_*` tables from
-another module or compare a credential yourself.
+(`src/web.rs`, `templates/`). The host OAuth metadata/device/token endpoints
+and `AgentAuth` (E5) still follow. Use `AgentAccess`
+(`core/agent_access.grants`, `src/lib.rs`) for every code, token and
+connection decision; never query `core_agent_*` tables from another module or
+compare a credential yourself.
 
 ## Contract
 
@@ -47,6 +48,31 @@ another module or compare a credential yourself.
   bounds the code (120 by default). `agent_access.oauth_requests_per_minute`
   is the host's per-sender limit; `Throttle` is the per-node counter E5 applies.
   Editing these needs the platform capability `admin.system.agent-access.manage`.
+
+## Pages
+
+`core/agent_access.pages` serves the three signed-in routes through the
+discovered page contract; `src/web.rs` mirrors Bilimbi's `device_live.ex`,
+`authorize_live.ex` and `connections_live.ex` and the templates compose the
+shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the
+template path). Opening `/oauth/device?user_code=…` only fills the code; the
+person checks it, reviews the stated agent and the server-computed end time,
+then approves or refuses. `/oauth/authorize` validates the registered client
+and exact callback before consent renders, and an approve or refuse answers
+through the live page's `redirect` with `code` or `error=access_denied`, the
+client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host
+header). Both consent forms submit no fields: an approve carrying any field is
+refused as a changed end time. `/settings/agent-connections` lists the
+person's grants newest first with status and "Also seen as", and revokes one
+only through the shared confirm dialog. Audit sees each decision as the
+signed-in `user`.
+
+The pages render instants through `templates/datetime.html`, the Bilimbi
+`<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in
+`base/ui` once the shell's display-mode control and `DateTime` hook land (P10,
+C5). The flash outlet renders inside each page until the shared shell owns it.
+Impersonation and agent facets are refused by `self_service` in `src/lib.rs`
+when the scope carries them (K14, E5), not by the pages.
 
 ## Injected identity
 

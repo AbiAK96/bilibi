@@ -1,10 +1,12 @@
 {#- Signed-in device consent (Bilimbi device_live.ex). Opening a link only
     fills the code; the person checks it, reviews the stated agent and decides.
-    The flash outlet renders here until the shared shell owns it (P10). -#}
+    The flash outlet renders here until the shared shell owns it (P10); the
+    root carries data-shared-ui so the demo compatibility sheet stops at it. -#}
 {%- import "components.html" as ui -%}
 {%- import "forms.html" as forms -%}
 {%- import "feedback.html" as feedback -%}
 {%- import "datetime.html" as time -%}
+<div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call ui::header() %}Connect an agent{% endcall %}
@@ -53,3 +55,4 @@
 {% endif %}
 <a id="device-connections" href="/settings/agent-connections">Your connections</a>
 {% endcall %}
+</div>
