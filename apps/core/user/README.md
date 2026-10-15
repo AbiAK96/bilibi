@@ -1,8 +1,9 @@
 # User credentials
 
-`core/user` owns accounts, credentials and the notification bell. This slice
-adds the password and email services that the login, forgot-password,
-reset-password and settings pages call; the pages are not part of it.
+`core/user` owns accounts, credentials and the notification bell: the
+password and email services, and the account's self-service settings pages
+that call them. The anonymous sign-in, forgot-password and reset-password
+pages belong to the Web host, as Bilimbi's do.
 
 ## Services (`core/user.accounts`, `UserService`)
 
@@ -40,8 +41,22 @@ and Media keys). The MAC covers the current email, so changing the address voids
 links already sent. Without the key `send_email_verification` and `verify_email`
 answer `VerificationUnavailable`.
 
-Emailed links point at `APP_ORIGIN`: `/reset-password/{token}?tenant=…&email=…`
-and `/verify-email/{link}`. The pages that serve them belong to later slices.
+Emailed links point at `APP_ORIGIN`: `/reset-password/{token}?tenant=…&email=…`,
+served by the Web host, and `/verify-email/{link}`, whose page belongs to a
+later slice.
+
+## Pages (`core/user.pages`)
+
+`/settings/password` (`src/web.rs`, `templates/password.html`) is the signed-in
+account's password change inside the shell, on the settings layout of
+`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`); later
+settings pages (profile, appearance, agent connections) render through the same
+macro and are shown as unavailable until they land. The page is live: the form
+submits as the `change-password` event carrying its field values, the state
+keeps the field errors of the last attempt (`can't be blank`, the password
+policy, `does not match password`, `is incorrect`), and a success or failure
+is a flash in the page until dismissed. The route needs a session and no
+capability; the current password proves the holder inside `change_password`.
 
 ## Audit
 

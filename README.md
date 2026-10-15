@@ -86,6 +86,19 @@ run automatically on app boot.
 - Server-held random sessions, Argon2id passwords, sign out, a 24-hour expiry,
   and throttled activity touches. Session and active tenant/user are refreshed
   for every authenticated request, live event and push.
+- The sign-in page is the homepage (`/`, with `/login` as an alias), on
+  Bilimbi's centered credential layout with its forgotten-password and reset
+  cards: `/forgot-password` always confirms without saying whether the account
+  exists, and the emailed `/reset-password/{token}` link replaces the password
+  once and ends every session of the account. A completed reset and an expired
+  session each reach the sign-in page as a one-shot flash cookie that names a
+  message, never carries one. Signed-in visitors are forwarded to the
+  workspace. `/settings/password` is the account's self-service change inside
+  the shell: a live page whose form submits as a module event, requiring the
+  current password and ending the account's other sessions. The forms carry a
+  Tenant ID because the credential lookup is still tenant + email: the global
+  login and Person/Affiliation identity binding follow K9, and sign-in has no
+  attempt throttle yet.
 - Roles, role capabilities and direct grants; direct denies override every
   allow, including admin `grant_all`. Each capability check writes a tenant-scoped
   decision-log row, whether allowed or denied. Unknown capabilities cannot be
@@ -114,8 +127,9 @@ run automatically on app boot.
   bell to that user's connected pages. Clicking the bell marks that user's
   notifications read. Subscribers are matched by tenant **and** user.
 
-The public login page, login submission and static assets have no signed-in
-actor and therefore no capability decision. Sign out checks `session.logout`;
+The public sign-in, forgotten-password and reset pages, their submissions and
+static assets have no signed-in actor and therefore no capability decision;
+the password settings page needs a session and no capability. Sign out checks `session.logout`;
 company operations check `companies.view`/`companies.update`; bell operations
 check `notifications.view`/`notifications.update`. Invalid wire input is rejected.
 Permissions, tenant/user status and restrictions are read afresh, not cached.
@@ -157,8 +171,8 @@ apps/base/grid        contributed table/field/link catalog, scoped and restricti
 apps/base/mail        validated outgoing mail: SMTP relay or dev mailbox files
 apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/workflow    status definitions, append-only history, owner-transaction transition kernel
-apps/base/ui          shared shell, styles, small live browser adapter
-apps/core/user        credentials, password reset/verification, sessions, notifications, owned SQL
+apps/base/ui          shared shell, credential layout and cards, styles, small live browser adapter
+apps/core/user        credentials, password reset/verification, settings pages, sessions, notifications, owned SQL
 apps/core/company     Companies API, owned SQL, page templates
 apps/web              executable host, route/socket transport, explicit seed
 ```
