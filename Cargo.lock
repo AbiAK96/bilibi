@@ -881,6 +881,7 @@ dependencies = [
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-user",
+ "bilibi-workflow",
  "http-body-util",
  "inventory",
  "jiff",
