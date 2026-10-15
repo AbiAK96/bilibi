@@ -1,4 +1,7 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
+//! `admin` is tenant administration; `web` the module-owned `/tenancy/tenants`.
+pub mod admin;
+mod web;
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use std::{
@@ -227,6 +230,46 @@ impl OperatorProof {
         &self.scope
     }
 }
+
+/// A capability decision for Tenancy's own screens, on top of operator
+/// identity. Authz sits above Tenancy, so it binds the implementation at boot
+/// (`authorize_operator`: both requirements, each independently logged) and
+/// Tenancy never imports it. `Err(Forbidden)` is a refusal to show, not a fault.
+pub trait OperatorAuthorizer: Send + Sync {
+    fn authorize_operator<'a>(
+        &'a self,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> ProofFuture<'a, OperatorProof>;
+}
+/// `base/tenancy.authorization`: once-bound; without a binding every decision
+/// refuses and boot is refused by the readiness check.
+#[derive(Default)]
+pub struct Authorization {
+    authorizer: OnceLock<Arc<dyn OperatorAuthorizer>>,
+}
+impl Authorization {
+    pub fn bind(
+        &self,
+        authorizer: Arc<dyn OperatorAuthorizer>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.authorizer.set(authorizer).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service("duplicate operator authorizer".into())
+        })
+    }
+    pub fn ready(&self) -> bilibi_module_registry::Result<()> {
+        self.authorizer.get().map(|_| ()).ok_or_else(|| {
+            bilibi_module_registry::RegistryError::Service("missing operator authorizer".into())
+        })
+    }
+    pub async fn authorize_operator(&self, scope: &Scope, key: &str) -> Result<OperatorProof> {
+        self.authorizer
+            .get()
+            .ok_or(Error::Forbidden)?
+            .authorize_operator(scope, key)
+            .await
+    }
+}
 pub async fn prove_operator(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
@@ -312,14 +355,56 @@ pub async fn prove_person(
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/tenancy", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/database", "base/party_ids"],
-        migrations: &[("005-tenancy-operator", include_str!("../migrations/005-operator.sql"))],
-        services: &[bilibi_module_registry::Service { id: "base/tenancy.authentication", factory: |_| Ok(Arc::new(Authentication::default())) }, bilibi_module_registry::Service { id: "base/tenancy.parties", factory: |_| Ok(Arc::new(PartyProofs::default())) }],
+        dependencies: &["base/database", "base/party_ids", "base/menu", "base/ui"],
+        migrations: &[
+            ("005-tenancy-operator", include_str!("../migrations/005-operator.sql")),
+            ("009-tenancy-hierarchy", include_str!("../migrations/009-hierarchy.sql")),
+        ],
+        services: &[
+            bilibi_module_registry::Service { id: "base/tenancy.authentication", factory: |_| Ok(Arc::new(Authentication::default())) },
+            bilibi_module_registry::Service { id: "base/tenancy.parties", factory: |_| Ok(Arc::new(PartyProofs::default())) },
+            bilibi_module_registry::Service { id: "base/tenancy.authorization", factory: |_| Ok(Arc::new(Authorization::default())) },
+            bilibi_module_registry::Service { id: "base/tenancy.tenants", factory: |services| Ok(Arc::new(admin::Tenants::new(
+                services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+                services.get("base/database.mutations")?,
+            ))) },
+            bilibi_module_registry::Service { id: "base/tenancy.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+                tenants: services.get("base/tenancy.tenants")?,
+                authorization: services.get("base/tenancy.authorization")?,
+            })))) },
+        ],
     }
 }
 inventory::submit! {
-    bilibi_module_registry::Ready { module: "base/tenancy", check: |services| services.get::<Authentication>("base/tenancy.authentication")?.ready() }
+    bilibi_module_registry::Ready { module: "base/tenancy", check: |services| {
+        services.get::<Authentication>("base/tenancy.authentication")?.ready()?;
+        services.get::<Authorization>("base/tenancy.authorization")?.ready()
+    } }
 }
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/tenancy.tenants",
+        bilibi_module_registry::Provenance { module: "base/tenancy", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/tenancy/tenants",
+            service: "base/tenancy.pages", operation: "tenants",
+            access: bilibi_module_registry::contributions::Access::OperatorCapability(admin::LIST), framed: true })
+}
+// Bilimbi's Tenancy menu (`contributions.ex`): the branch stays hidden until
+// the actor may list tenants, and the route enforces the same gate itself.
+bilibi_menu::contribute!(
+    "base/tenancy",
+    bilibi_menu::MenuItem::container("admin.tenancy", "Tenancy")
+        .icon("building-library")
+        .under("admin")
+        .order(80)
+);
+bilibi_menu::contribute!(
+    "base/tenancy",
+    bilibi_menu::MenuItem::page("admin.tenancy.tenant", "Tenants", "/tenancy/tenants")
+        .under("admin.tenancy")
+        .requires(bilibi_menu::Requirement::Capability(admin::LIST))
+        .order(10)
+);
 
 /// Optional owner bindings. Missing Company/Person adapters always refuse proof;
 /// installing unrelated Core modules never implicitly makes targets trusted.

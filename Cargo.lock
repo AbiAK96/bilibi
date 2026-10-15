@@ -779,10 +779,14 @@ dependencies = [
 name = "bilibi-tenancy"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-database",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",
+ "bilibi-ui",
  "inventory",
+ "serde_json",
  "tokio-postgres",
  "uuid",
 ]

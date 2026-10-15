@@ -1,0 +1,251 @@
+//! Tenant administration (Bilimbi `Bilimbi.Base.Tenancy` `list_tenants/0`,
+//! `count_tenants/0`, `fetch_tenant/1`, `create_tenant/1`): live tenants as
+//! stable identities, and the audited create. Every read and write here takes
+//! an explicit [`OperatorProof`]; a numeric tenant id, `grant_all` or demo
+//! tenant 1 never stands in for it. The capability on top of that identity is
+//! the route's (`LIST`) or the page's (`CREATE`) to prove through the bound
+//! [`crate::OperatorAuthorizer`]; this service only refuses to run without the
+//! identity proof and re-proves it on the write's own transaction.
+use crate::{prove_operator, OperatorProof};
+use bilibi_database::{Change, Db, MutationBoundary, Result};
+use serde_json::json;
+use std::sync::Arc;
+use tokio_postgres::{GenericClient, Row};
+
+/// Platform capability: see the tenant list (`admin.tenancy.tenant.list`).
+pub const LIST: &str = "admin.tenancy.tenant.list";
+/// Platform capability: create a tenant (`admin.tenancy.tenant.create`).
+pub const CREATE: &str = "admin.tenancy.tenant.create";
+/// The longest name a tenant takes, as the source validates.
+pub const NAME_MAX: usize = 255;
+
+/// The statuses a tenant is created with. Authentication only ever admits an
+/// `active` tenant (`Authentication::authenticate`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TenantStatus {
+    Active,
+    Suspended,
+}
+impl TenantStatus {
+    pub const ALL: [TenantStatus; 2] = [TenantStatus::Active, TenantStatus::Suspended];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Suspended => "suspended",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Suspended => "Suspended",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
+}
+
+/// Stable tenant read model (Bilimbi `Tenancy.Identity`): callers receive
+/// tenant meaning, never the row. `is_platform_operator` is the explicit
+/// `platform_operator` marker, read with the row, so it can never be inferred
+/// from the id.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TenantIdentity {
+    pub id: i64,
+    pub parent_id: Option<i64>,
+    pub name: String,
+    pub status: String,
+    pub is_platform_operator: bool,
+}
+impl TenantIdentity {
+    fn from_row(row: &Row) -> Self {
+        Self {
+            id: row.get(0),
+            parent_id: row.get(1),
+            name: row.get(2),
+            status: row.get(3),
+            is_platform_operator: row.get(4),
+        }
+    }
+}
+
+/// What a create submits, before validation. `status` is text so a form can
+/// echo back an invalid choice with its error.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NewTenant {
+    pub name: String,
+    pub parent_id: Option<i64>,
+    pub status: String,
+}
+
+/// Field errors a create was refused with, in the source's wording, for the
+/// form to show in place. A refusal is an outcome, never an `Error`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TenantErrors {
+    pub name: Vec<String>,
+    pub parent_id: Vec<String>,
+    pub status: Vec<String>,
+}
+impl TenantErrors {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() && self.parent_id.is_empty() && self.status.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CreateOutcome {
+    Created(TenantIdentity),
+    Refused(TenantErrors),
+}
+
+const SELECT: &str = "SELECT t.id, t.parent_id, t.name, t.status, (o.tenant_id IS NOT NULL) \
+ FROM tenants t LEFT JOIN platform_operator o ON o.singleton AND o.tenant_id = t.id \
+ WHERE t.deleted_at IS NULL";
+
+/// Live tenants ordered by name then id, on the caller's connection or
+/// transaction. Soft-deleted tenants are omitted.
+pub async fn list_tenants(
+    client: &impl GenericClient,
+    _proof: &OperatorProof,
+) -> Result<Vec<TenantIdentity>> {
+    Ok(client
+        .query(&format!("{SELECT} ORDER BY t.name, t.id"), &[])
+        .await?
+        .iter()
+        .map(TenantIdentity::from_row)
+        .collect())
+}
+
+/// Validation the source's changeset performs, before any SQL. The parent's
+/// existence is proven on the write's transaction, not here.
+fn validate(new: &NewTenant) -> (NewTenant, TenantErrors) {
+    let mut errors = TenantErrors::default();
+    let name = new.name.trim().to_owned();
+    if name.is_empty() {
+        errors.name.push("can't be blank".into());
+    } else if name.chars().count() > NAME_MAX {
+        errors
+            .name
+            .push(format!("should be at most {NAME_MAX} character(s)"));
+    }
+    if new.status.is_empty() {
+        errors.status.push("can't be blank".into());
+    } else if TenantStatus::parse(&new.status).is_none() {
+        errors.status.push("is invalid".into());
+    }
+    if new.parent_id.is_some_and(|id| id <= 0) {
+        errors.parent_id.push("is invalid".into());
+    }
+    (
+        NewTenant {
+            name,
+            parent_id: new.parent_id,
+            status: new.status.clone(),
+        },
+        errors,
+    )
+}
+
+/// The registry service `base/tenancy.tenants`.
+pub struct Tenants {
+    db: Db,
+    boundary: Arc<MutationBoundary>,
+}
+impl Tenants {
+    pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Self {
+        Self { db, boundary }
+    }
+    pub async fn list(&self, proof: &OperatorProof) -> Result<Vec<TenantIdentity>> {
+        let client = self.db.get().await?;
+        list_tenants(&**client, proof).await
+    }
+    pub async fn count(&self, _proof: &OperatorProof) -> Result<u64> {
+        let client = self.db.get().await?;
+        let count: i64 = client
+            .query_one("SELECT count(*) FROM tenants WHERE deleted_at IS NULL", &[])
+            .await?
+            .get(0);
+        Ok(count.unsigned_abs())
+    }
+    pub async fn fetch(&self, _proof: &OperatorProof, id: i64) -> Result<Option<TenantIdentity>> {
+        if id <= 0 {
+            return Ok(None);
+        }
+        let client = self.db.get().await?;
+        Ok(client
+            .query_opt(&format!("{SELECT} AND t.id = $1"), &[&id])
+            .await?
+            .as_ref()
+            .map(TenantIdentity::from_row))
+    }
+    /// Creates a live tenant as an audited mutation. The operator identity is
+    /// re-proven on the transaction, a parent must be a live tenant, and a
+    /// refusal rolls back and reports field errors instead of failing.
+    pub async fn create(&self, proof: &OperatorProof, new: NewTenant) -> Result<CreateOutcome> {
+        let (new, mut errors) = validate(&new);
+        if !errors.is_empty() {
+            return Ok(CreateOutcome::Refused(errors));
+        }
+        let scope = proof.scope();
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .boundary
+            .begin(&mut client, scope.mutation_context("tenancy.tenant.create"))
+            .await?;
+        prove_operator(tx.sql(), scope).await?;
+        if let Some(parent) = new.parent_id {
+            let live = tx
+                .sql()
+                .query_opt(
+                    "SELECT id FROM tenants WHERE id = $1 AND deleted_at IS NULL FOR SHARE",
+                    &[&parent],
+                )
+                .await?
+                .is_some();
+            if !live {
+                errors.parent_id.push("does not exist".into());
+                tx.rollback().await?;
+                return Ok(CreateOutcome::Refused(errors));
+            }
+        }
+        let created = tx
+            .mutate(|sql| {
+                let new = new.clone();
+                Box::pin(async move {
+                    let row = sql
+                        .query_one(
+                            "INSERT INTO tenants(name, parent_id, status, created_at, updated_at) \
+                             VALUES($1, $2, $3, now(), now()) RETURNING id",
+                            &[&new.name, &new.parent_id, &new.status],
+                        )
+                        .await?;
+                    let id: i64 = row.get(0);
+                    let identity = TenantIdentity {
+                        id,
+                        parent_id: new.parent_id,
+                        name: new.name.clone(),
+                        status: new.status.clone(),
+                        is_platform_operator: false,
+                    };
+                    Ok((
+                        identity,
+                        vec![Change {
+                            kind: "tenancy.tenant".into(),
+                            id,
+                            old: serde_json::Value::Null,
+                            new: json!({
+                                "name": new.name,
+                                "parent_id": new.parent_id,
+                                "status": new.status,
+                            }),
+                        }],
+                    ))
+                })
+            })
+            .await?;
+        tx.commit().await?;
+        Ok(CreateOutcome::Created(created))
+    }
+}

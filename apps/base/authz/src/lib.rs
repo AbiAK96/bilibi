@@ -280,6 +280,23 @@ pub async fn explicitly_granted(
 ) -> Result<bool> {
     Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
 }
+/// The `base/tenancy.authorization` binding: `authorize_operator` on a pooled
+/// connection, so Tenancy's own screens decide `CREATE` without importing Authz.
+pub struct OperatorAuthorizer {
+    db: bilibi_database::Db,
+}
+impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
+    fn authorize_operator<'a>(
+        &'a self,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> bilibi_tenancy::ProofFuture<'a, bilibi_tenancy::OperatorProof> {
+        Box::pin(async move {
+            let client = self.db.get().await?;
+            authorize_operator(&**client, scope, key).await
+        })
+    }
+}
 pub async fn restrictions(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
     restrictions_for(client, scope, "companies").await
 }
@@ -305,6 +322,12 @@ inventory::submit! { bilibi_module_registry::Module {
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?,
     ))) },
+    // Tenancy sits below Authz, so Authz binds the decision its screens need.
+    bilibi_module_registry::Service {id:"base/authz.operator",factory:|services| {
+        let authorizer = Arc::new(OperatorAuthorizer { db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone() });
+        services.get::<bilibi_tenancy::Authorization>("base/tenancy.authorization")?.bind(authorizer.clone())?;
+        Ok(authorizer)
+    }},
     bilibi_module_registry::Service {id:"base/authz.pages",factory:|services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
         db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
@@ -313,6 +336,14 @@ inventory::submit! { bilibi_module_registry::Module {
     })))) }],
 } }
 
+// Tenancy's capability keys (Bilimbi `Tenancy.Contributions`): declared here
+// because the vocabulary type is Authz's and Tenancy sits below it; the keys
+// themselves are `bilibi_tenancy::admin::{LIST, CREATE}`.
+inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
+    domains:&["admin"], verbs:&["list","create"],
+    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::admin::LIST), CapabilityDefinition::platform(bilibi_tenancy::admin::CREATE)],
+    roles:&[], system_principals:&[],
+}) }
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/authz.decision-logs",
         bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},

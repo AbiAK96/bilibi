@@ -33,6 +33,12 @@ Database seed ledger. Neither path runs at app boot. The current demo tenancy
 schema requires one role instance per tenant; company-owned custom role binding
 remains K15's owner adapter, rather than a Base query of Core tables.
 
+Tenancy sits below Authz, so Authz declares Tenancy's `admin.tenancy.tenant.*`
+keys (`bilibi_tenancy::admin::{LIST, CREATE}`) and binds `OperatorAuthorizer`
+into `base/tenancy.authorization` at boot (`base/authz.operator`), the one
+`authorize_operator` decision Tenancy's own page makes. A new module below
+Authz that needs a decision extends that seam; it does not import Authz.
+
 Use `authorize_key` (or the compatibility `Capability` enum) for enforcement and
 `decide` for a reasoned decision. Unknown keys deny even grant-all holders.
 A contributed platform capability requires the persistent `platform_operator`
