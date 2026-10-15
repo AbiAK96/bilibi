@@ -73,6 +73,9 @@ pub use specimen::ComponentsSpecimen;
 pub struct Document<'a> {
     pub title: &'a str,
     pub body: &'a str,
+    /// The account's explicit `light`/`dark` choice, stamped on `<html>` so the
+    /// first paint is themed; anything else follows the device.
+    pub theme: &'a str,
 }
 
 pub const CSS: &str = include_str!("../assets/app.css");

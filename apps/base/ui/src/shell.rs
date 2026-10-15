@@ -1,6 +1,7 @@
 //! Shared authenticated chrome. Owners supply already-authorized navigation and
 //! account metadata; no identity or capability decision is made by a template.
-//! C5 binds account-persisted preferences/pins; K17 supplies affiliation labels.
+//! Theme, time display and pins are the account's own (Core User); K17
+//! supplies affiliation labels.
 use crate::Html;
 use askama::Template;
 
@@ -99,6 +100,9 @@ pub struct ShellContext<'a> {
     pub notifications: Html,
     pub home: &'a str,
     pub served_routes: String,
+    /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
+    /// limited to pages this deployment serves.
+    pub pins: String,
     pub development: bool,
     pub version: &'a str,
 }

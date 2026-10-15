@@ -1,11 +1,15 @@
 //! The signed-in account's self-service pages (Bilimbi `Core.User.Web`): the
 //! settings shell in `templates/settings.html` and `/settings/password`
-//! (`PasswordLive`). The page is live: the form submits as the
-//! `change-password` event with its field values, the state keeps the field
+//! (`PasswordLive`; `/settings/appearance` is `appearance.rs`). The password
+//! page is live: the form submits as the `change-password` event with its field values, the state keeps the field
 //! errors of the last attempt, and a success or failure shows in the page's
 //! flash group until dismissed. No capability applies: the session proves
 //! who, and the current password proves the holder inside the service.
-use crate::{password::check_policy, CredentialError, UserService};
+use crate::{
+    appearance::{self, AppearancePage, Stored},
+    password::check_policy,
+    CredentialError, UserService,
+};
 use askama::Template;
 use bilibi_database::Error;
 use bilibi_security::Scope;
@@ -31,13 +35,12 @@ pub struct SettingsEntry {
     pub href: &'static str,
 }
 
-/// The settings sections in Bilimbi's order. Profile (K16) and appearance
-/// (C5) are later slices.
+/// The settings sections in Bilimbi's order. Profile is a later slice (K16).
 pub fn settings_entries() -> Vec<SettingsEntry> {
     [
         ("profile", "Profile", ""),
         ("password", "Password", "/settings/password"),
-        ("appearance", "Appearance", ""),
+        ("appearance", "Appearance", "/settings/appearance"),
         (
             "agent-connections",
             "Agent connections",
@@ -140,27 +143,42 @@ pub struct Pages {
 impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
-            request.scope.ok_or(Error::Unauthorized)?;
-            if request.operation != "password" || !request.query.is_empty() {
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            if !request.query.is_empty() {
                 return Err(Error::NotFound);
             }
-            Ok(PageBody {
-                html: PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?,
-                live: true,
-            })
+            let html = match request.operation {
+                "password" => {
+                    PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?
+                }
+                "appearance" => {
+                    let stored = Stored::load(&self.users, scope).await?;
+                    appearance::render(&stored, FlashMap::default())?
+                }
+                _ => return Err(Error::NotFound),
+            };
+            Ok(PageBody { html, live: true })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if request.operation != "password" || !request.query.is_empty() {
+            if !request.query.is_empty() {
                 return Err(Error::NotFound);
             }
-            let state: Box<dyn LiveState<Scope, Error>> = Box::new(PasswordPage {
-                users: self.users.clone(),
-                form: PasswordForm::default(),
-                success: false,
-                failure: false,
-            });
+            let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+                "password" => Box::new(PasswordPage {
+                    users: self.users.clone(),
+                    form: PasswordForm::default(),
+                    success: false,
+                    failure: false,
+                }),
+                "appearance" => {
+                    let scope = request.scope.ok_or(Error::Unauthorized)?;
+                    let stored = Stored::load(&self.users, scope).await?;
+                    Box::new(AppearancePage::new(self.users.clone(), stored))
+                }
+                _ => return Err(Error::NotFound),
+            };
             Ok(Some(state))
         })
     }

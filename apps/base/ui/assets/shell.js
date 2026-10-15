@@ -6,11 +6,11 @@
 // mobile drawer with Escape/backdrop close and focus return, pins, the account
 // and time-display disclosures, theme projection and preference feedback.
 //
-// Seams until C5 binds account persistence: pins live in the browser under
-// Bilimbi's legacy `sidebarPinnedItems` key (nav ids), which Bilimbi's server
-// pins import on first mount, and the theme choice lives under `bilibiTheme`.
-// The time-display mode is already the account's own setting and is saved
-// through POST /preferences.
+// Theme, time-display mode and pins are the signed-in account's own, kept by
+// Core User: the server renders them (`data-theme-choice`, `data-display-mode`,
+// `data-pins`) and this file saves a choice through POST /preferences and the
+// pins through /api/pins. Nothing about them is kept in the browser, so every
+// device of the account agrees.
 (() => {
   'use strict';
 
@@ -20,8 +20,6 @@
   const MAX_WIDTH = 360;
   const DEFAULT_WIDTH = 240;
   const NAV_EXPANSION_STORAGE = 'sidebarExpandedBranches';
-  const PINNED_STORAGE = 'sidebarPinnedItems';
-  const THEME_STORAGE = 'bilibiTheme';
   const THEMES = ['light', 'dark', 'system'];
   const MODE_LABELS = {company: 'Company', local: 'Local', utc: 'UTC'};
   const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -29,14 +27,27 @@
   const read = (key) => { try { return window.localStorage.getItem(key); } catch { return null; } };
   const write = (key, value) => { try { window.localStorage.setItem(key, value); } catch { /* private mode */ } };
 
-  // An explicit light/dark choice stamps data-theme; "system" stamps nothing so
-  // prefers-color-scheme governs (assets/css/app.css).
-  const storedTheme = () => (THEMES.includes(read(THEME_STORAGE)) ? read(THEME_STORAGE) : null);
+  // An explicit light/dark choice stamps data-theme (the server stamps it on
+  // first paint); "system" stamps nothing so prefers-color-scheme governs
+  // (assets/css/app.css).
   function projectTheme(theme) {
-    if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
-    else delete document.documentElement.dataset.theme;
+    if (theme === 'light' || theme === 'dark') {
+      if (document.documentElement.dataset.theme !== theme) document.documentElement.dataset.theme = theme;
+    } else if ('theme' in document.documentElement.dataset) {
+      delete document.documentElement.dataset.theme;
+    }
   }
-  projectTheme(storedTheme());
+
+  // The signed-in account's write requests: same-origin JSON with its CSRF token.
+  function accountRequest(path, options = {}) {
+    const csrf = document.querySelector('#app-shell input[name="csrf"]')?.value || '';
+    const headers = {Accept: 'application/json', ...(options.headers || {})};
+    if (options.method && options.method !== 'GET') {
+      headers['Content-Type'] = 'application/json';
+      headers['X-CSRF-Token'] = csrf;
+    }
+    return fetch(path, {...options, headers, credentials: 'same-origin'});
+  }
 
   // One page as a workspace tree leaf, escaped as Bilimbi's Tiling layout does.
   const leaf = (page) => page.replace(/[%(),]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -128,48 +139,32 @@
       if (this.pending) return;
       const open = this.openPanel();
       const restore = (open && open.contains(origin) && this.trigger(open)) || origin;
-      if (kind === 'theme') {
-        if (!THEMES.includes(value)) return;
-        write(THEME_STORAGE, value);
-        this.root.dataset.themeChoice = value;
-        this.feedback('Theme saved on this device.');
-        this.closeAll();
-        restore?.focus();
-        return;
-      }
+      if (kind === 'theme' && !THEMES.includes(value)) return;
       this.pending = true;
-      this.feedback('Saving display preference…');
+      this.feedback(kind === 'theme' ? 'Saving theme…' : 'Saving display preference…');
       this.abort = new AbortController();
       this.timer = setTimeout(() => {
         this.abort.abort();
         this.feedback('Save could not be confirmed. Reload to check your saved preference.', true);
       }, 12000);
-      const csrf = this.root.querySelector('input[name="csrf"]')?.value || '';
-      fetch('/preferences', {
-        method: 'POST',
-        credentials: 'same-origin',
-        signal: this.abort.signal,
-        headers: {'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-Token': csrf},
-        body: JSON.stringify({kind, value}),
-      })
+      accountRequest('/preferences', {method: 'POST', signal: this.abort.signal, body: JSON.stringify({kind, value})})
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
         .then((reply) => {
+          this.root.dataset.themeChoice = reply.theme;
           this.root.dataset.displayMode = reply.mode;
-          window.dispatchEvent(new CustomEvent('bilibi:display-mode', {detail: {mode: reply.mode}}));
-          this.feedback('Time display saved.');
+          if (kind === 'timezone') window.dispatchEvent(new CustomEvent('bilibi:display-mode', {detail: {mode: reply.mode}}));
+          this.feedback(kind === 'theme' ? 'Theme saved.' : 'Time display saved.');
           this.closeAll();
         })
         .catch(() => {
           if (!this.abort.signal.aborted) {
-            this.feedback('Could not save display preference. Your previous choice is still selected. Try again.', true);
+            this.feedback(`Could not save ${kind === 'theme' ? 'theme' : 'display preference'}. Your previous choice is still selected. Try again.`, true);
           }
         })
         .finally(() => this.finish(restore));
     }
     apply() {
-      // The browser choice is authoritative until C5 renders the account's.
-      const theme = storedTheme() || this.root.dataset.themeChoice || 'system';
-      this.root.dataset.themeChoice = theme;
+      const theme = this.root.dataset.themeChoice || 'system';
       projectTheme(theme);
       const mode = this.root.dataset.displayMode;
       for (const button of this.root.querySelectorAll('[data-preference-kind]')) {
@@ -221,7 +216,8 @@
       this.hidden = read('sidebarHidden') === '1';
       this.width = this.readWidth();
       this.expandedBranches = this.readExpandedBranches();
-      this.pinnedEntries = this.readPinnedItems();
+      this.pinnedEntries = this.readRenderedPins();
+      this.pinning = false;
       this.drawerOpen = false;
       this.lastFocus = null;
       this.dragging = false;
@@ -307,36 +303,27 @@
       }
     },
 
-    // Pins are sidebar item ids (`nav-admin-company`) or {label, url} records,
-    // ordered as the person arranged them; duplicates are dropped.
-    readPinnedItems() {
+    // The account's pins, rendered by the server into `data-pins` as
+    // {id, label, url, icon, sort_order}, in the order the person arranged.
+    readRenderedPins() {
       try {
-        const stored = JSON.parse(read(PINNED_STORAGE) ?? '[]');
-        if (!Array.isArray(stored)) return [];
-        const items = stored.map((item) => this.normalizePinnedItem(item)).filter(Boolean);
-        return items.filter((item, index) =>
-          items.findIndex((candidate) => this.pinnedItemKey(candidate) === this.pinnedItemKey(item)) === index);
+        const parsed = JSON.parse(this.root.dataset.pins ?? '[]');
+        return this.acceptServerPins(parsed);
       } catch {
         return [];
       }
     },
 
-    savePinnedItems() {
-      write(PINNED_STORAGE, JSON.stringify(this.pinnedEntries.map((item) =>
-        (item.navId ? item.navId : {label: item.label, url: item.url}))));
+    acceptServerPins(pins) {
+      if (!Array.isArray(pins)) return [];
+      return pins.map((pin) => this.normalizePin(pin)).filter((pin) => pin && this.isServedUrl(pin.url));
     },
 
-    normalizePinnedItem(item) {
-      if (typeof item === 'string') {
-        const id = item.trim();
-        return id ? {navId: id} : null;
-      }
-      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-      const id = typeof item.id === 'string' ? item.id.trim() : '';
-      if (id) return {navId: id};
-      const label = typeof item.label === 'string' ? item.label.trim() : '';
-      const url = this.normalizePinnedUrl(item.url);
-      return label && url ? {label, url} : null;
+    normalizePin(pin) {
+      if (!pin || typeof pin !== 'object' || Array.isArray(pin)) return null;
+      const url = this.normalizePinnedUrl(pin.url);
+      const label = typeof pin.label === 'string' ? pin.label.trim() : '';
+      return label && url && Number.isInteger(pin.id) ? {pinId: pin.id, label, url, icon: pin.icon || null} : null;
     },
 
     normalizePinnedUrl(url) {
@@ -354,17 +341,12 @@
       }
     },
 
-    pinnedItemKey(item) {
-      if (item?.navId) return `nav:${item.navId}`;
-      if (item?.url) return `url:${item.url}`;
-      return null;
-    },
+    // A pin is identified by its page, as the server does.
+    pinnedItemKey(item) { return item?.url ?? null; },
 
-    pinnedUrl(item) {
-      if (item?.url) return this.normalizePinnedUrl(item.url);
-      if (item?.navId) return this.normalizePinnedUrl(this.navItem(item.navId)?.href);
-      return null;
-    },
+    pinnedUrl(item) { return item?.url ?? null; },
+
+    pinRequest(path, options = {}) { return accountRequest(path, options); },
 
     // Discovered page routes use `{param}` segments.
     isServedUrl(url) {
@@ -512,7 +494,7 @@
       const pin = event.target.closest('[data-nav-pin]');
       if (pin && this.root.contains(pin)) {
         event.preventDefault();
-        this.togglePinnedItem(this.normalizePinnedItem(pin.dataset.navPin));
+        this.togglePinnedItem(this.pinFromControl(pin));
         return;
       }
       const tile = event.target.closest('[data-nav-tile]');
@@ -568,23 +550,75 @@
       branch.querySelector('.app-nav-children')?.toggleAttribute('hidden', !expanded);
     },
 
-    togglePinnedItem(item) {
-      if (this.impersonating || !item) return;
-      const url = this.pinnedUrl(item);
-      if (!url || !this.isServedUrl(url)) return;
-      const existing = this.pinnedEntries.findIndex((pinned) => this.pinnedUrl(pinned) === url);
-      if (existing >= 0) this.pinnedEntries.splice(existing, 1);
-      else this.pinnedEntries.push(item);
-      this.savePinnedItems();
-      this.renderPinnedItems();
-      const label = item.navId ? this.navItem(item.navId)?.dataset.navLabel : item.label;
-      this.setPinAnnouncement(`${existing >= 0 ? 'Unpinned' : 'Pinned'} ${label}.`);
+    // The sidebar row a pin control names: its page and label.
+    pinFromControl(control) {
+      const item = this.navItem(control.dataset.navPin);
+      const url = this.normalizePinnedUrl(item?.getAttribute('href'));
+      const label = item?.dataset.navLabel;
+      return url && label ? {label, url, icon: null} : null;
+    },
+
+    // Pin or unpin a page. The server answers with the account's pins, which
+    // replace what is drawn; a failure re-reads them rather than guessing.
+    async togglePinnedItem(item) {
+      if (this.impersonating || !item || !this.isServedUrl(item.url) || this.pinning) return;
+      this.pinning = true;
+      try {
+        const response = await this.pinRequest('/api/pins/toggle', {
+          method: 'POST',
+          body: JSON.stringify({label: item.label, url: item.url, icon: item.icon || null}),
+        });
+        if (!response.ok) throw new Error(`Pin update failed with status ${response.status}`);
+        const reply = await response.json();
+        this.pinnedEntries = this.acceptServerPins(reply.pins);
+        this.renderPinnedItems();
+        this.setPinAnnouncement(`${reply.pinned ? 'Pinned' : 'Unpinned'} ${item.label}.`);
+      } catch {
+        await this.refreshPins();
+      } finally {
+        this.pinning = false;
+      }
     },
 
     removePinnedItem(key) {
-      if (this.impersonating) return;
       const item = this.pinnedEntries.find((pinned) => this.pinnedItemKey(pinned) === key);
-      if (item) this.togglePinnedItem(item);
+      return this.togglePinnedItem(item);
+    },
+
+    async refreshPins() {
+      try {
+        const response = await this.pinRequest('/api/pins');
+        if (!response.ok) throw new Error(`Pin read failed with status ${response.status}`);
+        this.pinnedEntries = this.acceptServerPins((await response.json()).pins);
+        this.renderPinnedItems();
+      } catch {
+        this.setPinAnnouncement('Unable to update pinned pages.');
+      }
+    },
+
+    async reorderServerPins(pins) {
+      const focusedKey = this.pinnedRow(document.activeElement)?.dataset.pinnedItem;
+      try {
+        const response = await this.pinRequest('/api/pins/reorder', {
+          method: 'POST',
+          body: JSON.stringify({pins: pins.map((pin) => ({id: pin.pinId}))}),
+        });
+        if (!response.ok) throw new Error(`Pin reorder failed with status ${response.status}`);
+        this.pinnedEntries = this.acceptServerPins((await response.json()).pins);
+        this.renderPinnedItems();
+        if (focusedKey) this.focusPinnedKey(focusedKey);
+      } catch {
+        await this.refreshPins();
+      }
+    },
+
+    focusPinnedKey(key) {
+      for (const row of this.pinnedItems?.querySelectorAll('[data-pinned-item]') ?? []) {
+        if (row.dataset.pinnedItem === key) {
+          row.querySelector('.app-pinned-link')?.focus();
+          break;
+        }
+      }
     },
 
     navItem(id) {
@@ -592,14 +626,18 @@
       return this.sidebar?.contains(item) ? item : null;
     },
 
-    resolvePinnedItem(pinnedItem) {
-      if (pinnedItem.navId) {
-        const item = this.navItem(pinnedItem.navId);
-        if (!item) return null;
-        return {key: this.pinnedItemKey(pinnedItem), pinnedItem, item, label: item.dataset.navLabel, url: item.href};
+    // The sidebar row of the pinned page, when the account can see one: its
+    // icon is drawn beside the pin.
+    navItemForUrl(url) {
+      for (const item of this.sidebar?.querySelectorAll('[data-nav-item]') ?? []) {
+        if (this.normalizePinnedUrl(item.getAttribute('href')) === url) return item;
       }
-      if (!this.isServedUrl(pinnedItem.url)) return null;
-      return {key: this.pinnedItemKey(pinnedItem), pinnedItem, item: null, label: pinnedItem.label, url: pinnedItem.url};
+      return null;
+    },
+
+    resolvePinnedItem(pin) {
+      if (!this.isServedUrl(pin.url)) return null;
+      return {key: this.pinnedItemKey(pin), pin, item: this.navItemForUrl(pin.url), label: pin.label, url: pin.url};
     },
 
     pinnedRow(event) {
@@ -647,7 +685,7 @@
         if (dragged && targetIndex >= 0) {
           reordered.splice(targetIndex, 0, dragged);
           this.pinnedEntries = reordered;
-          this.savePinnedItems();
+          this.reorderServerPins(reordered);
         }
       }
       this.endPinnedDrag();
@@ -672,12 +710,11 @@
       }
     },
 
-    // Pins whose page this account cannot see are not drawn (a sidebar row
-    // the server did not render resolves to nothing), but stay stored, so a
-    // restored capability brings them back.
+    // Pins to a page this deployment no longer serves are not drawn, but stay
+    // stored, so a restored page brings them back.
     renderPinnedItems() {
       if (!this.pinned || !this.pinnedItems) return;
-      const items = this.pinnedEntries.map((item) => this.resolvePinnedItem(item)).filter(Boolean);
+      const items = this.pinnedEntries.map((pin) => this.resolvePinnedItem(pin)).filter(Boolean);
       // Rebuilding is a child-list mutation that ui.js reports as `updated`,
       // which calls back here: rebuild only when the drawn pins change.
       const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url}) => [key, label, url])]);
@@ -686,7 +723,7 @@
         this.rebuildPinnedItems(items);
       }
       for (const pin of this.root.querySelectorAll('[data-nav-pin]')) {
-        const url = this.pinnedUrl(this.normalizePinnedItem(pin.dataset.navPin));
+        const url = this.pinFromControl(pin)?.url;
         const pinned = this.pinnedEntries.some((item) => url && this.pinnedUrl(item) === url);
         pin.disabled = this.impersonating;
         pin.setAttribute('aria-disabled', String(this.impersonating));
@@ -791,7 +828,7 @@
 
   // A page inside a workspace tile has no chrome; it follows the same theme.
   const FramedDisplay = {
-    mounted() { projectTheme(storedTheme() || this.el.dataset.themeChoice); },
+    mounted() { projectTheme(this.el.dataset.themeChoice); },
     updated() { this.mounted(); },
   };
 

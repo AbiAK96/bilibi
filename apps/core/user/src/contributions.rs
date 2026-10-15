@@ -13,6 +13,12 @@ inventory::submit! {
 }
 
 inventory::submit! {
+    Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+        method: Method::Get, path: "/settings/appearance", service: "core/user.pages", operation: "appearance", access: Access::SignedIn, framed: true,
+    })
+}
+
+inventory::submit! {
     Contribution::new(EMBEDS, "core/user.notifications", Provenance { module: "core/user", source: file!(), line: line!() }, &Embed {
         slot: "shell.notifications", context: EmbedContext::Shell, service: "core/user.accounts", operation: "unread", access: Access::Capability("notifications.view"),
     })

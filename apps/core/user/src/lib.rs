@@ -1,4 +1,5 @@
 //! Credentials, server sessions, and the user's notification bell.
+mod appearance;
 mod contributions;
 mod directory;
 pub mod password;

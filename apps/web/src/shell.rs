@@ -1,23 +1,31 @@
 //! The authenticated chrome around a discovered page (`bilibi_ui::AppShell`,
 //! `Framed`) and the shell's own preference write. Web decides what the shell
 //! shows from the sealed scope: the menu through the actor's effective
-//! capabilities, operator standing through the explicit proof, the clock
-//! through the actor's display policy. Base UI only renders it.
+//! capabilities, operator standing through the explicit proof, the theme,
+//! clock and pins through the account's own preferences (Core User). Base UI
+//! only renders it.
 use crate::{origin, token, App, HttpError};
 use askama::Template;
 use axum::{
     body::Bytes,
     extract::State,
-    http::{header, HeaderMap},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use bilibi_base::{authz, locale, menu, tenancy};
+use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::contributions::Method;
 use bilibi_security::Scope;
 use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, ShellContext};
+use bilibi_user::{PreferenceError, Presentation};
 use serde::Deserialize;
 use serde_json::json;
+
+/// A rendered page body and the explicit theme to stamp on `<html>`.
+pub struct Rendered {
+    pub html: String,
+    pub theme: &'static str,
+}
 
 /// Renders `body` inside the full shell, the chromeless framed root, or as is
 /// for a public page outside a frame.
@@ -28,11 +36,15 @@ pub async fn render(
     framed: bool,
     live: bool,
     body: &str,
-) -> Result<String> {
-    let preferences = match scope {
-        Some(scope) => preferences(app, scope).await?,
-        None => DisplayPreferences::default(),
+) -> Result<Rendered> {
+    let presentation = match scope {
+        Some(scope) => Some(app.user.presentation(scope).await?),
+        None => None,
     };
+    let preferences = presentation
+        .as_ref()
+        .map_or_else(DisplayPreferences::default, preferences);
+    let theme = presentation.as_ref().map_or("system", |p| p.theme);
     let html = if framed {
         Framed {
             body,
@@ -51,24 +63,25 @@ pub async fn render(
         }
         .render()
     } else {
-        return Ok(body.to_owned());
+        return Ok(Rendered {
+            html: body.to_owned(),
+            theme,
+        });
     };
-    html.map_err(|_| Error::Internal)
+    Ok(Rendered {
+        html: html.map_err(|_| Error::Internal)?,
+        theme,
+    })
 }
 
-/// The time display is the actor's saved mode over the company zone. The
-/// theme stays the browser's choice until C5 persists appearance.
-async fn preferences(app: &App, scope: &Scope) -> Result<DisplayPreferences> {
-    let client = app.db.get().await?;
-    let display = app
-        .display
-        .display(&**client, scope, None, locale::FALLBACK)
-        .await?;
-    Ok(DisplayPreferences {
-        mode: display.mode.as_str().into(),
-        timezone: display.timezone,
-        ..DisplayPreferences::default()
-    })
+/// The account's theme and time display: its own saved choices over the
+/// company zone.
+fn preferences(presentation: &Presentation) -> DisplayPreferences {
+    DisplayPreferences {
+        theme: presentation.theme.into(),
+        mode: presentation.mode.as_str().into(),
+        timezone: presentation.timezone.clone(),
+    }
 }
 
 async fn context<'a>(
@@ -95,11 +108,11 @@ async fn context<'a>(
         Err(Error::Forbidden) => Html::default(),
         Err(error) => return Err(error),
     };
-    let served: Vec<_> = app
-        .routes
-        .iter()
-        .filter(|bound| bound.route.method == Method::Get)
-        .map(|bound| bound.route.path)
+    let served = served_routes(app);
+    let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
+        .await?
+        .into_iter()
+        .filter(|pin| is_served(&served, &pin.url))
         .collect();
     let home = if served.contains(&"/dashboard") {
         "/dashboard"
@@ -121,6 +134,7 @@ async fn context<'a>(
         notifications,
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
+        pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
         development: cfg!(debug_assertions),
         version: env!("CARGO_PKG_VERSION"),
     })
@@ -172,6 +186,55 @@ fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
     }
 }
 
+/// Whether a normalized pin URL names a page this deployment serves; a route
+/// pattern's `{param}` segments match any one segment. A pin to a page that is
+/// gone stays stored but is not drawn.
+fn is_served(routes: &[&str], url: &str) -> bool {
+    let path = url.split('?').next().unwrap_or("");
+    let actual: Vec<_> = path.split('/').filter(|s| !s.is_empty()).collect();
+    routes.iter().any(|route| {
+        let pattern: Vec<_> = route.split('/').filter(|s| !s.is_empty()).collect();
+        pattern.len() == actual.len()
+            && pattern
+                .iter()
+                .zip(&actual)
+                .all(|(p, a)| p.starts_with('{') || p == a)
+    })
+}
+
+/// The session behind a write of the account's own preferences: same Origin
+/// and CSRF checks as a page write.
+async fn writer(app: &App, headers: &HeaderMap) -> std::result::Result<(String, Scope), HttpError> {
+    origin(app, headers)?;
+    let credential = token(headers)?;
+    let scope = app.security.guard(&credential).await?;
+    if headers.get("x-csrf-token").and_then(|h| h.to_str().ok()) != Some(scope.csrf.as_str()) {
+        return Err(Error::Forbidden.into());
+    }
+    Ok((credential, scope))
+}
+
+fn json_response(status: StatusCode, body: serde_json::Value) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+/// A refused value is a 422 with a stable code; every other failure keeps the
+/// host's own mapping.
+fn refusal(error: PreferenceError, code: &str) -> std::result::Result<Response, HttpError> {
+    match error {
+        PreferenceError::Invalid => Ok(json_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error": code}),
+        )),
+        PreferenceError::Other(error) => Err(error.into()),
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Preference {
@@ -179,44 +242,154 @@ struct Preference {
     value: String,
 }
 
-/// `POST /preferences`: the shell's time-display chooser. Same session,
-/// Origin and CSRF checks as a page write; the actor can only change its own
-/// mode. Replies with the saved mode.
+/// `POST /preferences`: the shell's theme and time-display choosers. The
+/// account can only change its own; replies with the saved presentation.
 pub async fn save(
     State(app): State<App>,
     headers: HeaderMap,
     body: Bytes,
 ) -> std::result::Result<Response, HttpError> {
-    origin(&app, &headers)?;
-    let credential = token(&headers)?;
-    let scope = app.security.guard(&credential).await?;
-    if headers.get("x-csrf-token").and_then(|h| h.to_str().ok()) != Some(scope.csrf.as_str()) {
-        return Err(Error::Forbidden.into());
-    }
+    let (credential, scope) = writer(&app, &headers).await?;
     let preference: Preference = serde_json::from_slice(&body).map_err(|_| Error::Invalid)?;
-    if preference.kind != "timezone" {
+    if !["theme", "timezone", "locale"].contains(&preference.kind.as_str()) {
         return Err(Error::Invalid.into());
     }
-    let mut client = app.db.get().await.map_err(Error::from)?;
-    let mut tx = app
-        .mutations
-        .begin(
-            &mut client,
-            scope.mutation_context("shell.display_preference"),
+    if let Err(error) = app
+        .user
+        .save_preference(
+            &credential,
+            &scope.csrf,
+            &preference.kind,
+            &preference.value,
         )
-        .await?;
-    let mode = app
-        .display
-        .put_mode(&mut tx, &scope, &preference.value)
-        .await?;
-    tx.commit().await?;
-    app.security
-        .sessions
-        .activity(&**client, &credential)
-        .await?;
-    Ok((
-        [(header::CONTENT_TYPE, "application/json")],
-        json!({"mode": mode.as_str()}).to_string(),
-    )
-        .into_response())
+        .await
+    {
+        return refusal(error, "invalid_preference");
+    }
+    let saved = app.user.presentation(&scope).await?;
+    Ok(json_response(
+        StatusCode::OK,
+        json!({"theme": saved.theme, "mode": saved.mode.as_str(), "timezone": saved.timezone, "locale": saved.locale}),
+    ))
+}
+
+/// The account's pins for a client that must refresh: the shell renders the
+/// same list into `data-pins`.
+pub async fn pins(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let scope = app.security.guard(&token(&headers)?).await?;
+    let client = app.db.get().await.map_err(Error::from)?;
+    let served = served_routes(&app);
+    let pins: Vec<_> = bilibi_user::list_pins(&**client, &scope)
+        .await?
+        .into_iter()
+        .filter(|pin| is_served(&served, &pin.url))
+        .collect();
+    Ok(json_response(StatusCode::OK, json!({"pins": pins})))
+}
+
+fn served_routes(app: &App) -> Vec<&'static str> {
+    app.routes
+        .iter()
+        .filter(|bound| bound.route.method == Method::Get)
+        .map(|bound| bound.route.path)
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct Toggle {
+    label: String,
+    url: String,
+    #[serde(default)]
+    icon: Option<String>,
+}
+
+/// `POST /api/pins/toggle`: pins the page, or unpins it when it is pinned.
+pub async fn toggle_pin(
+    State(app): State<App>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> std::result::Result<Response, HttpError> {
+    let (credential, scope) = writer(&app, &headers).await?;
+    let Ok(toggle) = serde_json::from_slice::<Toggle>(&body) else {
+        return Ok(json_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error": "invalid_parameters"}),
+        ));
+    };
+    match app
+        .user
+        .toggle_pin(
+            &credential,
+            &scope.csrf,
+            &toggle.label,
+            &toggle.url,
+            toggle.icon.as_deref(),
+        )
+        .await
+    {
+        Ok((pinned, pins)) => {
+            let served = served_routes(&app);
+            let pins: Vec<_> = pins
+                .into_iter()
+                .filter(|pin| is_served(&served, &pin.url))
+                .collect();
+            Ok(json_response(
+                StatusCode::OK,
+                json!({"pinned": pinned, "pins": pins}),
+            ))
+        }
+        Err(error) => refusal(error, "invalid_pin"),
+    }
+}
+
+/// A pin id from the client: a positive integer or its decimal string, bare or
+/// as `{"id": ..}`. Any other entry rejects the whole request, because a
+/// partial reorder would leave the sidebar disagreeing with the server.
+fn pin_id(entry: &serde_json::Value) -> Option<i64> {
+    match entry {
+        serde_json::Value::Object(map) => {
+            map.get("id").filter(|id| !id.is_object()).and_then(pin_id)
+        }
+        serde_json::Value::Number(number) => number.as_i64().filter(|id| *id > 0),
+        serde_json::Value::String(text) => text.parse::<i64>().ok().filter(|id| *id > 0),
+        _ => None,
+    }
+}
+
+/// `POST /api/pins/reorder`: `{"pins": [{"id": 3}, {"id": 1}]}` in the order
+/// the sidebar now shows them.
+pub async fn reorder_pins(
+    State(app): State<App>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> std::result::Result<Response, HttpError> {
+    let (credential, scope) = writer(&app, &headers).await?;
+    let ids = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| match value.get("pins") {
+            Some(serde_json::Value::Array(entries)) => {
+                entries.iter().map(pin_id).collect::<Option<Vec<_>>>()
+            }
+            _ => None,
+        });
+    let Some(ids) = ids else {
+        return Ok(json_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error": "invalid_parameters"}),
+        ));
+    };
+    match app.user.reorder_pins(&credential, &scope.csrf, &ids).await {
+        Ok(pins) => {
+            let served = served_routes(&app);
+            let pins: Vec<_> = pins
+                .into_iter()
+                .filter(|pin| is_served(&served, &pin.url))
+                .collect();
+            Ok(json_response(StatusCode::OK, json!({"pins": pins})))
+        }
+        Err(error) => refusal(error, "invalid_parameters"),
+    }
 }

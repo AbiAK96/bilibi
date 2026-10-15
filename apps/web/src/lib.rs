@@ -115,6 +115,9 @@ pub fn router(app: App) -> Router {
         )
         .route("/logout", post(logout))
         .route("/preferences", post(shell::save))
+        .route("/api/pins", get(shell::pins))
+        .route("/api/pins/toggle", post(shell::toggle_pin))
+        .route("/api/pins/reorder", post(shell::reorder_pins))
         .route("/live", get(upgrade))
         .route(media::STREAM, get(media::stream))
         .route(media::ATTACHMENT, get(media::attachment))
@@ -257,11 +260,14 @@ impl IntoResponse for HttpError {
 fn render<T: Template>(template: T) -> Result<String> {
     template.render().map_err(|_| Error::Internal)
 }
-fn document(body: &str) -> Result<Html<String>> {
-    document_titled("Bilibi", body)
+fn document(body: &str, theme: &str) -> Result<Html<String>> {
+    document_themed("Bilibi", body, theme)
 }
 fn document_titled(title: &str, body: &str) -> Result<Html<String>> {
-    Ok(Html(render(Document { title, body })?))
+    document_themed(title, body, "system")
+}
+fn document_themed(title: &str, body: &str, theme: &str) -> Result<Html<String>> {
+    Ok(Html(render(Document { title, body, theme })?))
 }
 fn token(headers: &HeaderMap) -> Result<String> {
     headers

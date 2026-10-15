@@ -237,7 +237,7 @@ async fn dispatch(
             framed,
         })
         .await?;
-    let html = crate::shell::render(
+    let shell = crate::shell::render(
         &app,
         scope.as_ref(),
         uri.path(),
@@ -253,7 +253,7 @@ async fn dispatch(
             .activity(&**client, &credential)
             .await?;
     }
-    let mut response = document(&html)?.into_response();
+    let mut response = document(&shell.html, shell.theme)?.into_response();
     if framed {
         response.headers_mut().insert(
             header::HeaderName::from_static("x-bilibi-framed"),
