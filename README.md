@@ -70,7 +70,8 @@ are explicit at login; requests and events derive the tenant from the session,
 never from client page parameters. The seed adds 62 companies to tenant `1` so
 pagination can be tried. Seeding and migrations are explicit, transactional and
 idempotent; re-seeding preserves passwords and company edits, and ensures the
-demo roles and assignments exist.
+demo roles and assignments exist. The ai@agent.my `core_admin` bootstrap runs once
+(its `user_bootstrap` receipt), so a revoked grant stays revoked.
 
 Outgoing mail goes to `.local/mailbox/` (one file per message, newest 100) unless
 `MAIL_HOST` configures an SMTP relay; see [Mail](apps/base/mail/README.md).
