@@ -1,3 +1,7 @@
+//! The `base/authz.pages` adapter: it dispatches each discovered route's
+//! operation to its screen (capabilities in `capabilities_web.rs`, roles in
+//! `roles_web.rs`) and owns the decision-log screen itself.
+//!
 //! `/authz/decision-logs` (`base/authz.pages`, operation `decision-logs`):
 //! authorization decisions, newest first, ported from Bilimbi
 //! `apps/base/authz/lib/authz/web/decision_logs_live.{ex,html.heex}`.
@@ -64,6 +68,7 @@ pub struct Pages {
     pub db: Db,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub grants: Arc<crate::grants::Grants>,
 }
 impl Pages {
     async fn view(&self, scope: &Scope, state: &mut ListState) -> Result<String> {
@@ -104,7 +109,7 @@ fn parse(values: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)
 }
 
-fn render(fragment: impl Template) -> Result<Html> {
+pub(crate) fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
 
@@ -152,9 +157,9 @@ struct ResultCell {
     source = r#"<span class="{{ class }}">{{ text }}</span>"#,
     ext = "html"
 )]
-struct TextCell<'a> {
-    class: &'a str,
-    text: &'a str,
+pub(crate) struct TextCell<'a> {
+    pub(crate) class: &'a str,
+    pub(crate) text: &'a str,
 }
 
 fn actor_label(actor_type: &str) -> &str {
@@ -329,26 +334,58 @@ struct DecisionLogs {
     state: ListState,
 }
 
+/// The role id of `/authz/roles/{id}`; anything else is the same not-found
+/// answer as a role another tenant owns.
+fn role_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
+    params::positive_id(request.path.get("id").map(String::as_str)).ok_or(Error::NotFound)
+}
+
 impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
-            if request.operation != "decision-logs" {
-                return Err(Error::NotFound);
-            }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let html = self.view(scope, &mut parse(request.query)?).await?;
+            let html = match request.operation {
+                "decision-logs" => self.view(scope, &mut parse(request.query)?).await?,
+                "capabilities" => crate::capabilities_web::view(
+                    &mut crate::capabilities_web::parse(request.query)?,
+                )?,
+                "roles" => {
+                    self.roles_view(scope, &mut crate::roles_web::parse(request.query)?)
+                        .await?
+                }
+                "role-create" => crate::roles_web::create_view()?,
+                "role" => self.role_view(scope, role_id(&request)?).await?,
+                _ => return Err(Error::NotFound),
+            };
             Ok(PageBody { html, live: true })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if request.operation != "decision-logs" {
-                return Err(Error::NotFound);
-            }
-            let state: Box<dyn LiveState<Scope, Error>> = Box::new(DecisionLogs {
-                pages: self.clone(),
-                state: parse(request.query)?,
-            });
+            let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+                "decision-logs" => Box::new(DecisionLogs {
+                    pages: self.clone(),
+                    state: parse(request.query)?,
+                }),
+                "capabilities" => Box::new(crate::capabilities_web::Capabilities {
+                    state: crate::capabilities_web::parse(request.query)?,
+                }),
+                "roles" => Box::new(crate::roles_web::Roles {
+                    pages: self.clone(),
+                    state: crate::roles_web::parse(request.query)?,
+                }),
+                "role-create" => Box::new(crate::roles_web::RoleCreate {
+                    pages: self.clone(),
+                    role: Default::default(),
+                    errors: Default::default(),
+                    created: false,
+                }),
+                "role" => Box::new(crate::roles_web::RoleShow {
+                    pages: self.clone(),
+                    id: role_id(&request)?,
+                }),
+                _ => return Err(Error::NotFound),
+            };
             Ok(Some(state))
         })
     }

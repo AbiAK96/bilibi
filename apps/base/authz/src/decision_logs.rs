@@ -172,7 +172,7 @@ pub async fn list(
 }
 
 /// Search text is literal: `%`, `_` and `\` match themselves.
-fn escape_like(text: &str) -> String {
+pub(crate) fn escape_like(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         if matches!(character, '%' | '_' | '\\') {

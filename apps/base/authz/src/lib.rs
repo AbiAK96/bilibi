@@ -1,10 +1,14 @@
 //! Live authorization, immutable contributed vocabulary, and field withholding.
+pub mod capabilities;
+mod capabilities_web;
 pub mod decision_logs;
 pub mod effective;
 pub mod field_catalog;
 pub mod fields;
 pub mod grants;
 pub mod restrictions;
+pub mod roles;
+mod roles_web;
 pub mod vocabulary;
 mod web;
 use bilibi_database::{Error, Result};
@@ -280,7 +284,7 @@ pub async fn restrictions_for(
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
     dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime"],
-    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql"))],
+    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,
@@ -292,6 +296,7 @@ inventory::submit! { bilibi_module_registry::Module {
     bilibi_module_registry::Service {id:"base/authz.pages",factory:|services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
         db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+        grants: services.get("base/authz.grants")?,
     })))) }],
 } }
 
@@ -301,6 +306,32 @@ inventory::submit! {
         &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
             service:"base/authz.pages", operation:"decision-logs", access:bilibi_module_registry::contributions::Access::Capability(decision_logs::LIST), framed:true })
 }
+macro_rules! page_route {
+    ($id:literal, $path:literal, $operation:literal, $capability:expr) => {
+        inventory::submit! {
+            bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, $id,
+                bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
+                &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:$path,
+                    service:"base/authz.pages", operation:$operation, access:bilibi_module_registry::contributions::Access::Capability($capability), framed:true })
+        }
+    };
+}
+page_route!(
+    "base/authz.capabilities",
+    "/authz/capabilities",
+    "capabilities",
+    capabilities::LIST
+);
+page_route!("base/authz.roles", "/authz/roles", "roles", roles::LIST);
+// A literal segment outranks the parameter, so "create" never reaches the
+// detail page as an id.
+page_route!(
+    "base/authz.role-create",
+    "/authz/roles/create",
+    "role-create",
+    roles::CREATE
+);
+page_route!("base/authz.role", "/authz/roles/{id}", "role", roles::VIEW);
 // Bilimbi's Authorization menu (`contributions.ex`): items join it as their
 // screens land; the container stays hidden until one is visible.
 bilibi_menu::contribute!(
@@ -308,6 +339,26 @@ bilibi_menu::contribute!(
     bilibi_menu::MenuItem::container("admin.authz", "Authorization")
         .icon("shield-check")
         .under("admin")
+        .order(20)
+);
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::page(
+        "admin.authz.capability",
+        "Capabilities",
+        "/authz/capabilities"
+    )
+    .icon("puzzle-piece")
+    .under("admin.authz")
+    .requires(bilibi_menu::Requirement::Capability(capabilities::LIST))
+    .order(10)
+);
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::page("admin.authz.role", "Roles", "/authz/roles")
+        .icon("shield-check")
+        .under("admin.authz")
+        .requires(bilibi_menu::Requirement::Capability(roles::LIST))
         .order(20)
 );
 bilibi_menu::contribute!(
