@@ -15,6 +15,23 @@ use std::sync::Arc;
 use tokio_postgres::Transaction;
 struct Owner;
 impl SubjectAdapter for Owner {
+    fn maintenance_load<'a>(
+        &'a self,
+        tx: &'a Transaction<'_>,
+        scope: &'a bilibi_authz::SystemScope,
+        id: i64,
+    ) -> OwnerFuture<'a, Subject> {
+        Box::pin(async move {
+            let row=tx.query_opt("SELECT status,version FROM workflow_reference_records WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&scope.tenant(),&id]).await?.ok_or(Error::NotFound)?;
+            Ok(Subject {
+                id,
+                tenant: scope.tenant(),
+                status: row.get(0),
+                version: row.get(1),
+                facts: json!({}),
+            })
+        })
+    }
     fn load<'a>(
         &'a self,
         tx: &'a Transaction<'_>,
@@ -80,6 +97,54 @@ impl SubjectAdapter for Owner {
             }])
         })
     }
+}
+// Two durable listeners: the second can refuse after its INSERT, so operators
+// can see the first receipt survive and the second effect roll back.
+struct SecondListener;
+static SECOND_LISTENER: SecondListener = SecondListener;
+impl bilibi_workflow::outbox::TransitionListener for Owner {
+    fn handle<'a>(
+        &'a self,
+        tx: &'a Transaction<'_>,
+        scope: &'a bilibi_authz::SystemScope,
+        event: &'a bilibi_workflow::outbox::TransitionEvent,
+    ) -> OwnerFuture<'a, Vec<Change>> {
+        Box::pin(async move { listener_effect(tx, scope, event, "first").await })
+    }
+}
+impl bilibi_workflow::outbox::TransitionListener for SecondListener {
+    fn handle<'a>(
+        &'a self,
+        tx: &'a Transaction<'_>,
+        scope: &'a bilibi_authz::SystemScope,
+        event: &'a bilibi_workflow::outbox::TransitionEvent,
+    ) -> OwnerFuture<'a, Vec<Change>> {
+        Box::pin(async move {
+            let changes = listener_effect(tx, scope, event, "second").await?;
+            let row=tx.query_one("SELECT fail_second,wait_seconds FROM workflow_reference_listener_gate WHERE singleton=true",&[]).await?;
+            let wait: i32 = row.get(1);
+            tx.query_one("SELECT pg_sleep($1::integer)", &[&wait])
+                .await?;
+            if row.get::<_, bool>(0) {
+                return Err(Error::Invalid);
+            }
+            Ok(changes)
+        })
+    }
+}
+async fn listener_effect(
+    tx: &Transaction<'_>,
+    scope: &bilibi_authz::SystemScope,
+    event: &bilibi_workflow::outbox::TransitionEvent,
+    listener: &str,
+) -> Result<Vec<Change>> {
+    let id:i64=tx.query_one("INSERT INTO workflow_reference_listener_effects(tenant_id,event_key,listener) VALUES($1,$2,$3) RETURNING id",&[&scope.tenant(),&event.event_key,&listener]).await?.get(0);
+    Ok(vec![Change {
+        kind: "reference.listener_effect".into(),
+        id,
+        old: json!(null),
+        new: json!({"event_key":event.event_key,"listener":listener}),
+    }])
 }
 impl Guard for Owner {
     fn check<'a>(
@@ -323,9 +388,26 @@ static DRIFTED_V1: Contribution = Contribution::Process(Process {
 inventory::submit! { bilibi_module_registry::Module {
     id:"extensions/workflow-reference",layer:bilibi_module_registry::Layer::Extensions,
     dependencies:&["base/workflow"],services:&[],
-    migrations:&[("workflow-reference-001","CREATE TABLE workflow_reference_records(id bigint PRIMARY KEY,tenant_id bigint NOT NULL REFERENCES tenants(id),status text NOT NULL DEFAULT 'pending',version bigint NOT NULL DEFAULT 0,action_count integer NOT NULL DEFAULT 0,facade_value integer NOT NULL DEFAULT 0)")],
+    migrations:&[("workflow-reference-001","CREATE TABLE workflow_reference_records(id bigint PRIMARY KEY,tenant_id bigint NOT NULL REFERENCES tenants(id),status text NOT NULL DEFAULT 'pending',version bigint NOT NULL DEFAULT 0,action_count integer NOT NULL DEFAULT 0,facade_value integer NOT NULL DEFAULT 0)"),
+    ("workflow-reference-002-listeners","CREATE TABLE workflow_reference_listener_effects(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,event_key text NOT NULL,listener text NOT NULL); CREATE TABLE workflow_reference_listener_gate(singleton boolean PRIMARY KEY CHECK(singleton),fail_second boolean NOT NULL DEFAULT true,wait_seconds integer NOT NULL DEFAULT 0); INSERT INTO workflow_reference_listener_gate(singleton) VALUES(true)")],
 } }
 macro_rules! register {($id:literal,$value:expr)=>{inventory::submit! { Registration::new(CONTRIBUTIONS,$id,Provenance {module:"extensions/workflow-reference",source:file!(),line:line!()},&$value) }};}
+register!(
+    "reference.listener.first",
+    Contribution::Listener(bilibi_workflow::outbox::Listener {
+        key: "reference.first",
+        subjects: &["reference.record"],
+        adapter: &OWNER
+    })
+);
+register!(
+    "reference.listener.second",
+    Contribution::Listener(bilibi_workflow::outbox::Listener {
+        key: "reference.second",
+        subjects: &["reference.record"],
+        adapter: &SECOND_LISTENER
+    })
+);
 register!(
     "reference.subject",
     Contribution::Subject {
@@ -563,6 +645,71 @@ async fn main() -> Result<()> {
     drop(client);
     let engine = services.get::<Engine>("base/workflow.engine")?;
     match command {
+        "delivery" => println!("delivery={:?}", engine.deliver_transition(id).await?),
+        "delivery-race" => {
+            let (first, second) =
+                tokio::join!(engine.deliver_transition(id), engine.deliver_transition(id));
+            println!("first={first:?} second={second:?}");
+        }
+        "maintenance" => println!(
+            "maintenance={:?}",
+            engine.maintain_workflows(&scope, 100, 30).await?
+        ),
+        "listeners-ready" | "listeners-fail" | "listeners-wait" => {
+            let client = db.get().await?;
+            let fail = command == "listeners-fail";
+            let wait = if command == "listeners-wait" {
+                30_i32
+            } else {
+                0
+            };
+            client.execute("UPDATE workflow_reference_listener_gate SET fail_second=$1,wait_seconds=$2 WHERE singleton=true",&[&fail,&wait]).await?;
+            println!("listeners fail_second={fail} wait_seconds={wait}");
+        }
+        "outbox" => {
+            let client = db.get().await?;
+            for row in client.query("SELECT history_id,event_key,attempts,delivered_at::text,last_error,lease_expires_at::text,available_at::text FROM base_workflow_transition_outbox ORDER BY id",&[]).await? {
+                println!("history={} event={} attempts={} delivered={:?} error={:?} lease_expires={:?} available={}",row.get::<_,i64>(0),row.get::<_,String>(1),row.get::<_,i32>(2),row.get::<_,Option<String>>(3),row.get::<_,Option<String>>(4),row.get::<_,Option<String>>(5),row.get::<_,String>(6));
+            }
+            for row in client.query("SELECT event_key,listener,count(*) FROM workflow_reference_listener_effects GROUP BY event_key,listener ORDER BY event_key,listener",&[]).await? {
+                println!("effect event={} listener={} count={}",row.get::<_,String>(0),row.get::<_,String>(1),row.get::<_,i64>(2));
+            }
+        }
+        "schedule-review" => {
+            let schedule = services.get::<bilibi_schedule::Schedule>("base/schedule.store")?;
+            let mut client = db.get().await?;
+            schedule
+                .review(&mut client, &scope, "base/workflow.maintenance", true)
+                .await?;
+            println!("workflow maintenance reviewed/enabled");
+        }
+        "schedule-run" => {
+            let schedule = services.get::<bilibi_schedule::Schedule>("base/schedule.store")?;
+            let mut client = db.get().await?;
+            let now = args
+                .get(3)
+                .ok_or(Error::Invalid)?
+                .parse()
+                .map_err(|_| Error::Invalid)?;
+            println!(
+                "schedule claim={:?}",
+                schedule
+                    .run_now(&mut client, &scope, "base/workflow.maintenance", now)
+                    .await?
+            );
+        }
+        "execute-queue" => {
+            let executor = bilibi_queue::execution::Executor::from_services(
+                &services,
+                bilibi_queue::execution::Config::default(),
+            )?;
+            let (shutdown, receiver) = tokio::sync::watch::channel(false);
+            let task = tokio::spawn(executor.run(receiver));
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            let _ = shutdown.send(true);
+            task.await.map_err(|_| Error::Internal)??;
+            println!("queue executor stopped");
+        }
         "init" => {
             let client = db.get().await?;
             // Disposable specimen only: initialize needs the platform operator.
@@ -642,6 +789,7 @@ async fn main() -> Result<()> {
                     services.get::<MutationBoundary>("base/database.mutations")?,
                     services.get::<Authentication>("base/tenancy.authentication")?,
                     registry,
+                    services.get("base/queue.store")?,
                 ))
             } else {
                 engine.clone()
@@ -949,6 +1097,7 @@ async fn main() -> Result<()> {
                     services.get::<MutationBoundary>("base/database.mutations")?,
                     services.get::<Authentication>("base/tenancy.authentication")?,
                     Registry::build(&entries, Some(bilibi_authz::vocabulary()?))?,
+                    services.get("base/queue.store")?,
                 ))
             } else {
                 engine.clone()

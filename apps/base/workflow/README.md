@@ -5,8 +5,8 @@ history, and immutable versioned process runs with their lifecycle and
 worker leases. Its facade accepts a sealed
 `bilibi_tenancy::Scope`, a subject kind (public key or alias) and the owner's
 record ID. It never queries an owner's table: the owner proves identity, tenant
-and current status through its `SubjectAdapter`. Durable transition delivery
-is a later slice.
+and current status through its `SubjectAdapter`. Committed transitions are
+sent through the durable outbox described below.
 
 ## Contributions
 
@@ -405,3 +405,87 @@ transition in the same transaction; the outer commit is refused and the facade
 write rolls back) and `cancel` (the transition future is dropped mid-action and
 the outer commit is refused). Repeat `show` and `history` after each refusal to
 confirm nothing was written. Running `init` again changes nothing.
+
+
+## Committed transition delivery
+
+Contribute `Contribution::Listener(outbox::Listener { key, subjects, adapter })`
+using stable listener and canonical subject keys. Boot rejects duplicate keys,
+unknown subjects and contributors that do not depend on Workflow. Listeners
+run in key order after the transition commits, under the binding tenant's live
+anonymous `SystemScope`. The historical actor is data, never authority.
+
+Use `outbox::TransitionListener::handle` for database effects in the supplied
+transaction and return all `Change` values for audit. The kernel commits a
+listener receipt with those effects and audit evidence; a subsequent listener
+failure cannot repeat an earlier successful effect. A refusal, panic, cancellation
+or audit failure rolls back that listener's effects. A restarted worker skips
+committed receipts. Perform external IO through an owner's durable outbox,
+using `TransitionEvent::event_key` for remote idempotency.
+
+A transition atomically writes owner effects, history, one
+`base_workflow_transition_outbox` row keyed by history ID and an immediate
+`base/workflow-transition-delivery` queue job. Initial records and comments
+produce no transition event. Event facts contain the stored edge and immutable
+history, including status, version, attribution, comments and time. Delivery
+resolves tenant, subject, flow and owner through history's proven binding;
+queue arguments carry only a history ID. No actor is re-created from history.
+
+Each delivery claims a five-minute database lease with a fresh token. Successful
+listener effects are fenced by that token and a row lock; an expired worker
+cannot overwrite a newer attempt. Failures retain a bounded error code and
+retry after `2^min(attempt,10)` seconds (maximum 1,024 seconds). Pending rows
+have no terminal retry limit: maintenance recovers them even if their immediate
+queue job exhausts retries or its original user is no longer eligible.
+The immediate job needs `workflow.transition.deliver` (contributed to manager;
+admin grant-all also permits it). Reconcile role contributions through the
+normal explicit seed path when upgrading.
+
+`base/workflow.maintenance` appears on `/system/schedule` with a once-per-minute
+UTC recurrence, coalesced downtime and forbidden overlap. It stays unreviewed
+and disabled until an operator enables it. The handler uses Schedule's
+execution metadata/review gate; it does not accept unscheduled arguments.
+An operator may also call `Engine::maintain_workflows(scope, batch_size,
+keep_days)` using `admin.system.schedule.execute`.
+
+Maintenance repairs running process leases and timers using the saved graph and
+fingerprint. Owners implement `SubjectAdapter::maintenance_load` to tenant-scope,
+lock and prove the owner row under a system identity; the default defers that
+owner's runs. It must only load/lock, never apply business policy or effects.
+The worker preserves owner → run → work lock order and executes no process,
+guard, action or human handler. Missing owners/definitions, changed fingerprints,
+inactive tenants and invalid graphs are skipped without changing their runs.
+Keyset pages visit every running row, so unavailable early rows cannot starve
+later ones. Completed facts remain intact and paused runs remain paused.
+
+After reconciliation, maintenance delivers up to 100 due events and removes
+up to 100 delivered rows older than `workflow.outbox.keep_days` (global integer,
+1–3,650, default 30). Receipts are removed only with their delivered event.
+Pending/leased events, status history, process events and human-action replay
+records are retained. Retention never reconstructs or replays old events.
+
+The disposable `owner` example adds these commands (the final ID is a history
+ID for delivery commands):
+
+```sh
+cargo run -p bilibi-workflow --example owner -- init
+cargo run -p bilibi-workflow --example owner -- approve 4 1
+cargo run -p bilibi-workflow --example owner -- outbox
+cargo run -p bilibi-workflow --example owner -- delivery 4 1
+cargo run -p bilibi-workflow --example owner -- outbox
+cargo run -p bilibi-workflow --example owner -- listeners-ready
+# After the printed available time, retry on two connections:
+cargo run -p bilibi-workflow --example owner -- delivery-race 4 1
+cargo run -p bilibi-workflow --example owner -- outbox
+cargo run -p bilibi-workflow --example owner -- maintenance
+```
+
+Initially the second listener inserts an effect and refuses: its insert rolls
+back, while the first effect and receipt remain. After `listeners-ready`, the
+second effect commits and each listener's count is one. Repeating delivery
+skips the delivered event. `execute-queue` runs the real queue executor for four
+seconds; `listeners-fail` restores refusal, and `listeners-wait` delays the second
+listener for 30 seconds so the operator can stop that example process and
+observe lease recovery on restart. `maintenance` also repairs expired work
+created by `start-worker`/`claim-race` and releases due timers without executing
+the work. These are real database/app commands, with no unit-test runner.
