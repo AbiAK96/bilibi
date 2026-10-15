@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 inventory.workspace = true
 sha2 = "0.11.1"
+uuid.workspace = true
 
 [dev-dependencies]
 bilibi-base = { path = ".." }

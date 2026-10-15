@@ -33,6 +33,17 @@ pub enum RunCommand {
     Supersede {
         reason: String,
     },
+    /// Owner or operator path: finish one unfinished item, even under a live
+    /// lease, whose worker then sees the terminal item. Terminal work is a no-op.
+    Waive {
+        step_key: String,
+        reason: String,
+        outcome: String,
+    },
+    Block {
+        step_key: String,
+        reason: String,
+    },
 }
 impl RunCommand {
     fn operation(&self) -> Operation {
@@ -43,6 +54,8 @@ impl RunCommand {
             Self::Pause { .. } => Operation::PauseRun,
             Self::Resume => Operation::ResumeRun,
             Self::Supersede { .. } => Operation::SupersedeRun,
+            Self::Waive { .. } => Operation::WaiveWork,
+            Self::Block { .. } => Operation::BlockWork,
         }
     }
     fn action(&self) -> &'static str {
@@ -53,6 +66,8 @@ impl RunCommand {
             Self::Pause { .. } => "workflow.process.paused",
             Self::Resume => "workflow.process.resumed",
             Self::Supersede { .. } => "workflow.process.superseded",
+            Self::Waive { .. } => "workflow.work.waived",
+            Self::Block { .. } => "workflow.work.blocked",
         }
     }
     fn validate(&self) -> Result<()> {
@@ -73,8 +88,14 @@ impl RunCommand {
                 idempotency_key,
                 ..
             } => text(name) && text(idempotency_key),
-            Self::Pause { reason } | Self::Supersede { reason } => {
-                !reason.trim().is_empty() && !reason.contains('\0') && reason.len() <= 16000
+            Self::Pause { reason } | Self::Supersede { reason } => reason_text(reason),
+            Self::Waive {
+                step_key,
+                reason,
+                outcome,
+            } => crate::definitions::key(step_key) && reason_text(reason) && text(outcome),
+            Self::Block { step_key, reason } => {
+                crate::definitions::key(step_key) && reason_text(reason)
             }
             _ => true,
         };
@@ -83,6 +104,9 @@ impl RunCommand {
         }
         Ok(())
     }
+}
+pub(super) fn reason_text(reason: &str) -> bool {
+    !reason.trim().is_empty() && !reason.contains('\0') && reason.len() <= 16000
 }
 impl Engine {
     pub async fn update_run(
@@ -153,7 +177,7 @@ impl Engine {
         })
         .await
     }
-    async fn locked_run(
+    pub(super) async fn locked_run(
         &self,
         sql: &Transaction<'_>,
         scope: &Scope,
@@ -219,15 +243,13 @@ async fn apply(
             {
                 return Err(Error::Conflict);
             }
-            let result_ref = completion
-                .result_ref
-                .as_ref()
-                .or(item.fact.result_ref.as_ref());
-            sql.execute("UPDATE base_workflow_process_work_items SET status='completed',outcome=$2,output=$3,result_ref=$4,last_error=NULL,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,completed_at=now(),updated_at=now(),version=version+1 WHERE id=$1", &[&item.fact.id, &completion.outcome, &completion.output, &result_ref]).await?;
-            changes.push(Change {kind:"workflow.process_work".into(),id:item.fact.id,old:json!({"status":item.fact.status,"version":item.fact.version}),new:json!({"status":"completed","outcome":completion.outcome,"output":completion.output,"result_ref":result_ref,"version":item.fact.version+1})});
-            append_event(sql, run, Some(item.fact.id), "work.completed", json!({"outcome":completion.outcome,"output":completion.output,"result_ref":result_ref}), changes).await?;
-            let items = load_items(sql, run, items.len() as i64, false).await?;
-            settle(sql, run, items, dependencies, changes).await
+            let finish = Finish::completed(
+                item,
+                &completion.outcome,
+                &completion.output,
+                completion.result_ref.as_deref(),
+            );
+            finish_item(sql, run, item, finish, items.len(), dependencies, changes).await
         }
         RunCommand::Signal {
             name,
@@ -353,5 +375,122 @@ async fn apply(
             .await?;
             Ok(())
         }
+        RunCommand::Waive {
+            step_key,
+            reason,
+            outcome,
+        } => {
+            administer(
+                sql,
+                run,
+                &items,
+                dependencies,
+                step_key,
+                "waived",
+                outcome,
+                reason,
+                changes,
+            )
+            .await
+        }
+        RunCommand::Block { step_key, reason } => {
+            administer(
+                sql,
+                run,
+                &items,
+                dependencies,
+                step_key,
+                "blocked",
+                "blocked",
+                reason,
+                changes,
+            )
+            .await
+        }
     }
+}
+#[allow(clippy::too_many_arguments)]
+async fn administer(
+    sql: &Transaction<'_>,
+    run: &Run,
+    items: &[Item],
+    dependencies: &[Dependency],
+    step_key: &str,
+    status: &'static str,
+    outcome: &str,
+    reason: &str,
+    changes: &mut Vec<Change>,
+) -> Result<()> {
+    let item = items
+        .iter()
+        .find(|i| i.fact.step_key == step_key)
+        .ok_or(Error::NotFound)?;
+    if TERMINAL_WORK.contains(&item.fact.status.as_str()) {
+        return Ok(());
+    }
+    let finish = Finish {
+        status,
+        outcome: outcome.into(),
+        output: None,
+        result_ref: item.fact.result_ref.clone(),
+        error: Some(reason.into()),
+        event: if status == "waived" {
+            "work.waived"
+        } else {
+            "work.blocked"
+        },
+        payload: json!({"outcome":outcome,"reason":reason}),
+    };
+    finish_item(sql, run, item, finish, items.len(), dependencies, changes).await
+}
+/// One terminal write for an unfinished item: the lease owner and token are
+/// cleared and the version is fenced, then the graph settles.
+pub(super) struct Finish {
+    pub status: &'static str,
+    pub outcome: String,
+    pub output: Option<Value>,
+    pub result_ref: Option<String>,
+    pub error: Option<String>,
+    pub event: &'static str,
+    pub payload: Value,
+}
+impl Finish {
+    pub fn completed(item: &Item, outcome: &str, output: &Value, result_ref: Option<&str>) -> Self {
+        let result_ref = result_ref
+            .map(str::to_owned)
+            .or_else(|| item.fact.result_ref.clone());
+        Self {
+            status: "completed",
+            outcome: outcome.into(),
+            output: Some(output.clone()),
+            payload: json!({"outcome":outcome,"output":output,"result_ref":result_ref}),
+            result_ref,
+            error: None,
+            event: "work.completed",
+        }
+    }
+}
+pub(super) async fn finish_item(
+    sql: &Transaction<'_>,
+    run: &Run,
+    item: &Item,
+    finish: Finish,
+    count: usize,
+    dependencies: &[Dependency],
+    changes: &mut Vec<Change>,
+) -> Result<()> {
+    let fact = &item.fact;
+    sql.execute("UPDATE base_workflow_process_work_items SET status=$2,outcome=$3,output=$4,result_ref=$5,last_error=$6,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,completed_at=now(),updated_at=now(),version=version+1 WHERE id=$1", &[&fact.id, &finish.status, &finish.outcome, &finish.output, &finish.result_ref, &finish.error]).await?;
+    changes.push(Change {kind:"workflow.process_work".into(),id:fact.id,old:json!({"status":fact.status,"version":fact.version}),new:json!({"status":finish.status,"outcome":finish.outcome,"output":finish.output,"result_ref":finish.result_ref,"version":fact.version+1})});
+    append_event(
+        sql,
+        run,
+        Some(fact.id),
+        finish.event,
+        finish.payload,
+        changes,
+    )
+    .await?;
+    let items = load_items(sql, run, count as i64, false).await?;
+    settle(sql, run, items, dependencies, changes).await
 }

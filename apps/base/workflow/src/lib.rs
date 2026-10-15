@@ -1,6 +1,6 @@
-//! Owner-proven status transitions and versioned process runs. All callbacks
-//! share the caller's audited transaction; hooks perform database effects
-//! only. Durable delivery is W6.
+//! Owner-proven status transitions, versioned process runs and worker leases.
+//! All callbacks share the caller's audited transaction; hooks perform
+//! database effects only. Durable delivery is W6.
 pub mod definitions;
 pub mod engine;
 pub mod history;
@@ -16,7 +16,10 @@ pub use process::{
     Dependency, DependencyMode, Process, ProcessAdapter, ProcessDefinition, RunFacts, Step,
     StepDefinition,
 };
-pub use runs::{Completion, Event, EventPage, Run, RunCommand, RunView, StartOptions, WorkItem};
+pub use runs::{
+    Claim, ClaimOptions, Claimed, Completion, Event, EventPage, Run, RunCommand, RunView,
+    StartOptions, WorkCommand, WorkItem, WorkView,
+};
 use serde_json::Value;
 use std::{future::Future, pin::Pin, sync::Arc};
 use tokio_postgres::Transaction;
@@ -54,6 +57,14 @@ pub enum Operation {
     PauseRun,
     ResumeRun,
     SupersedeRun,
+    /// Worker lease operations; a leaseholder's completion asks `CompleteWork`.
+    ClaimWork,
+    HeartbeatWork,
+    FailWork,
+    BlockClaimedWork,
+    /// Owner or operator finishing unfinished work with a reason.
+    WaiveWork,
+    BlockWork,
 }
 /// The owner facade accepts the kernel transaction, scopes every query, locks
 /// and rereads on `Load::Lock`, and enforces live record policy even on edges

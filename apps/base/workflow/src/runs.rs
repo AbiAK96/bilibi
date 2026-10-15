@@ -18,6 +18,9 @@ use tokio_postgres::{Row, Transaction};
 #[path = "coordination.rs"]
 mod coordination;
 pub use coordination::{Completion, RunCommand};
+#[path = "leases.rs"]
+mod leases;
+pub use leases::{Claim, ClaimOptions, Claimed, WorkCommand, WorkView};
 
 const TERMINAL_WORK: [&str; 4] = ["completed", "failed", "waived", "blocked"];
 const WORK_STATUSES: [&str; 7] = [
@@ -692,6 +695,9 @@ async fn settle(
     if run.status != "running" {
         return Ok(());
     }
+    if expire_leases(sql, run, &items, changes).await? {
+        items = load_items(sql, run, items.len() as i64, false).await?;
+    }
     loop {
         let mut changed = false;
         for index in 0..items.len() {
@@ -773,6 +779,57 @@ async fn settle(
     )
     .await?;
     finish_run(sql, run, &items, changes).await
+}
+/// A lease whose expiry has passed loses its owner and token and its version
+/// is fenced, so neither the old worker nor a completion read before expiry
+/// can write it. The final attempt fails the item; otherwise it is requeued
+/// at once. A live lease is never touched, and the facts survive any restart
+/// because they are only ever read from the saved rows.
+async fn expire_leases(
+    sql: &Transaction<'_>,
+    run: &Run,
+    items: &[Item],
+    changes: &mut Vec<Change>,
+) -> Result<bool> {
+    let mut expired = false;
+    for item in items.iter().filter(|i| i.fact.status == "leased") {
+        let fact = &item.fact;
+        let final_attempt = fact.attempts >= fact.max_attempts;
+        let (status, reason, kind) = if final_attempt {
+            (
+                "failed",
+                "Worker lease expired after the final attempt.",
+                "work.lease_expired_failed",
+            )
+        } else {
+            (
+                "pending",
+                "Worker lease expired; work returned to the queue.",
+                "work.lease_expired_requeued",
+            )
+        };
+        let updated = sql.execute("UPDATE base_workflow_process_work_items SET status=$2,outcome=CASE WHEN $3 THEN 'failed' ELSE outcome END,output=CASE WHEN $3 THEN NULL ELSE output END,completed_at=CASE WHEN $3 THEN now() ELSE completed_at END,available_at=CASE WHEN $3 THEN available_at ELSE now() END,last_error=$4,lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,heartbeat_at=NULL,updated_at=now(),version=version+1 WHERE id=$1 AND status='leased' AND lease_expires_at<=now()", &[&fact.id, &status, &final_attempt, &reason]).await?;
+        if updated == 0 {
+            continue;
+        }
+        expired = true;
+        changes.push(Change {
+            kind: "workflow.process_work".into(),
+            id: fact.id,
+            old: json!({"status":"leased","version":fact.version}),
+            new: json!({"status":status,"reason":reason,"version":fact.version+1}),
+        });
+        append_event(
+            sql,
+            run,
+            Some(fact.id),
+            kind,
+            json!({"attempt":fact.attempts}),
+            changes,
+        )
+        .await?;
+    }
+    Ok(expired)
 }
 async fn finish_run(
     sql: &Transaction<'_>,
