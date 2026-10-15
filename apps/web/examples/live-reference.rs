@@ -1,5 +1,12 @@
 //! Manual live-protocol specimen, deliberately separate from product routes.
 //! Run with an isolated, migrated/demo-seeded DATABASE_URL and APP_ORIGIN.
+//!
+//! `/live-reference` is a framed-capable page with two counter panels, a scratch
+//! note form, a scroll box and an iframe island. The island at
+//! `/live-reference/island` is its own live page with its own count, so a count
+//! that survives parent patches proves the frame's document was never replaced.
+//! Rapid clicks on a counter, an unsubmitted note across the 15-second refresh
+//! and a scrolled box across an announcement are the browser-adapter checks.
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
     contributions::{Access, Contribution, Embed, EmbedContext, Method, Route, EMBEDS, ROUTES},
@@ -16,40 +23,81 @@ use tokio::sync::broadcast;
 struct Reference {
     changes: broadcast::Sender<Change>,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Page,
+    Counter(&'static str),
+    Island,
+}
 struct ReferenceState {
-    id: Option<&'static str>,
+    kind: Kind,
     count: u64,
+    note: String,
     changes: broadcast::Sender<Change>,
 }
-fn body(id: Option<&str>, count: u64) -> String {
-    match id {
-        None => "<section id=live-reference><h1>Live page and panels</h1><p>Each panel owns its count. An announcement refreshes both through a recipient-scoped subscription.</p><button type=button data-event=announce>Announce to panels</button><div id=counter-a></div><div id=counter-b></div></section>".into(),
-        Some(id) => format!("<section id={id}><h2>{id}</h2><p data-count>{count}</p><button type=button data-event=increment data-target={id}>Increment</button></section>"),
+fn escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+fn body(kind: Kind, count: u64, note: &str) -> String {
+    match kind {
+        Kind::Page => {
+            let lines = (1..=40)
+                .map(|n| format!("<p>Scroll line {n}</p>"))
+                .collect::<String>();
+            format!(
+                "<section id=live-reference><h1>Live page and panels</h1>\
+<p>Each panel owns its count. An announcement refreshes both through a recipient-scoped subscription.</p>\
+<button type=button data-event=announce>Announce to panels</button>\
+<div id=counter-a></div><div id=counter-b></div>\
+<form id=reference-note data-event=note class=\"mt-4\"><label>Scratch note <input name=note value=\"{note}\"></label> <button data-working=\"Keeping…\">Keep</button></form>\
+<p data-note-stored>Stored note: {note}</p>\
+<div id=reference-scroll class=\"mt-4 max-h-48 overflow-y-auto border border-line rounded-md p-2\">{lines}</div>\
+<iframe id=reference-island src=/live-reference/island title=\"Island\" class=\"mt-4 w-full h-24 border border-line rounded-md\"></iframe>\
+</section>",
+                note = escape(note)
+            )
+        }
+        Kind::Counter(id) => format!(
+            "<section id={id}><h2>{id}</h2><p data-count>{count}</p><button type=button data-event=increment data-target={id}>Increment</button></section>"
+        ),
+        Kind::Island => format!(
+            "<section id=island><h2>Island</h2><p data-count>{count}</p><button type=button data-event=increment>Increment island</button></section>"
+        ),
     }
 }
 impl Page<Scope, Error> for Reference {
-    fn render<'a>(&'a self, _request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
-        Box::pin(async {
+    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
+        Box::pin(async move {
+            let kind = match request.operation {
+                "island" => Kind::Island,
+                _ => Kind::Page,
+            };
             Ok(PageBody {
-                html: body(None, 0),
+                html: body(kind, 0, ""),
                 live: true,
             })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            let id = match request.operation {
-                "page" => None,
+            let kind = match request.operation {
+                "page" => Kind::Page,
+                "island" => Kind::Island,
                 "counter" => match request.path.get("id").map(String::as_str) {
-                    Some("counter-a") => Some("counter-a"),
-                    Some("counter-b") => Some("counter-b"),
+                    Some("counter-a") => Kind::Counter("counter-a"),
+                    Some("counter-b") => Kind::Counter("counter-b"),
                     _ => return Err(Error::Invalid),
                 },
                 _ => return Err(Error::NotFound),
             };
             let state: Box<dyn LiveState<Scope, Error>> = Box::new(ReferenceState {
-                id,
+                kind,
                 count: 0,
+                note: String::new(),
                 changes: self.changes.clone(),
             });
             Ok(Some(state))
@@ -64,12 +112,14 @@ impl LiveState<Scope, Error> for ReferenceState {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) if values.is_empty() => {}
                 LiveInput::Event(value)
-                    if value == &serde_json::json!({"type":"increment"}) && self.id.is_some() =>
+                    if value == &serde_json::json!({"type":"increment"})
+                        && self.kind != Kind::Page =>
                 {
                     self.count += 1;
                 }
                 LiveInput::Event(value)
-                    if value == &serde_json::json!({"type":"announce"}) && self.id.is_none() =>
+                    if value == &serde_json::json!({"type":"announce"})
+                        && self.kind == Kind::Page =>
                 {
                     let _ = self.changes.send(Change {
                         tenant: request.scope.tenant(),
@@ -77,17 +127,31 @@ impl LiveState<Scope, Error> for ReferenceState {
                     });
                     notice = "Recipient-scoped announcement".into();
                 }
+                LiveInput::Event(value)
+                    if value.get("type") == Some(&serde_json::json!("note"))
+                        && self.kind == Kind::Page =>
+                {
+                    let note = value
+                        .get("note")
+                        .and_then(|v| v.as_str())
+                        .ok_or(Error::Invalid)?;
+                    if note.chars().count() > 200 {
+                        return Err(Error::Invalid);
+                    }
+                    self.note = note.to_owned();
+                    notice = "Note kept".into();
+                }
                 _ => return Err(Error::Invalid),
             }
             Ok(LiveBody {
-                html: body(self.id, self.count),
+                html: body(self.kind, self.count, &self.note),
                 notice,
                 ..LiveBody::default()
             })
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
-        if self.id.is_some() {
+        if self.kind != Kind::Page {
             return Vec::new();
         }
         ["counter-a", "counter-b"]
@@ -101,7 +165,7 @@ impl LiveState<Scope, Error> for ReferenceState {
             .collect()
     }
     fn subscriptions(&mut self) -> Vec<Subscription> {
-        if self.id.is_none() {
+        if !matches!(self.kind, Kind::Counter(_)) {
             return Vec::new();
         }
         vec![Subscription {
@@ -122,6 +186,11 @@ inventory::submit! {
 inventory::submit! {
     Contribution::new(ROUTES, "extensions/live_reference.page", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route {
         method:Method::Get, path:"/live-reference", service:"extensions/live_reference.pages", operation:"page", access:Access::SignedIn, framed:true,
+    })
+}
+inventory::submit! {
+    Contribution::new(ROUTES, "extensions/live_reference.island", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route {
+        method:Method::Get, path:"/live-reference/island", service:"extensions/live_reference.pages", operation:"island", access:Access::SignedIn, framed:true,
     })
 }
 inventory::submit! {
