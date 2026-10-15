@@ -1,6 +1,7 @@
 //! Module-owned agent discovery and read dispatch. Production host adapters use
 //! this service; they must authenticate a fresh sealed Scope at every request.
 pub mod json;
+pub mod mcp;
 pub mod plans;
 pub mod reach;
 mod reference;

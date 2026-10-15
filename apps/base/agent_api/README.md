@@ -18,8 +18,12 @@ entries retain source provenance and materialized schemas.
 The host passes a fresh sealed `tenancy::Scope` authenticated through the live
 account/session or credential owner. E1 deliberately uses the existing proven
 account actor; K9 supplies Person/Organisation facets. The production OAuth/HTTP
-adapter is the host's `/api/v1` edge (`apps/web/src/api.rs`). System scopes cannot enter this API. Never deserialize a
-scope, infer an actor from operation input, or cache reach across requests.
+adapters are the host's `/api/v1` edge (`apps/web/src/api.rs`) and `/mcp`
+(`apps/web/src/mcp.rs`), the latter speaking the stateless protocol adapter in
+[src/mcp.rs](src/mcp.rs): six generic tools over this same registry and plan
+service, with the host supplying a per-request `Session`. System scopes cannot
+enter this API. Never deserialize a scope, infer an actor from operation input,
+or cache reach across requests.
 
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally

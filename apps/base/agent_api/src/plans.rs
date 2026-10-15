@@ -313,16 +313,33 @@ fn binding(identity: &PlanIdentity) -> Result<String> {
 }
 
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_settings::{Definition, ScopeKind, Setting, ValueType};
+use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType};
+// Operator-editable in the Settings editor, as in Bilimbi; the MCP limit sits
+// beside them in `mcp.rs`.
 macro_rules! plan_setting {
-    ($key:literal,$default:literal,$min:literal,$max:literal) => {
+    ($key:literal,$default:literal,$min:literal,$max:literal,$label:literal,$help:literal) => {
         inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS,$key,Provenance {module:"base/agent_api",source:file!(),line:line!()}, &Setting::Definition(Definition {
-            value_type:ValueType::Integer,scopes:&[ScopeKind::Global],default:||json!($default),nullable:false,encrypted:false,minimum:Some($min),maximum:Some($max),validator:None,editor:None,
+            value_type:ValueType::Integer,scopes:&[ScopeKind::Global],default:||json!($default),nullable:false,encrypted:false,minimum:Some($min),maximum:Some($max),validator:None,
+            editor:Some(Editor { group:"Agent API", label:$label, help:$help, capability:None, reveal_duration_ms:5_000 }),
         })) }
     };
 }
-plan_setting!("agent_api.plan_expiry_seconds", 600, 60.0, 3600.0);
-plan_setting!("agent_api.plan_max_operations", 20, 1.0, 100.0);
+plan_setting!(
+    "agent_api.plan_expiry_seconds",
+    600,
+    60.0,
+    3600.0,
+    "Agent plan lifetime",
+    "Seconds to review and commit an agent write plan."
+);
+plan_setting!(
+    "agent_api.plan_max_operations",
+    20,
+    1.0,
+    100.0,
+    "Operations per agent plan",
+    "Maximum number of writes in one reviewed plan."
+);
 
 // Explicitly sort at every depth, even if another crate enables preserve_order.
 fn canonical(value: &Value) -> Value {
