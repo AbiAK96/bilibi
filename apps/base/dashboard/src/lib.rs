@@ -13,11 +13,15 @@ use bilibi_module_registry::{
     contributions::{Embed, EmbedContext, EMBEDS},
     Catalog, Consumer, Entry, RegistryError,
 };
+use bilibi_settings::{Definition, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
 use bilibi_tenancy::Scope;
 use bilibi_ui::page::PageRequest;
-use bilibi_settings::{Definition, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub const ENTRIES: &str = "base/dashboard.entries";
 /// Per-account grid arrangement: ordered entry ids. Declared here until a
@@ -197,7 +201,9 @@ pub fn panel_id(entry: &str) -> String {
 fn valid_entry_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 90
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
 
 /// What the dashboard tells a panel when it mounts it, carried in the server
@@ -338,8 +344,8 @@ inventory::submit! {
     }
 }
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "dashboard.index",
-    Provenance { module: "base/dashboard", source: file!(), line: line!() },
-    &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/dashboard", service: "base/dashboard.pages", operation: "index", access: bilibi_module_registry::contributions::Access::SignedIn, framed: true }) }
+Provenance { module: "base/dashboard", source: file!(), line: line!() },
+&bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/dashboard", service: "base/dashboard.pages", operation: "index", access: bilibi_module_registry::contributions::Access::SignedIn, framed: true }) }
 bilibi_menu::contribute!(
     "base/dashboard",
     bilibi_menu::MenuItem::page("dashboard", "Dashboard", "/dashboard")

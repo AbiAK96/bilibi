@@ -144,7 +144,13 @@ impl Core {
             .await?;
         let ids: Vec<_> = entries.iter().map(|widget| widget.id).collect();
         self.settings
-            .put(&mut tx, scope, Target::User { company: None }, key, json!(ids))
+            .put(
+                &mut tx,
+                scope,
+                Target::User { company: None },
+                key,
+                json!(ids),
+            )
             .await?;
         tx.commit().await
     }
@@ -154,20 +160,40 @@ impl Core {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Event {
     ToggleLayoutEdit,
-    AddWidget { id: String },
-    RemoveWidget { id: String },
-    MoveUp { id: String },
-    MoveDown { id: String },
+    AddWidget {
+        id: String,
+    },
+    RemoveWidget {
+        id: String,
+    },
+    MoveUp {
+        id: String,
+    },
+    MoveDown {
+        id: String,
+    },
     /// The drag hook pushes the DOM order after a drop. The browser is not the
     /// source of truth: an order that is not exactly a permutation of the
     /// current ids is ignored, never persisted.
-    ReorderWidgets { ids: Vec<String> },
-    AddSection { id: String },
-    RemoveSection { id: String },
-    MoveSectionUp { id: String },
-    MoveSectionDown { id: String },
+    ReorderWidgets {
+        ids: Vec<String>,
+    },
+    AddSection {
+        id: String,
+    },
+    RemoveSection {
+        id: String,
+    },
+    MoveSectionUp {
+        id: String,
+    },
+    MoveSectionDown {
+        id: String,
+    },
     #[serde(rename = "clear-flash")]
-    ClearFlash { key: String },
+    ClearFlash {
+        key: String,
+    },
 }
 
 struct Dash {
@@ -194,13 +220,23 @@ impl Dash {
         match event {
             Event::ToggleLayoutEdit => self.editing = !self.editing,
             Event::ClearFlash { key } => {
-                if self.flash.as_ref().is_some_and(|(kind, _)| kind.name() == key) {
+                if self
+                    .flash
+                    .as_ref()
+                    .is_some_and(|(kind, _)| kind.name() == key)
+                {
                     self.flash = None;
                 }
             }
             Event::AddWidget { id } => {
-                self.add(scope, LAYOUT, &mut arrangement.grid, &arrangement.spare_grid, &id)
-                    .await?
+                self.add(
+                    scope,
+                    LAYOUT,
+                    &mut arrangement.grid,
+                    &arrangement.spare_grid,
+                    &id,
+                )
+                .await?
             }
             Event::AddSection { id } => {
                 self.add(
@@ -213,14 +249,23 @@ impl Dash {
                 .await?
             }
             Event::RemoveWidget { id } => {
-                self.remove(scope, LAYOUT, &mut arrangement.grid, &id, Some("Widget removed."))
-                    .await?
+                self.remove(
+                    scope,
+                    LAYOUT,
+                    &mut arrangement.grid,
+                    &id,
+                    Some("Widget removed."),
+                )
+                .await?
             }
             Event::RemoveSection { id } => {
                 self.remove(scope, SECTIONS, &mut arrangement.sections, &id, None)
                     .await?
             }
-            Event::MoveUp { id } => self.step(scope, LAYOUT, &mut arrangement.grid, &id, -1).await?,
+            Event::MoveUp { id } => {
+                self.step(scope, LAYOUT, &mut arrangement.grid, &id, -1)
+                    .await?
+            }
             Event::MoveDown { id } => {
                 self.step(scope, LAYOUT, &mut arrangement.grid, &id, 1)
                     .await?
@@ -246,7 +291,11 @@ impl Dash {
                         .filter_map(|id| current.iter().find(|w| w.id == id))
                         .copied()
                         .collect();
-                    if reordered.iter().map(|w| w.id).ne(current.iter().map(|w| w.id)) {
+                    if reordered
+                        .iter()
+                        .map(|w| w.id)
+                        .ne(current.iter().map(|w| w.id))
+                    {
                         self.core.persist(scope, LAYOUT, &reordered).await?;
                         arrangement.grid = reordered;
                     }
