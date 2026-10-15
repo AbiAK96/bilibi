@@ -21,6 +21,15 @@
 //! Back and Forward within the workspace arrive as params (`data-history`),
 //! and the tree read back is reconciled with the one on screen, so the frames
 //! that stay keep their documents.
+//!
+//! Tiles talk through the follow channel (base/ui `src/workspace.rs`). A tile
+//! showing one record's page can follow selections: the tree keeps that page's
+//! route pattern (`/companies/42>/companies/:id`), and when a page in any tile
+//! announces a record of the module that owns the pattern, this page fills the
+//! id in, records the new path and tells the hook to send the frame there
+//! (`tile_navigate`). The kinds the tiles follow are rendered as
+//! `data-follows`, which the hook passes to every frame, so a list whose kind
+//! is followed selects instead of navigating.
 use crate::layout::{At, Direction, Layout, Leaf, Node, Rect, Side, DEFAULT_VIEWPORT};
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
@@ -46,11 +55,12 @@ const WORKSPACE: &str = "/workspace";
 struct Core {
     db: Db,
     menu: Arc<Menu>,
-    routes: Vec<&'static Route>,
+    /// Every discovered route with the module that contributes it.
+    routes: Vec<(&'static str, &'static Route)>,
 }
 pub struct Pages(Arc<Core>);
 impl Pages {
-    pub fn new(db: Db, menu: Arc<Menu>, routes: Vec<&'static Route>) -> Self {
+    pub fn new(db: Db, menu: Arc<Menu>, routes: Vec<(&'static str, &'static Route)>) -> Self {
         Self(Arc::new(Core { db, menu, routes }))
     }
 }
@@ -101,6 +111,7 @@ impl Core {
         let segments: Vec<_> = path.split('/').collect();
         self.routes
             .iter()
+            .map(|(_, route)| *route)
             .filter(|route| route.method == Method::Get)
             .filter_map(|route| {
                 let pattern: Vec<_> = route.path.split('/').collect();
@@ -119,10 +130,44 @@ impl Core {
                         return None;
                     }
                 }
-                Some((literal, *route))
+                Some((literal, route))
             })
             .max_by_key(|(literal, _)| *literal)
             .map(|(_, route)| route)
+    }
+
+    /// The route pattern a tile at `path` may follow: its page's own pattern
+    /// when that names one record, such as `/companies/:id`.
+    fn follow_pattern(&self, path: &str) -> Option<String> {
+        let route = self.route(path).filter(|route| route.framed)?;
+        let pattern = pattern(route.path);
+        crate::layout::follow_pattern(&pattern).then_some(pattern)
+    }
+
+    /// The module that owns the page `pattern` names: the kind of record a
+    /// tile following it goes to.
+    fn pattern_kind(&self, pattern: &str) -> Option<&'static str> {
+        self.routes
+            .iter()
+            .find(|(_, route)| {
+                route.method == Method::Get && route.framed && self::pattern(route.path) == pattern
+            })
+            .map(|(module, _)| *module)
+    }
+
+    /// The kinds the tiles of `layout` follow, each once.
+    fn follow_kinds(&self, layout: &Layout) -> Vec<&'static str> {
+        let mut kinds = Vec::new();
+        for kind in layout
+            .follows()
+            .into_iter()
+            .filter_map(|pattern| self.pattern_kind(pattern))
+        {
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        kinds
     }
 
     fn reach(&self, standing: &Standing, path: &str) -> Reach {
@@ -213,6 +258,19 @@ enum Event {
     OpenAlone {
         id: String,
     },
+    /// The tiling mode's `w`: follow the records other tiles select.
+    FollowTile {
+        id: String,
+    },
+    UnfollowTile {
+        id: String,
+    },
+    /// A page in a tile opened or selected a record. The hook checked it came
+    /// from one of this workspace's frames; it is checked again here.
+    RecordSelected {
+        kind: String,
+        id: String,
+    },
     ToggleMonocle {
         id: Option<String>,
     },
@@ -258,6 +316,8 @@ struct Workspace {
     flash: Option<(StatusKind, String)>,
     /// A full navigation the next reply asks for instead of a patch.
     leave: Option<String>,
+    /// Pushes to the Tiling hook the next reply carries.
+    pushes: Vec<(&'static str, serde_json::Value)>,
     /// The names the frames report, by tile id; a tile is named by its path
     /// until its page reports.
     titles: HashMap<String, String>,
@@ -284,6 +344,7 @@ impl Workspace {
             picker_for: None,
             flash: None,
             leave: None,
+            pushes: Vec::new(),
             titles: HashMap::new(),
         };
         if framed {
@@ -301,19 +362,26 @@ impl Workspace {
         }
         workspace.keep_focus();
         if let Some(path) = query.get("open") {
-            if crate::layout::page_path(path)
-                && !workspace_page(path)
-                && core.reach(standing, path) == Reach::Open
-            {
-                workspace.tile(path, At::Largest);
-            } else {
-                workspace.flash = Some((
-                    StatusKind::Error,
-                    format!("{path} cannot be opened in a tile."),
-                ));
-            }
+            workspace.open_page(core, standing, path);
         }
         workspace
+    }
+
+    /// Tiles `path` in place: it takes half of the largest tile. It accepts
+    /// what a tile shows, a served page this account may open, except the
+    /// workspace itself.
+    fn open_page(&mut self, core: &Core, standing: &Standing, path: &str) {
+        if crate::layout::page_path(path)
+            && !workspace_page(path)
+            && core.reach(standing, path) == Reach::Open
+        {
+            self.tile(path, At::Largest);
+        } else {
+            self.flash = Some((
+                StatusKind::Error,
+                format!("{path} cannot be opened in a tile."),
+            ));
+        }
     }
 
     fn tile(&mut self, path: &str, at: At<'_>) {
@@ -448,6 +516,54 @@ impl Workspace {
                     }
                 }
             }
+            // The tile follows the pattern of the page it shows now, so the
+            // choice is made on a record the person can see. The key is the
+            // only way to ask, so a page with nothing to follow says so.
+            Event::FollowTile { id } => {
+                if let Some(path) = self.layout.fetch_leaf(&id).map(|leaf| leaf.path.clone()) {
+                    match core.follow_pattern(&path) {
+                        Some(pattern) => self.layout.follow(&id, Some(&pattern)),
+                        None => {
+                            self.flash = Some((
+                                StatusKind::Info,
+                                "This tile's page shows no single record, so there is nothing for it to follow. Open a record in the tile first."
+                                    .into(),
+                            ))
+                        }
+                    }
+                }
+            }
+            Event::UnfollowTile { id } => self.layout.follow(&id, None),
+            // Every tile following a pattern of the module that owns the
+            // record goes to that record's page, unless it is there already.
+            Event::RecordSelected { kind, id } => {
+                if !bilibi_ui::workspace::fact(&kind, &id) {
+                    return;
+                }
+                let moves: Vec<(String, String)> = self
+                    .layout
+                    .leaves()
+                    .into_iter()
+                    .filter_map(|leaf| {
+                        let pattern = leaf.follow.as_deref()?;
+                        if core.pattern_kind(pattern) != Some(kind.as_str()) {
+                            return None;
+                        }
+                        let path = fill_pattern(pattern, &id);
+                        let current = leaf.path.split(['?', '#']).next().unwrap_or_default();
+                        (current != path && core.route(&path).is_some())
+                            .then(|| (leaf.id.clone(), path))
+                    })
+                    .collect();
+                for (tile, path) in moves {
+                    self.layout.update_path(&tile, &path);
+                    self.titles.remove(&tile);
+                    self.pushes.push((
+                        "tile_navigate",
+                        serde_json::json!({ "id": tile, "path": path }),
+                    ));
+                }
+            }
             Event::ToggleMonocle { id } => {
                 if let Some(id) = id {
                     self.focus(&id);
@@ -568,6 +684,14 @@ impl Workspace {
                     hidden: self.monocle && !focused,
                     master: master_id.as_deref() == Some(leaf.id.as_str()),
                     following: leaf.follow.is_some(),
+                    // "on" while the tile follows, which is what the mode's `w`
+                    // reads to stop; "off" when its page names a record it
+                    // could follow; nothing for any other page.
+                    follow: if leaf.follow.is_some() {
+                        Some("on")
+                    } else {
+                        core.follow_pattern(&leaf.path).map(|_| "off")
+                    },
                     reach,
                     refusal: match reach {
                         Reach::Open => None,
@@ -651,6 +775,7 @@ impl Workspace {
         };
         WorkspaceView {
             flash,
+            follows: core.follow_kinds(&self.layout).join(" "),
             focused: self.focused.clone().unwrap_or_default(),
             monocle: self.monocle,
             mode: if self.master { "master" } else { "dwindle" },
@@ -670,6 +795,46 @@ impl Workspace {
         .render()
         .map_err(internal)
     }
+}
+
+/// A route path in the tree's pattern form: `/companies/{id}` is
+/// `/companies/:id`, as Bilimbi writes it in a saved layout.
+fn pattern(route: &str) -> String {
+    route
+        .split('/')
+        .map(
+            |segment| match segment.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+                Some(name) => format!(":{name}"),
+                None => segment.to_owned(),
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// `pattern` with its one parameter filled by `id`, percent-encoded.
+fn fill_pattern(pattern: &str, id: &str) -> String {
+    let segment: String = id
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    pattern
+        .split('/')
+        .map(|part| {
+            if part.starts_with(':') {
+                segment.as_str()
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn workspace_page(path: &str) -> bool {
@@ -724,6 +889,7 @@ struct TileView {
     hidden: bool,
     master: bool,
     following: bool,
+    follow: Option<&'static str>,
     reach: Reach,
     refusal: Option<EmptyState>,
 }
@@ -748,6 +914,9 @@ struct HandleView {
 #[template(path = "workspace.html")]
 struct WorkspaceView<'a> {
     flash: FlashMap<'a>,
+    /// The kinds some tile follows, space separated, for the hook to pass to
+    /// every frame.
+    follows: String,
     focused: String,
     monocle: bool,
     mode: &'static str,
@@ -812,10 +981,15 @@ impl LiveState<Scope, Error> for Mounted {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
+                    // `open` arrives from the sidebar's tile control as a patch
+                    // of this address; it is applied to the reconciled tree, so
+                    // the tiles on screen keep their ids and frames.
+                    let mut values = values.clone();
+                    let open = values.remove("open");
                     let framed = self.workspace.framed;
                     let previous = std::mem::replace(
                         &mut self.workspace,
-                        Workspace::load(&self.core, &standing, values, framed),
+                        Workspace::load(&self.core, &standing, &values, framed),
                     );
                     // A tree read back from the address keeps the frames on screen.
                     self.workspace.layout =
@@ -830,6 +1004,9 @@ impl LiveState<Scope, Error> for Mounted {
                     self.workspace.monocle = previous.monocle
                         && self.workspace.focused == previous.focused
                         && self.workspace.layout.count() > 1;
+                    if let Some(path) = open.filter(|_| !framed) {
+                        self.workspace.open_page(&self.core, &standing, &path);
+                    }
                 }
                 LiveInput::Event(value) => {
                     let event: Event =
@@ -838,6 +1015,7 @@ impl LiveState<Scope, Error> for Mounted {
                 }
             }
             let redirect = self.workspace.leave.take();
+            let events = std::mem::take(&mut self.workspace.pushes);
             let notice = match &self.workspace.flash {
                 Some((_, message)) if self.workspace.flash != before => message.clone(),
                 _ => String::new(),
@@ -848,7 +1026,7 @@ impl LiveState<Scope, Error> for Mounted {
                 notice,
                 rows: self.workspace.layout.count(),
                 redirect,
-                ..LiveBody::default()
+                events,
             })
         })
     }

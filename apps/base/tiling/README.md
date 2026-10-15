@@ -53,18 +53,41 @@ frame's document too, so the keys work wherever focus is.
 | `f` | Fill the workspace with the focused tile, or show every tile again |
 | `t` | Flip the split direction, or the master direction in a master layout |
 | `m` | Make the focused tile the master, in a master layout |
+| `w` | Follow the records other tiles select, or stop following |
 | `o` | Open the focused tile's page alone |
 | `n` | Add a page |
 | `q` | Close the focused tile |
 | `Esc` | Leave tiling mode (an open menu takes it first) |
 
-Saved layouts (`1` to `9`) and following selections (`w`) join this table
-with the saved-layout and follow-channel work.
+Saved layouts (`1` to `9`) join this table with the saved-layout work.
 
 With a pointer: drag a divider to resize (a focused divider also moves with
 its arrow keys), drag a tile's grip onto another tile to swap them, and use
 the tile menu for the split flip and close. Pressing anywhere in a tile,
 inside its page included, focuses it.
+
+## Following selections
+
+Tiles talk through the follow channel (`apps/base/ui/src/workspace.rs`). A
+tile showing one record's page follows selections after `w`: the tree keeps
+that page's route pattern (`/companies/42>/companies/:id` in the URL form),
+the tile's grip shows a link mark, and the tile carries `data-follow="on"`
+(`"off"` on a tile that could follow). When a page in any tile announces a
+record of the module that owns the pattern, the workspace fills the id in,
+records the new path with a replaced address, and the hook sends the frame
+there (`tile_navigate`). `w` on a page that names no single record answers
+with a notice.
+
+The channel never leaves the tab: the frames are same-origin and talk to
+the workspace with `postMessage`, and each side accepts only this origin and,
+on the workspace's side, its own frames; the server checks every fact's kind
+and id again, and the hook sends a frame only to a path of this origin. The
+workspace renders the kinds some tile follows as `data-follows`, and the hook
+tells each frame. A page opts in with Base UI's `lists::record_link` on a
+list row (`workspace` = the page is framed: a `workspace:select` button that
+the frame answers, selecting when its kind is followed and otherwise opening
+the record in the tile) and `workspace::announce` on a record's page. The
+Company list and record pages do.
 
 ## Try it
 
@@ -73,4 +96,10 @@ README), sign in, and use a sidebar row's "Open in a tile" control, or open
 `/workspace` and add pages. Then: navigate inside a tile and reload (the tile
 keeps its page); press `Ctrl+.` and use the keys above; drag a divider and a
 grip; press Back (it undoes the last workspace change, then leaves); narrow the
-window below 1024px (one tile and a tab strip).
+window below 1024px (one tile and a tab strip). With the workspace open, a
+sidebar tile control adds a tile and the tiles on screen keep their pages.
+
+To follow: open `/workspace?t=h.5(/companies,/companies/1)`, press `Ctrl+.`,
+focus the record tile and press `w`, then click another company's name in the
+list tile: the record tile goes there and the list stays put. With nothing
+following, the same click opens the company in the list's own tile.

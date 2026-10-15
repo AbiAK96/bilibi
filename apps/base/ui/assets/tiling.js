@@ -36,10 +36,18 @@
 //     patch, because the Content-Security-Policy allows no `style` attribute.
 //     The patcher drops what the server did not render (`style`,
 //     `data-placed`, `data-mode`, a drag's marks), so they are written again
-//     after every patch, and only where they differ.
+//     after every patch, and only where they differ;
+//   * both ends of the follow channel (base/ui `src/workspace.rs`). The frames
+//     are same-origin and the channel is `postMessage`: a message counts only
+//     from this origin and, on this side, from one of the workspace's own
+//     frames, on the frame's side from the window that framed it. The host
+//     tells each frame the kinds some tile follows (`data-follows`); a frame
+//     tells the host the record a page announced or a record link selected,
+//     and the server answers with `tile_navigate` for each following tile,
+//     whose path is checked to be this origin's before the frame goes there.
 //
-// Focus follows a click, never the pointer. Saved layouts (`1` to `9`) and
-// following selections (`w`) join the mode with the modules that serve them.
+// Focus follows a click, never the pointer. Saved layouts (`1` to `9`) join
+// the mode with the module that serves them.
 (() => {
   const LEADER_KEY = '.';
   const DIRECTIONS = {
@@ -63,6 +71,24 @@
   // Every page's document title is the product name until pages name
   // themselves; a tile then takes its page's heading.
   const PRODUCT = 'Bilibi';
+  // The follow channel's two messages, and the shape of what they carry; the
+  // server checks a fact again (base/ui `src/workspace.rs`).
+  const FOLLOWS = 'bilibi:workspace:follows';
+  const FACT = 'bilibi:workspace:fact';
+  const KIND = /^[a-z][a-z0-9_]*\/[a-z][a-z0-9_]*$/;
+  const isKind = (kind) => typeof kind === 'string' && KIND.test(kind);
+  const isRecordId = (id) =>
+    typeof id === 'string' && id !== '' && id.length <= 64 && id !== '.' && id !== '..' && !/[/?#\\\s\x00-\x1f\x7f]/.test(id);
+  // A path the server names for a frame: a page of this origin, nothing else.
+  function samePath(path) {
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')) return null;
+    try {
+      const url = new URL(path, location.origin);
+      return url.origin === location.origin ? url.pathname + url.search : null;
+    } catch {
+      return null;
+    }
+  }
 
   function parsePlace(text) {
     const place = {};
@@ -96,6 +122,9 @@
       this.onTilePointerUp = () => this.dropTile();
       this.onTileClick = (event) => this.swallowClick(event);
       this.onViewport = () => this.scheduleViewport();
+      this.onMessage = (event) => this.receive(event);
+      this.onNavigate = (event) => this.navigateFrame(event.detail || {});
+      this.follows = null;
 
       // Capture, so the mode sees a key before the shell's own Escape handling
       // and before any page-level binding.
@@ -105,9 +134,12 @@
       this.el.addEventListener('pointerdown', this.onTilePointerDown);
       this.el.addEventListener('click', this.onTileClick, true);
       window.addEventListener('resize', this.onViewport);
+      window.addEventListener('message', this.onMessage);
+      window.addEventListener('bilibi:tile_navigate', this.onNavigate);
 
       this.place();
       this.bindFrames();
+      this.publishFollows();
       this.reportViewport();
     },
 
@@ -124,6 +156,7 @@
       this.place();
       this.bindFrames();
       this.nameFrames();
+      this.publishFollows();
       this.applyFocus();
     },
 
@@ -135,6 +168,8 @@
       this.el.removeEventListener('pointerdown', this.onTilePointerDown);
       this.el.removeEventListener('click', this.onTileClick, true);
       window.removeEventListener('resize', this.onViewport);
+      window.removeEventListener('message', this.onMessage);
+      window.removeEventListener('bilibi:tile_navigate', this.onNavigate);
       window.removeEventListener('pointermove', this.onPointerMove);
       window.removeEventListener('pointerup', this.onPointerUp);
       window.removeEventListener('pointermove', this.onTilePointerMove);
@@ -213,6 +248,7 @@
       doc.addEventListener('focusin', () => this.focusTile(id));
       doc.addEventListener('pointerdown', () => this.focusTile(id));
       win.addEventListener('bilibi:location', () => this.report(frame));
+      this.tellFollows(win);
       this.report(frame);
     },
 
@@ -240,6 +276,56 @@
       if (this.reported.get(frame) === key) return;
       this.reported.set(frame, key);
       this.emit('tile_navigated', {id: frame.dataset.tileFrame, path, title, history: 'replace'});
+    },
+
+    // ---------------------------------------------------------------
+    // The follow channel
+    // ---------------------------------------------------------------
+
+    followedKinds() {
+      return (this.el.dataset.follows || '').split(' ').filter(isKind);
+    },
+
+    // Every frame learns the followed kinds when they change, and each new
+    // document learns them once it has loaded.
+    publishFollows() {
+      const kinds = this.followedKinds().join(' ');
+      if (kinds === this.follows) return;
+      this.follows = kinds;
+      for (const frame of this.frames()) {
+        try {
+          this.tellFollows(frame.contentWindow);
+        } catch {
+          /* not reachable */
+        }
+      }
+    },
+
+    tellFollows(win) {
+      win?.postMessage({type: FOLLOWS, kinds: this.followedKinds()}, location.origin);
+    },
+
+    // A fact from a page in one of this workspace's own tiles; anything else
+    // that reaches this window is ignored.
+    receive(event) {
+      if (event.origin !== location.origin) return;
+      const data = event.data;
+      if (!data || data.type !== FACT || !isKind(data.kind) || !isRecordId(data.id)) return;
+      if (!this.frames().some((frame) => frame.contentWindow === event.source)) return;
+      this.emit('record_selected', {kind: data.kind, id: data.id, history: 'replace'});
+    },
+
+    // A following tile goes to the record another tile selected. The frame
+    // replaces its page, so Back still leaves the workspace.
+    navigateFrame({id, path}) {
+      const target = samePath(path);
+      const frame = target && this.el.querySelector(`iframe[data-tile-frame="${CSS.escape(String(id))}"]`);
+      if (!frame) return;
+      try {
+        frame.contentWindow.location.replace(target);
+      } catch {
+        /* not reachable */
+      }
     },
 
     focusTile(id) {
@@ -341,6 +427,14 @@
           return true;
         case 'o':
           if (focused) this.emit('open_alone', {id: focused});
+          return true;
+        // The server renders `data-follow="on"` on a tile that follows.
+        // Asking a page with no record to follow is the server's to answer.
+        case 'w':
+          if (focused) {
+            const following = this.tileElement(focused)?.dataset.follow === 'on';
+            this.emit(following ? 'unfollow_tile' : 'follow_tile', {id: focused});
+          }
           return true;
         case 'n':
           this.openPicker();
@@ -600,4 +694,58 @@
   };
 
   window.BilibiUI.registerHook('Tiling', Tiling);
+
+  // ---- The frame side of the follow channel ----------------------------------
+  // A page in a tile learns from the workspace which kinds some tile follows.
+  // A record link in a tile is base/ui `lists::record_link`'s
+  // `workspace:select` button (Bilimbi's `<.record_link>`); its click is
+  // answered here and never reaches the server. When its kind is followed it
+  // announces the record and the page stays where it is; otherwise the frame
+  // opens the record's page, as the link does alone, replacing its address so
+  // Back still leaves the workspace. A page that shows a record
+  // (`data-workspace-record`) announces it once per address, when the page is
+  // ready in the tile.
+  if (window.parent === window) return;
+  let follows = [];
+  let announced = null;
+  const post = (message) => {
+    try {
+      window.parent.postMessage(message, location.origin);
+    } catch {
+      /* the workspace is gone */
+    }
+  };
+  const announce = () => {
+    const record = document.querySelector('[data-workspace-record]');
+    const kind = record?.dataset.recordKind;
+    const id = record?.dataset.recordId;
+    const key = record ? `${location.pathname}${location.search}\n${kind}\n${id}` : null;
+    if (key === announced) return;
+    announced = key;
+    if (record && follows.includes(kind) && isRecordId(id)) post({type: FACT, kind, id});
+  };
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent || event.origin !== location.origin) return;
+    const data = event.data;
+    if (!data || data.type !== FOLLOWS || !Array.isArray(data.kinds)) return;
+    follows = data.kinds.filter(isKind);
+    announce();
+  });
+  window.addEventListener('bilibi:location', announce);
+  // Capture, so the choice is made before live.js would send the button's
+  // event or turn a plain link into the frame's own navigation.
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const control = event.target instanceof Element && event.target.closest('[data-record-select]');
+    if (!control) return;
+    const {kind, id, path} = control.dataset;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (follows.includes(kind) && isRecordId(id)) {
+      post({type: FACT, kind, id});
+      return;
+    }
+    const target = samePath(path);
+    if (target) location.replace(target);
+  }, true);
 })()

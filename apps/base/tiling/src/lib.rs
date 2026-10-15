@@ -22,8 +22,10 @@ inventory::submit! {
                 // run, so read the same discovered contributions directly.
                 let catalog = &Catalog::discover(&bilibi_module_registry::discover()?)?;
                 let menu = bilibi_menu::Menu::from_catalog(catalog)?;
+                // With its module: a followed pattern's kind is the module
+                // that owns the page.
                 let routes = catalog.entries::<Route>(ROUTES)?.iter()
-                    .map(|entry| entry.get::<Route>())
+                    .map(|entry| Ok((entry.provenance.module, entry.get::<Route>()?)))
                     .collect::<bilibi_module_registry::Result<Vec<_>>>()?;
                 Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages::new(
                     services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
