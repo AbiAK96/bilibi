@@ -13,7 +13,8 @@ mod secrets;
 mod throttle;
 pub use contributions::MANAGE;
 pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams};
-pub use secrets::normalize_user_code;
+/// `code_challenge` is the S256 form a public client sends for its verifier.
+pub use secrets::{digest_base64 as code_challenge, normalize_user_code};
 pub use throttle::Throttle;
 
 use bilibi_database::{
@@ -585,7 +586,7 @@ impl AgentAccess {
         } else if device.get::<_, bool>("early") {
             let interval = device.get::<_, i32>("interval") + SLOW_DOWN_SECONDS;
             tx.execute(
-                "UPDATE core_agent_devices SET interval=$2,next_poll_at=now()+make_interval(secs => $2::double precision),updated_at=now() WHERE id=$1",
+                "UPDATE core_agent_devices SET interval=$2::int,next_poll_at=now()+make_interval(secs => ($2::int)::double precision),updated_at=now() WHERE id=$1",
                 &[&id, &interval],
             )
             .await?;
@@ -1033,7 +1034,7 @@ impl AgentAccess {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids"],
+        dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "core/user", "core/company"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| Ok(Arc::new(AgentAccess {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),

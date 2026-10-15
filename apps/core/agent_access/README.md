@@ -1,0 +1,95 @@
+# Agent connections (E3)
+
+`core/agent_access` owns OAuth device codes, per-person connections, opaque
+access/refresh tokens and PKCE authorization codes, ported from Bilimbi's
+`apps/core/agent_access` (ADR 0021). This slice is the service layer; the
+`/oauth/device`, `/oauth/authorize` and `/settings/agent-connections` pages
+(E4) and the host OAuth metadata/device/token endpoints and `AgentAuth` (E5)
+call it. Use `AgentAccess` (`core/agent_access.grants`, `src/lib.rs`) for every
+code, token and connection decision; never query `core_agent_*` tables from
+another module or compare a credential yourself.
+
+## Contract
+
+- Every secret is stored as its SHA-256 digest (`src/secrets.rs`). Raw values
+  leave the service only in `DeviceStart` and `TokenResponse`. Audit changes
+  carry status and expiry facts, never digests, and the module contributes
+  `Redaction`s for its digest fields on top of that.
+- The built-in public client is `bilibi-native` (no secret, no registration).
+  Device receipts last ten minutes; polling starts at five seconds and each
+  early poll answers `slow_down` and adds five seconds. Access tokens last at
+  most one hour, bounded by the connection. These are protocol constants.
+- The global setting `agent_access.connection_days` (90 by default, 1 to 365)
+  sets a new connection's length. `connection_expiry` computes the end time a
+  consent page displays; `decide` and `authorize` accept that server-computed
+  value and refuse a past one. Existing connections keep their end times.
+- Refresh tokens last until the connection ends and rotate on every use. A
+  spent refresh token or authorization code presented again revokes the whole
+  connection, and that revocation commits before the refusal is returned. Old
+  access tokens stay valid until they expire. Revocation and expiry apply to
+  every token of the connection.
+- The parent connection row is locked before any receipt, code or token row,
+  everywhere, so concurrent redemption, refresh and replay cannot invert lock
+  order. A receipt is spent by a conditional update, so a racing poll loses.
+- `authenticate` is the one unscoped read: it maps a live access token to
+  `AgentClaims` (connection, tenant, user and recorded party facets). The host
+  seals those into a scope with an agent facet; the claims are never a scope.
+  `observe` records the ID an authenticated request stated (or `(not stated)`),
+  keeps the newest 20 distinct IDs and never refuses a changed ID. An ID is
+  self-reported and grants no authority.
+- `list_connections` and `revoke` are the person's own connections only.
+  Bilimbi refuses impersonated sessions and agent facets there; the one gate
+  `self_service` is where K14/E5 add that check when the scope carries them.
+- Operator-registered MCP clients live in `agent_access.oauth_clients`: client
+  IDs mapped to a name and exact HTTPS `redirect_uris` (`src/oauth_client.rs`
+  validates the setting and each request). PKCE S256 and the resource are
+  mandatory; the scope is always `bilibi`. `agent_access.authorization_code_seconds`
+  bounds the code (120 by default). `agent_access.oauth_requests_per_minute`
+  is the host's per-sender limit; `Throttle` is the per-node counter E5 applies.
+  Editing these needs the platform capability `admin.system.agent-access.manage`.
+
+## Injected identity
+
+Company/person validation is injected, as the port plan requires. On every
+issuance (`exchange`, `refresh`, `exchange_code`) the module reproves the
+granting account through `base/tenancy.authentication` (tenant and account
+must still authenticate) and each party facet recorded on the connection
+through `base/tenancy.parties`. A suspended account, a revoked organisation
+proof, or an actor whose facet now differs from the recorded one makes the
+grant `invalid_grant` without spending the presented token. New connections
+record the actor's organisation and person facets when the sealed scope
+carries them; until the K9 binder lands those are absent, so the account proof
+alone governs, exactly as the current browser session does. This module runs
+no SQL against account, company or person tables; the schema references them
+only through scoped foreign keys (`migrations/001-agent-access.sql`).
+
+## Audit
+
+Consent, refusal and owner revocation commit as the signed-in `user`. Token
+redemption, rotation, replay revocation and observation commit as actor kind
+`agent` with the granting account's ID, naming the connection in the change.
+Receipt polling (`authorization_pending`, `slow_down`) is pre-authentication
+housekeeping like a password-reset token and is not a business mutation.
+
+## Walkthrough
+
+Against a disposable database after the host's `migrate` and `seed`, appoint
+the fixture operator (`INSERT INTO platform_operator(singleton,tenant_id)
+VALUES(true,1)`) so the setting writes succeed, then run
+
+```sh
+BILIBI_DISPOSABLE_AGENT_ACCESS_DEMO=yes DATABASE_URL=... \
+  cargo run -p bilibi-agent-access --locked --example agent-access-walkthrough
+```
+
+It prints the operator setting taking effect; device start, pending,
+`slow_down` with the growing interval, review, approval, redemption and spent
+receipt; digest-only storage; bearer claims and resource binding; observed
+IDs and the 20-entry limit; refresh rotation, replay revocation and its effect
+on every token; refusal; receipt and connection expiry through explicit SQL
+time travel; the injected account proof refusing a suspended account; owner
+revocation and tenant isolation; the full PKCE consent/redemption/replay path
+for a registered client; the host throttle; and the audit rows. It uses only
+its own disposable rows and resets the two global settings it changed. Raw
+codes and tokens are never printed in full. This is an opt-in demonstration,
+not a test suite.
