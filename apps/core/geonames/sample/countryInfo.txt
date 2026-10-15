@@ -1,0 +1,10 @@
+# GeoNames countryInfo.txt layout, trimmed sample (see README.md).
+#ISO	ISO3	ISO-Numeric	fips	Country	Capital	Area(in sq km)	Population	Continent	tld	CurrencyCode	CurrencyName	Phone	Postal Code Format	Postal Code Regex	Languages	geonameid	neighbours	EquivalentFipsCode
+FR	FRA	250	FR	France	Paris	547030	66987244	EU	.fr	EUR	Euro	33	#####	^(\d{5})$	fr-FR,frp,br,co,ca,eu,oc	3017382	CH,DE,BE,LU,IT,AD,MC,ES	
+ID	IDN	360	ID	Indonesia	Jakarta	1919440	267663435	AS	.id	IDR	Rupiah	62	#####	^(\d{5})$	id,en,nl,jv	1643084	PG,TL,MY	
+JP	JPN	392	JA	Japan	Tokyo	377835	126529100	AS	.jp	JPY	Yen	81	###-####	^\d{3}-\d{4}$	ja	1861060		
+MY	MYS	458	MY	Malaysia	Kuala Lumpur	329750	31528585	AS	.my	MYR	Ringgit	60	#####	^(\d{5})$	ms-MY,en,zh,ta,te,ml,pa,th	1733045	BN,TH,ID	
+SG	SGP	702	SN	Singapore	Singapore	692.7	5638676	AS	.sg	SGD	Dollar	65	######	^(\d{6})$	cmn,en-SG,ms-SG,ta-SG,zh-SG	1880251		
+TH	THA	764	TH	Thailand	Bangkok	514000	69428524	AS	.th	THB	Baht	66	#####	^(\d{5})$	th,en	1605651	LA,MM,KH,MY	
+X1	XX1	999	XX	Not a country code	Nowhere	1	1	AS				0			en	9999999		
+ZZ	truncated line

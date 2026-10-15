@@ -1,0 +1,12 @@
+2988507	Paris	Paris	Lutece,Paname,Parigi	48.85341	2.3488	P	PPLC	FR		11	75			2138551		42	Europe/Paris	2023-07-10
+1642911	Jakarta	Jakarta	Batavia,DKI Jakarta	-6.21462	106.84513	P	PPLC	ID		04				8540121		8	Asia/Jakarta	2023-01-04
+1853909	Osaka	Osaka	Ōsaka-shi	34.69374	135.50218	P	PPLA	JP		27				2592413		12	Asia/Tokyo	2023-02-30
+1850147	Tokyo	Tokyo	Edo,Tōkyō	35.6895	139.69171	P	PPLC	JP		40				8336599		44	Asia/Tokyo	2023-01-16
+1735161	Kuala Lumpur	Kuala Lumpur	KL,Kolam	3.1412	101.68653	P	PPLC	MY		14				1453975		62	Asia/Kuala_Lumpur	2024-01-10
+1732903	Shah Alam	Shah Alam		3.08507	101.53281	P	PPLA	MY		12				740750		24	Asia/Kuala_Lumpur	2023-08-17
+1732752	Johor Bahru	Johor Bahru	JB	1.4655	103.7578	P	PPLA	MY		01				802489		27	Asia/Kuala_Lumpur	2022-06-01
+1735106	George Town	George Town	Penang	5.41123	100.33543	P	PPLA	MY		09				300000		5	Asia/Kuala_Lumpur	2023-01-01
+1880252	Singapore	Singapore	Singapura	1.28967	103.85007	P	PPLC	SG		01				5638700		15	Asia/Singapore	2024-01-01
+1609350	Bangkok	Bangkok	Krung Thep	13.75398	100.50144	P	PPLC	TH		40				5104476		2	Asia/Bangkok	2023-01-01
+9999998	Off the map	Off the map		123.5	100.0	P	PPL	MY		14				1		1	Asia/Kuala_Lumpur	2023-01-01
+9999997	Short line
