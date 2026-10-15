@@ -447,6 +447,8 @@ impl Postcodes {
         }
     }
 
+    /// Typed controls debounce so the dialog validates as the person types,
+    /// as Bilimbi's `phx-change` does, not only when a control loses focus.
     fn form(&self, draft: &Draft, countries: &[Choice]) -> Result<Html> {
         let field = |key: &str| {
             Field::in_form(FORM, key)
@@ -459,6 +461,7 @@ impl Postcodes {
                         .map(|error| error.message.clone())
                         .collect(),
                 )
+                .attr("data-debounce", "300")
         };
         let mut postcode = field("postcode")
             .id("postcode-code")
