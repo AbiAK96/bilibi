@@ -31,14 +31,18 @@ pub struct SettingsEntry {
     pub href: &'static str,
 }
 
-/// The settings sections in Bilimbi's order. Profile (K16), appearance (C5)
-/// and agent connections (E4) are later slices.
+/// The settings sections in Bilimbi's order. Profile (K16) and appearance
+/// (C5) are later slices.
 pub fn settings_entries() -> Vec<SettingsEntry> {
     [
         ("profile", "Profile", ""),
         ("password", "Password", "/settings/password"),
         ("appearance", "Appearance", ""),
-        ("agent-connections", "Agent connections", ""),
+        (
+            "agent-connections",
+            "Agent connections",
+            "/settings/agent-connections",
+        ),
     ]
     .into_iter()
     .map(|(key, label, href)| SettingsEntry { key, label, href })

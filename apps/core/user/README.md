@@ -50,8 +50,9 @@ later slice.
 `/settings/password` (`src/web.rs`, `templates/password.html`) is the signed-in
 account's password change inside the shell, on the settings layout of
 `templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`); later
-settings pages (profile, appearance, agent connections) render through the same
-macro and are shown as unavailable until they land. The page is live: the form
+settings pages (profile, appearance) render through the same macro and are
+shown as unavailable until they land. Agent connections links to
+`core/agent_access`'s own page, as in Bilimbi. The page is live: the form
 submits as the `change-password` event carrying its field values, the state
 keeps the field errors of the last attempt (`can't be blank`, the password
 policy, `does not match password`, `is incorrect`), and a success or failure
