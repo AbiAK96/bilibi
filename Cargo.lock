@@ -492,6 +492,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-module-registry",
+ "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",

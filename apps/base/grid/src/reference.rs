@@ -72,6 +72,34 @@ static GRID: GridContribution = GridContribution {
 };
 crate::contribute!("base/grid", "grid.reference", &GRID);
 
+/// The walkthrough fixture the lens and page-column pages run on: twelve
+/// tenant-1 items in three groups and fourteen months of movements relative to
+/// today on the UTC calendar, plus one tenant-2 item. It replaces whatever the
+/// reference tables hold; only run it on a disposable database.
+pub const DEMO_FIXTURE: &str = "DELETE FROM base_grid_ref_movements; DELETE FROM base_grid_ref_items; DELETE FROM base_grid_ref_groups;
+INSERT INTO base_grid_ref_groups(id,tenant_id,name,region) VALUES (9301,1,'Harbour','north'),(9302,1,'Valley','south'),(9303,1,'Ridge','east'),(9304,2,'Elsewhere','west');
+INSERT INTO base_grid_ref_items(id,tenant_id,group_id,name,category,quantity,reorder_level,unit_cost,active) VALUES
+ (9311,1,9301,'Anchor bolt','parts',240,50,0.85,true),
+ (9312,1,9301,'Bench vise','tools',6,2,184.50,true),
+ (9313,1,9301,'Cable ties','supplies',1200,300,0.05,true),
+ (9314,1,9302,'Drill bit set','tools',14,4,42.00,false),
+ (9315,1,9302,'Epoxy resin','supplies',38,10,27.75,true),
+ (9316,1,9302,'Flange gasket','parts',95,20,3.40,true),
+ (9317,1,9303,'Grease gun','tools',9,3,64.90,true),
+ (9318,1,9303,'Hex nut','parts',3000,500,0.02,false),
+ (9319,1,9303,'Insulation tape','supplies',75,25,2.10,true),
+ (9320,1,9301,'Jack stand','tools',4,2,129.00,true),
+ (9321,1,9302,'Keyed shaft','parts',22,5,58.30,true),
+ (9322,1,9303,'Lens cleaner','supplies',0,12,6.60,false),
+ (9323,2,9304,'Other tenant','parts',1,1,1.00,true);
+INSERT INTO base_grid_ref_movements(id,tenant_id,item_id,delta,moved_on,recorded_at)
+SELECT 9400 + row_number() OVER (ORDER BY i.id, k), 1, i.id,
+       (((i.id * 7 + k * 13) % 41) - 12)::int,
+       (date_trunc('month', current_date AT TIME ZONE 'UTC')::date - make_interval(months => k))::date + ((i.id + k) % 27)::int,
+       ((date_trunc('month', current_date AT TIME ZONE 'UTC')::date - make_interval(months => k))::date + ((i.id + k) % 27)::int)::timestamp AT TIME ZONE 'UTC' + make_interval(hours => ((i.id * 5 + k) % 24)::int, mins => ((k * 7) % 60)::int)
+FROM base_grid_ref_items i CROSS JOIN generate_series(0, 13) k
+WHERE i.tenant_id = 1 AND i.id <> 9322 AND (i.id + k) % 3 <> 0;";
+
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY, "grid.reference.vocabulary",
 bilibi_module_registry::Provenance { module: "base/grid", source: file!(), line: line!() },
 &VocabularyContribution {

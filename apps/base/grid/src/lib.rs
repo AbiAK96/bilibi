@@ -1,16 +1,23 @@
-//! Grid table/field/link catalog, scoped paths, bounded page projections and
-//! the lenses that turn them into FlexTable cells. There is no Grid page.
-//! Persisted arrangements build on this contract; see `README.md`.
+//! Grid table/field/link catalog, scoped paths, bounded page projections, the
+//! lenses that turn them into FlexTable cells, and what each account arranged
+//! on each list page. There is no Grid page: a list hosts the walked columns
+//! through `PageColumns`; see `README.md`.
 pub mod catalog;
 pub mod column;
 pub mod lens;
 pub mod model;
+pub mod page_columns;
+pub mod page_views;
 pub mod query;
-mod reference;
+pub mod reference;
+pub mod view;
 pub use lens::{Lens, Range};
+pub use page_columns::{Outcome, PageColumns};
+pub use page_views::{PageViews, PAGE_VIEWS};
 pub use query::{project, project_lenses, stats, Lenses, Projection, QueryError, Row, Stats};
+pub use view::View;
 
-use bilibi_module_registry::{Consumer, Layer, Module, RegistryError, Result};
+use bilibi_module_registry::{Consumer, Layer, Module, RegistryError, Result, Service};
 use std::sync::OnceLock;
 
 pub use catalog::{
@@ -117,12 +124,12 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings"],
         migrations: &[
             ("base-grid-001", include_str!("../migrations/001-reference.sql")),
             ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),
         ],
-        services: &[],
+        services: &[Service { id: PAGE_VIEWS, factory: page_views::service }],
     }
 }
 inventory::submit! {

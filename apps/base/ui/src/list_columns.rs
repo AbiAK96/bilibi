@@ -233,7 +233,8 @@ impl ListColumns {
     }
 }
 
-fn flex_column(builtin: &BuiltinColumn) -> FlexColumn {
+/// A built-in column as `FlexTable` takes it: a slot the list draws itself.
+pub fn flex_column(builtin: &BuiltinColumn) -> FlexColumn {
     let mut column = FlexColumn::new(&builtin.id, &builtin.id, &builtin.label)
         .short(&builtin.short_label)
         .typed(builtin.kind)
