@@ -1,0 +1,14 @@
+{#- The record-history disclosure (Bilimbi `Audit.Web.RecordHistory` render).
+    The trigger's aria-expanded is the one record of open, written by the
+    DisclosureDismiss hook and kept across patches by data-live-ignore; the
+    panel derives from it in CSS (peer-aria-expanded). -#}
+{%- import "components.html" as ui -%}
+<div id="{{ id }}" data-hook="DisclosureDismiss" class="relative inline-block text-left">
+<button type="button" id="{{ id }}-toggle" title="History" data-event="toggle" data-target="{{ id }}" data-live-ignore aria-expanded="false" aria-controls="{{ id }}-panel" class="peer {{ trigger_class }} cursor-pointer">{% call ui::icon(name="history", class="size-4") %}{% endcall %} History</button>
+<div id="{{ id }}-panel" tabindex="-1" aria-labelledby="{{ id }}-heading" class="hidden peer-aria-expanded:block absolute right-0 z-40 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-3 text-left shadow-xl shadow-ink/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">
+<div class="flex items-start justify-between gap-3 border-b border-line pb-2"><div><h2 id="{{ id }}-heading" class="text-sm font-semibold text-ink">{{ title }}</h2><p class="text-xs text-ink-muted">{{ count }}</p></div></div>
+{% if !entries.is_empty() %}<ol class="mt-2 max-h-96 space-y-2 overflow-y-auto">
+{% for entry in entries %}<li id="{{ id }}-entry-{{ entry.id }}" class="rounded-lg border border-line bg-surface px-3 py-2"><div class="flex flex-wrap items-center justify-between gap-2">{% call ui::badge(kind=entry.badge) %}{{ entry.event }}{% endcall %}{{ entry.when|safe }}</div><div class="mt-1 text-xs text-ink-muted">{{ entry.actor }}</div>{% if !entry.lines.is_empty() %}<div class="mt-2 space-y-1">{% for line in entry.lines %}<div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 font-mono text-xs"><span class="truncate font-semibold text-ink-muted">{{ line.field }}</span><span class="min-w-0 truncate text-ink">{% if line.withheld %}{{ line.restricted|safe }}{% else if line.sensitive %}redacted{% else %}{{ line.old|safe }}<span class="px-1 text-ink-muted">-></span>{{ line.new|safe }}{% endif %}</span></div>{% endfor %}</div>{% else %}<p class="mt-2 text-xs italic text-ink-muted">No field changes recorded.</p>{% endif %}</li>
+{% endfor %}</ol>{% else %}<p id="{{ id }}-empty" class="mt-3 rounded-lg bg-surface-sunken px-3 py-6 text-center text-sm text-ink-muted">No record history found.</p>{% endif %}
+</div>
+</div>

@@ -3,7 +3,7 @@
 //! `Audit.Web.ActionsLive.action_presentation/1` and its helpers), and the one
 //! timestamp element every Audit screen uses.
 use askama::Template;
-use bilibi_audit::ActionEntry;
+use bilibi_audit::{ActionEntry, MutationEntry};
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_ui::{BadgeKind, Html};
@@ -14,7 +14,7 @@ use std::time::SystemTime;
 /// so the shell's display-mode control swaps them without a re-render.
 #[derive(Template)]
 #[template(
-    source = r#"<time id="{{ id }}" datetime="{{ iso }}" data-format="datetime" data-precision="minute" data-mode="{{ mode }}" data-text-company="{{ company }}" data-text-utc="{{ utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums{% if !class.is_empty() %} {{ class }}{% endif %}">{{ text }}</time>"#,
+    source = r#"<time id="{{ id }}" datetime="{{ iso }}" data-format="datetime" data-precision="{{ precision }}" data-mode="{{ mode }}" data-text-company="{{ company }}" data-text-utc="{{ utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums{% if !class.is_empty() %} {{ class }}{% endif %}">{{ text }}</time>"#,
     ext = "html"
 )]
 struct Time<'a> {
@@ -24,12 +24,27 @@ struct Time<'a> {
     company: String,
     utc: String,
     mode: &'static str,
+    precision: &'static str,
     class: &'a str,
 }
 
+/// A recorded time, to the minute: the one treatment every Audit screen gives
+/// a row's own timestamp.
 pub fn time(display: &DisplayContext, id: &str, at: SystemTime, class: &str) -> Result<Html> {
     let instant = jiff::Timestamp::try_from(at).map_err(|_| Error::Internal)?;
-    let rendered = display.render(instant, Format::DateTime, Precision::Minute);
+    time_at(display, id, instant, Precision::Minute, class)
+}
+
+/// An instant at the given precision. A value inside a mutation diff shows
+/// seconds, so two edits within one minute stay distinguishable.
+pub fn time_at(
+    display: &DisplayContext,
+    id: &str,
+    instant: jiff::Timestamp,
+    precision: Precision,
+    class: &str,
+) -> Result<Html> {
+    let rendered = display.render(instant, Format::DateTime, precision);
     Html::render(&Time {
         id,
         iso: rendered.iso,
@@ -37,9 +52,98 @@ pub fn time(display: &DisplayContext, id: &str, at: SystemTime, class: &str) -> 
         company: rendered.company,
         utc: rendered.utc,
         mode: rendered.mode.as_str(),
+        precision: match precision {
+            Precision::Minute => "minute",
+            Precision::Second => "second",
+        },
         class,
     })
     .map_err(|_| Error::Internal)
+}
+
+/// Who a ledger row attributes itself to, as both ledgers record it.
+pub struct Actor<'a> {
+    pub kind: &'a str,
+    pub id: i64,
+    pub role: Option<&'a str>,
+    pub impersonator: Option<i64>,
+    pub principal: Option<&'a str>,
+}
+impl<'a> From<&'a ActionEntry> for Actor<'a> {
+    fn from(action: &'a ActionEntry) -> Self {
+        Self {
+            kind: &action.actor_type,
+            id: action.actor_id,
+            role: action.actor_role.as_deref(),
+            impersonator: action.impersonator_id,
+            principal: action.system_principal.as_deref(),
+        }
+    }
+}
+impl<'a> From<&'a MutationEntry> for Actor<'a> {
+    fn from(mutation: &'a MutationEntry) -> Self {
+        Self {
+            kind: &mutation.actor_type,
+            id: mutation.actor_id,
+            role: mutation.actor_role.as_deref(),
+            impersonator: mutation.impersonator_id,
+            principal: mutation.system_principal.as_deref(),
+        }
+    }
+}
+
+/// Bilimbi's `actor_label/1`, shared by every Audit surface: the account acted
+/// as (`User #7`, `Employee #3`), a principal word, or `System · name`.
+pub fn actor_label(actor: &Actor<'_>) -> String {
+    let id = actor.id;
+    match actor.kind {
+        "user" if id > 0 => format!("User #{id}"),
+        "agent" if id > 0 => format!("Employee #{id}"),
+        "guest" => "Guest".into(),
+        "console" => "Console".into(),
+        "scheduler" => "Scheduler".into(),
+        "queue" => "Queue".into(),
+        "system" if actor.principal.is_some() => {
+            format!("System · {}", actor.principal.unwrap_or_default())
+        }
+        other if !other.is_empty() => {
+            let mut word = other.chars();
+            let word: String = word
+                .next()
+                .map(|first| {
+                    first
+                        .to_uppercase()
+                        .chain(word.flat_map(char::to_lowercase))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if id > 0 {
+                format!("{word} #{id}")
+            } else {
+                word
+            }
+        }
+        _ => "—".into(),
+    }
+}
+
+/// The operator behind an impersonated session, as the suffix both lists
+/// append: ` · impersonated by User #N`, or nothing.
+pub fn impersonated_suffix(actor: &Actor<'_>) -> String {
+    match actor.impersonator {
+        Some(id) if id > 0 => format!(" · impersonated by User #{id}"),
+        _ => String::new(),
+    }
+}
+
+/// The line under the actor label on the lists: the recorded role, else the
+/// principal kind, then the impersonation suffix.
+pub fn actor_sub(actor: &Actor<'_>) -> String {
+    let base = actor
+        .role
+        .filter(|role| !role.is_empty())
+        .unwrap_or(actor.kind);
+    format!("{base}{}", impersonated_suffix(actor))
 }
 
 pub struct Presentation {

@@ -11,9 +11,13 @@
 //! own that depends downward on both. The audit capability vocabulary belongs
 //! with them for the same reason: contributing a capability needs Authz's types.
 //!
-//! P13 (Mutations and record history) adds its screens to this crate.
+//! `/audit/mutations` and the `record.history` embed (P13) live here too; the
+//! diff a mutation renders is shared between them (`diff`).
 mod actions;
 mod activity;
+mod diff;
+mod history;
+mod mutations;
 mod present;
 
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
@@ -72,11 +76,33 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(LIST))
         .order(10)
 );
+bilibi_menu::contribute!(
+    "base/audit_views",
+    bilibi_menu::MenuItem::page("admin.audit.mutation", "Data Mutations", "/audit/mutations")
+        .under("admin.audit")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(20)
+);
 
 inventory::submit! {
     Contribution::new(ROUTES, "base/audit_views.actions", provenance!(), &Route {
         method: Method::Get, path: "/audit/actions", service: "base/audit_views.pages",
         operation: "actions", access: Access::Capability(LIST), framed: true,
+    })
+}
+inventory::submit! {
+    Contribution::new(ROUTES, "base/audit_views.mutations", provenance!(), &Route {
+        method: Method::Get, path: "/audit/mutations", service: "base/audit_views.mutations",
+        operation: "mutations", access: Access::Capability(LIST), framed: true,
+    })
+}
+
+// A record page's History disclosure (see `history`). The kind is every
+// record's: the host names the record's own audit kinds in the panel path.
+inventory::submit! {
+    Contribution::new(EMBEDS, "audit.record-history", provenance!(), &Embed {
+        slot: "record.history", context: EmbedContext::Record { kind: "*" },
+        service: "base/audit_views.history", operation: "record", access: Access::Capability(LIST),
     })
 }
 
@@ -111,6 +137,20 @@ inventory::submit! {
                 Ok(Arc::new(PageService::<Scope, Error>(Arc::new(actions::Pages {
                     db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     boundary: services.get("base/database.mutations")?,
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
+            } },
+            Service { id: "base/audit_views.mutations", factory: |services| {
+                Ok(Arc::new(PageService::<Scope, Error>(Arc::new(mutations::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
+            } },
+            Service { id: "base/audit_views.history", factory: |services| {
+                Ok(Arc::new(PageService::<Scope, Error>(Arc::new(history::Panels {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
                 }))))

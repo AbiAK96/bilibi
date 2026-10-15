@@ -18,3 +18,4 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-ui.workspace = true
 bilibi-menu.workspace = true
+bilibi-grid = { path = "../../base/grid" }

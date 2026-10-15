@@ -118,9 +118,8 @@ impl Panel {
             let mut button = IconButton::new("forward", "Open audit log");
             button.context = IconContext::Inline;
             button.id = "stat-recent-audit-open";
-            // Bilimbi opens the Data Mutations list, which this feed shows; that
-            // screen arrives with P13, which repoints this link.
-            button.href = "/audit/actions";
+            // Bilimbi opens the Data Mutations list, which this feed shows.
+            button.href = "/audit/mutations";
             Html::render(&button).map_err(|_| Error::Internal)?
         } else {
             Html::EMPTY

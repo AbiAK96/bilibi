@@ -431,52 +431,6 @@ struct CellView {
     cell: Cell,
 }
 
-fn actor_label(action: &ActionEntry) -> String {
-    let id = action.actor_id;
-    match action.actor_type.as_str() {
-        "user" if id > 0 => format!("User #{id}"),
-        "agent" if id > 0 => format!("Employee #{id}"),
-        "guest" => "Guest".into(),
-        "console" => "Console".into(),
-        "scheduler" => "Scheduler".into(),
-        "queue" => "Queue".into(),
-        "system" if action.system_principal.is_some() => format!(
-            "System · {}",
-            action.system_principal.as_deref().unwrap_or_default()
-        ),
-        other if !other.is_empty() => {
-            let mut word = other.chars();
-            let word: String = word
-                .next()
-                .map(|first| {
-                    first
-                        .to_uppercase()
-                        .chain(word.flat_map(char::to_lowercase))
-                        .collect()
-                })
-                .unwrap_or_default();
-            if id > 0 {
-                format!("{word} #{id}")
-            } else {
-                word
-            }
-        }
-        _ => "—".into(),
-    }
-}
-
-fn actor_sub(action: &ActionEntry) -> String {
-    let base = action
-        .actor_role
-        .as_deref()
-        .filter(|role| !role.is_empty())
-        .unwrap_or(&action.actor_type);
-    match action.impersonator_id {
-        Some(id) if id > 0 => format!("{base} · impersonated by User #{id}"),
-        _ => base.to_owned(),
-    }
-}
-
 fn row(display: &DisplayContext, can_manage: bool, action: &ActionEntry) -> Result<FlexRow> {
     let Presentation {
         source,
@@ -502,8 +456,8 @@ fn row(display: &DisplayContext, can_manage: bool, action: &ActionEntry) -> Resu
         (
             "actor_type",
             cell(Cell::Actor {
-                label: actor_label(action),
-                sub: actor_sub(action),
+                label: present::actor_label(&action.into()),
+                sub: present::actor_sub(&action.into()),
             })?,
         ),
         (

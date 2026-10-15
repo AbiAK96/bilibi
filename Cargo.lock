@@ -385,6 +385,7 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "bilibi-database",
+ "bilibi-grid",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",

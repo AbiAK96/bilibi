@@ -284,4 +284,25 @@ impl bilibi_ui::page::LiveState<bilibi_security::Scope, bilibi_database::Error> 
             })
         })
     }
+    /// The detail page carries the Audit record-history disclosure
+    /// (`base/audit_views`, embed `audit.record-history`) in its header, as
+    /// Bilimbi's company page does; `kinds` are the audit kinds a company is
+    /// recorded under. A reader without the audit capability gets an empty
+    /// anchor.
+    fn panels(&self) -> Vec<bilibi_ui::page::PanelSpec> {
+        let Some(id) = self.id else {
+            return Vec::new();
+        };
+        vec![bilibi_ui::page::PanelSpec {
+            id: "company-record-history".into(),
+            embed: "audit.record-history".into(),
+            path: [
+                ("panel".to_owned(), "company-record-history".to_owned()),
+                ("kinds".to_owned(), "company".to_owned()),
+                ("id".to_owned(), id.to_string()),
+            ]
+            .into(),
+            query: std::collections::HashMap::new(),
+        }]
+    }
 }
