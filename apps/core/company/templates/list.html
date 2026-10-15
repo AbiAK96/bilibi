@@ -1,3 +1,4 @@
+{%- import "lists.html" as lists -%}
 <p class="eyebrow">ADMINISTRATION</p><h1>Companies</h1><p class="muted">{{ page.total }} companies in this tenant</p>
 <section class="card" aria-label="Companies">
 <form class="toolbar" data-event="params" method="get" action="/companies">
@@ -6,5 +7,5 @@
 <label>Rows<select name="size">{% for size in [25,50,100] %}<option value="{{ size }}" {% if params.size == *size %}selected{% endif %}>{{ size }}</option>{% endfor %}</select></label>
 <input type="hidden" name="sort" value="{{ params.sort }}"><input type="hidden" name="dir" value="{{ params.dir }}"><button class="primary">Apply</button></form>
 <div class="table-scroll"><table id="companies"><thead><tr><th><button data-event="sort" data-field="name">Name {% if params.sort == "name" %}({{ params.dir }}){% endif %}</button></th><th><button data-event="sort" data-field="status">Status {% if params.sort == "status" %}({{ params.dir }}){% endif %}</button></th><th>Email</th><th>Phone</th><th>Tax ID</th><th class="number">Revenue</th></tr></thead><tbody>
-{% for row in page.rows %}<tr data-company-id="{{ row.id }}"><td><a href="/companies/{{ row.id }}">{{ row.name }}</a></td><td><span class="status">{{ row.status }}</span></td><td>{{ row.email }}</td><td>{{ row.phone }}</td><td>{{ row.tax_id }}</td><td class="number">{{ row.revenue }}</td></tr>{% else %}<tr><td colspan="6">No companies match this search.</td></tr>{% endfor %}
+{% for row in page.rows %}<tr data-company-id="{{ row.id }}"><td>{% call lists::record_link(workspace=workspace, kind="core/company", record_id=row.id, href="/companies/{}"|format(row.id)) %}{{ row.name }}{% endcall %}</td><td><span class="status">{{ row.status }}</span></td><td>{{ row.email }}</td><td>{{ row.phone }}</td><td>{{ row.tax_id }}</td><td class="number">{{ row.revenue }}</td></tr>{% else %}<tr><td colspan="6">No companies match this search.</td></tr>{% endfor %}
 </tbody></table></div><div class="pager"><button data-event="page" data-delta="-1" {% if params.page <= 1 %}disabled{% endif %}>Previous</button><span>Page {{ params.page }} of {{ pages }}</span><button data-event="page" data-delta="1" {% if params.page >= pages %}disabled{% endif %}>Next</button></div></section>

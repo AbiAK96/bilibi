@@ -7,6 +7,8 @@ pub struct List<'a> {
     pub page: &'a Page,
     pub params: &'a Params,
     pub pages: i64,
+    /// In a workspace tile a row's name selects the company (`record_link`).
+    pub workspace: bool,
 }
 
 pub struct Field {
@@ -74,6 +76,7 @@ impl bilibi_ui::page::Page<bilibi_security::Scope, bilibi_database::Error> for P
                         pages: ((page.total + params.size - 1) / params.size).max(1),
                         page: &page,
                         params: &params,
+                        workspace: request.framed,
                     }
                     .render()
                     .map_err(|_| Error::Internal)?
@@ -131,6 +134,7 @@ impl bilibi_ui::page::Page<bilibi_security::Scope, bilibi_database::Error> for P
                 company: self.company.clone(),
                 id,
                 params: params(request.query)?,
+                framed: request.framed,
             });
             Ok(Some(state))
         })
@@ -163,6 +167,7 @@ struct CompanyPage {
     company: std::sync::Arc<crate::CompanyService>,
     id: Option<i64>,
     params: Params,
+    framed: bool,
 }
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -252,6 +257,7 @@ impl bilibi_ui::page::LiveState<bilibi_security::Scope, bilibi_database::Error> 
                     pages: ((page.total + next.size - 1) / next.size).max(1),
                     page: &page,
                     params: &next,
+                    workspace: self.framed,
                 }
                 .render()
                 .map_err(|_| Error::Internal)?;
