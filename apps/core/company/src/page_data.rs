@@ -24,6 +24,9 @@ impl CompanyService {
             .await?;
         if let Some(parent) = new.parent_id {
             organisation::authorize_target(tx.sql(), scope, parent, crate::CREATE).await?;
+            organisation::require_writable(tx.sql(), scope, parent, true)
+                .await
+                .map_err(write_error)?;
         }
         let result = organisation::create(&mut tx, scope, new).await?;
         if let CreateOutcome::Created(company) = &result {
@@ -111,6 +114,9 @@ impl CompanyService {
                 }
                 if edit.field == "parent_id" {
                     organisation::authorize_target(tx.sql(), scope, id, UPDATE).await?;
+                    organisation::require_writable(tx.sql(), scope, id, true)
+                        .await
+                        .map_err(write_error)?;
                     let cycle: bool = tx.sql().query_one("WITH RECURSIVE ancestors AS (SELECT id,parent_id FROM companies WHERE tenant_id=$1 AND id=$2 UNION SELECT c.id,c.parent_id FROM companies c JOIN ancestors a ON c.id=a.parent_id WHERE c.tenant_id=$1) SELECT EXISTS(SELECT 1 FROM ancestors WHERE id=$3)", &[&scope.tenant(),&id,&edit.id]).await?.get(0);
                     if cycle {
                         return Err(Error::Invalid);
@@ -142,5 +148,13 @@ impl CompanyService {
             Ok(((),vec![Change {kind:"company".into(),id,old:json!({&field:old}),new:json!({&field:value})}]))
         })).await?;
         tx.commit().await
+    }
+}
+
+fn write_error(error: crate::WriteError) -> Error {
+    match error {
+        crate::WriteError::Access(error) => error,
+        crate::WriteError::NotFound => Error::NotFound,
+        _ => Error::Forbidden,
     }
 }

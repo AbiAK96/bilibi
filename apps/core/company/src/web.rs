@@ -4,15 +4,19 @@ use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
 use bilibi_database::{Db, Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
-use bilibi_ui::{page::*, CommitStates, CommitStatus};
+use bilibi_ui::{page::*, CommitStates, CommitStatus, Filter, ListSpec, ListState, SortDir};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, LazyLock},
+};
 
 pub struct Pages {
     pub db: Db,
     pub company: Arc<crate::CompanyService>,
     pub views: Arc<PageViews>,
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
+    pub locales: Arc<bilibi_locale::Locales>,
 }
 impl Pages {
     async fn state(&self, request: &PageRequest<'_, Scope>) -> Result<CompanyPage> {
@@ -37,9 +41,10 @@ impl Pages {
             db: self.db.clone(),
             company: self.company.clone(),
             datetime: self.datetime.clone(),
+            locales: self.locales.clone(),
             operation: request.operation,
             id,
-            params: params(request.query)?,
+            params: list_state(request.query)?,
             columns,
             framed: request.framed,
             statuses: CommitStates::default(),
@@ -48,6 +53,8 @@ impl Pages {
             form: HashMap::from([("status".into(), "active".into())]),
             errors: Vec::new(),
             pending: None,
+            pending_activity: None,
+            history: false,
             notice: String::new(),
         })
     }
@@ -81,47 +88,56 @@ impl Page<Scope, Error> for Pages {
     }
 }
 
-pub fn params(values: &HashMap<String, String>) -> Result<Params> {
-    let mut result = Params::default();
-    for (key, value) in values {
-        match key.as_str() {
-            "page" => result.page = value.parse().unwrap_or(1).clamp(1, 100_000),
-            "size" | "per_page" | "perPage" => {
-                result.size = value
-                    .parse()
-                    .ok()
-                    .filter(|v| [25, 50, 100, 300].contains(v))
-                    .unwrap_or(25)
-            }
-            "sort" => {
-                result.sort =
-                    if ["name", "status", "jurisdiction", "created_at"].contains(&value.as_str()) {
-                        value.clone()
-                    } else {
-                        "name".into()
-                    }
-            }
-            "dir" => {
-                result.dir = if value == "desc" {
-                    "desc".into()
-                } else {
-                    "asc".into()
-                }
-            }
-            "q" | "search" => result.q = value.trim().chars().take(255).collect(),
-            "status" | "status_filter" => {
-                result.status = if crate::organisation::STATUSES.contains(&value.as_str()) {
-                    value.clone()
-                } else {
-                    String::new()
-                }
-            }
-            "cols" | "lens" | "z" | "since" => {}
-            _ => return Err(Error::Invalid),
+static LIST_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        sortable: BTreeMap::from([
+            ("name".into(), SortDir::Asc),
+            ("status".into(), SortDir::Asc),
+            ("jurisdiction".into(), SortDir::Asc),
+            ("created_at".into(), SortDir::Asc),
+        ]),
+        default_sort: Some("name".into()),
+        page_size_param: "per_page".into(),
+        page_size_aliases: vec!["size".into(), "perPage".into()],
+        invalid_page_size: bilibi_ui::list_state::InvalidPageSize::Default,
+        param_names: bilibi_ui::list_state::ParamNames {
+            sort_by: "sort".into(),
+            sort_dir: "dir".into(),
+            ..Default::default()
+        },
+        filters: BTreeMap::from([(
+            "status".into(),
+            Filter::one_of(&["", "active", "suspended", "pending", "archived"], ""),
+        )]),
+        omit_defaults: true,
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("company list specification")
+});
+fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
+    let mut values = values.clone();
+    if !values.contains_key("search") {
+        if let Some(q) = values.get("q").cloned() {
+            values.insert("search".into(), q);
         }
     }
-    result.validate()?;
-    Ok(result)
+    if !values.contains_key("status") {
+        if let Some(status) = values.get("status_filter").cloned() {
+            values.insert("status".into(), status);
+        }
+    }
+    ListState::parse(&values, LIST_SPEC.clone()).map_err(|_| Error::Internal)
+}
+fn query_params(state: &ListState) -> Params {
+    Params {
+        page: state.page as i64,
+        size: state.page_size as i64,
+        sort: state.sort_by.clone().unwrap_or_else(|| "name".into()),
+        dir: state.sort_dir.unwrap_or_default().key().into(),
+        q: state.search.clone(),
+        status: state.filters.get("status").cloned().unwrap_or_default(),
+    }
 }
 struct Pending {
     operation: Operation,
@@ -133,9 +149,10 @@ struct CompanyPage {
     db: Db,
     company: Arc<crate::CompanyService>,
     datetime: Arc<bilibi_datetime::DisplayPolicy>,
+    locales: Arc<bilibi_locale::Locales>,
     operation: &'static str,
     id: Option<i64>,
-    params: Params,
+    params: ListState,
     columns: PageColumns,
     framed: bool,
     statuses: CommitStates,
@@ -144,24 +161,14 @@ struct CompanyPage {
     form: HashMap<String, String>,
     errors: Vec<FieldError>,
     pending: Option<Pending>,
+    pending_activity: Option<(String, i64)>,
+    history: bool,
     notice: String,
 }
 impl CompanyPage {
     fn query(&self) -> HashMap<String, String> {
-        let mut values = self.columns.params();
-        let p = &self.params;
-        for (key, value, default) in [
-            ("page", p.page.to_string(), "1"),
-            ("per_page", p.size.to_string(), "25"),
-            ("sort", p.sort.clone(), "name"),
-            ("dir", p.dir.clone(), "asc"),
-            ("search", p.q.clone(), ""),
-            ("status", p.status.clone(), ""),
-        ] {
-            if value != default {
-                values.insert(key.into(), value);
-            }
-        }
+        let mut values = self.params.to_params();
+        values.extend(self.columns.params());
         values
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -169,15 +176,20 @@ impl CompanyPage {
         let masked = bilibi_authz::restrictions(&**client, scope).await?;
         let html = match self.operation {
             "list" => {
-                if masked.contains(&self.params.sort) {
-                    self.params.sort = "name".into();
-                    self.params.dir = "asc".into();
+                if self
+                    .params
+                    .sort_by
+                    .as_ref()
+                    .is_some_and(|key| masked.contains(key))
+                {
+                    self.params.sort_by = Some("name".into());
+                    self.params.sort_dir = Some(SortDir::Asc);
                 }
-                let mut page = crate::list(&**client, scope, &self.params).await?;
-                let last = ((page.total + self.params.size - 1) / self.params.size).max(1);
-                if self.params.page > last {
-                    self.params.page = last;
-                    page = crate::list(&**client, scope, &self.params).await?;
+                let mut page = crate::list(&**client, scope, &query_params(&self.params)).await?;
+                let last = ((page.total + self.params.page_size as i64 - 1)
+                    / self.params.page_size as i64) as u64;
+                if self.params.clamp_to_last_page(last, true) {
+                    page = crate::list(&**client, scope, &query_params(&self.params)).await?;
                 }
                 // Rebuild built-ins under the fresh restrictions too: a retained
                 // built-in must never outlive its reader's field access.
@@ -187,9 +199,10 @@ impl CompanyPage {
                     self.columns.from_params(scope, &query).await?;
                     self.masked = masked.clone();
                 }
+                let locale = self.locales.resolve(&**client, scope, None).await?;
                 let display = self
                     .datetime
-                    .display(&**client, scope, None, "en-MY")
+                    .display(&**client, scope, None, locale.locale)
                     .await?;
                 self.columns
                     .load(
@@ -206,7 +219,7 @@ impl CompanyPage {
                     &**client,
                     scope,
                     &page,
-                    &self.params,
+                    &query_params(&self.params),
                     &self.columns,
                     self.framed,
                     &masked,
@@ -214,6 +227,14 @@ impl CompanyPage {
                 .await?
             }
             "detail" => {
+                self.history =
+                    match bilibi_authz::authorize_key(&**client, scope, "admin.audit.log.list")
+                        .await
+                    {
+                        Ok(()) => true,
+                        Err(Error::Forbidden) => false,
+                        Err(error) => return Err(error),
+                    };
                 views::detail(
                     &**client,
                     scope,
@@ -221,6 +242,7 @@ impl CompanyPage {
                     &self.statuses,
                     self.pending.as_ref(),
                     &self.notice,
+                    self.pending_activity.as_ref(),
                 )
                 .await?
             }
@@ -240,19 +262,9 @@ impl CompanyPage {
         })
     }
     fn sort(&mut self, field: &str) -> Result<()> {
-        if self.operation != "list"
-            || !["name", "status", "jurisdiction", "created_at"].contains(&field)
-        {
+        if self.operation != "list" || !self.params.next_sort(field) {
             return Err(Error::Invalid);
         }
-        self.params.dir = if self.params.sort == field && self.params.dir == "asc" {
-            "desc"
-        } else {
-            "asc"
-        }
-        .into();
-        self.params.sort = field.into();
-        self.params.page = 1;
         Ok(())
     }
     async fn event(
@@ -282,27 +294,24 @@ impl CompanyPage {
                 get("sort")
             })?,
             "filters" if self.operation == "list" => {
+                let mut posted = HashMap::new();
                 for (key, field) in [
                     ("filters[search]", "search"),
                     ("filters[status_filter]", "status"),
-                    ("filters[perPage]", "per_page"),
+                    ("filters[perPage]", "perPage"),
                 ] {
                     if let Some(value) = value.get(key).and_then(Value::as_str) {
-                        let mut query = self.query();
-                        query.insert(field.into(), value.into());
-                        query.remove("page");
-                        self.params = params(&query)?;
+                        posted.insert(field.into(), value.into());
                     }
                 }
-                self.params.page = 1;
+                self.params.apply_filters(&posted);
             }
-            "page" if self.operation == "list" => {
-                self.params.page = get("page").parse().unwrap_or(1).clamp(1, 100_000);
-            }
+            "page" if self.operation == "list" => self.params.put_page(Some(get("page"))),
             "clear_filters" if self.operation == "list" => {
-                self.params.q.clear();
-                self.params.status.clear();
-                self.params.page = 1;
+                self.params.apply_filters(&HashMap::from([
+                    ("search".into(), "".into()),
+                    ("status".into(), "".into()),
+                ]))
             }
             "save_field" if self.operation == "detail" => {
                 let id = get("id").parse().map_err(|_| Error::Invalid)?;
@@ -333,6 +342,70 @@ impl CompanyPage {
                 };
                 self.statuses.put(edit.field, status);
             }
+            "add_activity" | "request_remove_activity" | "remove_activity"
+                if self.operation == "detail" =>
+            {
+                let id = self.id.ok_or(Error::Invalid)?;
+                let client = self.db.get().await?;
+                let row=client.query_one("SELECT scope_activities,version FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL", &[&scope.tenant(),&id]).await?;
+                let value: Option<Value> = row.get(0);
+                let version: i64 = row.get(1);
+                let mut activities = match value {
+                    None => Vec::new(),
+                    Some(Value::Array(a)) => a,
+                    _ => return Err(Error::Invalid),
+                };
+                if get("type") == "request_remove_activity" {
+                    crate::organisation::authorize_target(&**client, scope, id, crate::UPDATE)
+                        .await?;
+                    let index: usize = get("index").parse().map_err(|_| Error::Invalid)?;
+                    let activity = activities
+                        .get(index)
+                        .and_then(Value::as_str)
+                        .ok_or(Error::Invalid)?;
+                    self.pending_activity = Some((activity.into(), version));
+                } else {
+                    let expected = if get("type") == "add_activity" {
+                        let activity = get("value").trim();
+                        if activity.is_empty() || activity.chars().count() > 255 {
+                            return Err(Error::Invalid);
+                        }
+                        let activity = Value::String(activity.into());
+                        if !activities.contains(&activity) {
+                            activities.push(activity);
+                        }
+                        get("version").parse().map_err(|_| Error::Invalid)?
+                    } else {
+                        let (activity, version) =
+                            self.pending_activity.take().ok_or(Error::Invalid)?;
+                        activities.retain(|v| v.as_str() != Some(&activity));
+                        version
+                    };
+                    let edit = Edit {
+                        id,
+                        field: "scope_activities".into(),
+                        value: if activities.is_empty() {
+                            String::new()
+                        } else {
+                            serde_json::to_string(&activities).map_err(|_| Error::Internal)?
+                        },
+                        version: expected,
+                    };
+                    let status = match self.company.save_fact(scope, credential, &edit).await {
+                        Ok(()) => CommitStatus::Saved,
+                        Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                        Err(Error::Conflict) => CommitStatus::Error(
+                            "The record changed. Reload before changing its activities.".into(),
+                        ),
+                        Err(Error::Forbidden) => CommitStatus::Error(
+                            "The activity was not saved: this company is read-only.".into(),
+                        ),
+                        Err(_) => CommitStatus::failure(),
+                    };
+                    self.statuses.put("scope_activities", status);
+                }
+            }
+            "cancel_remove_activity" => self.pending_activity = None,
             "request_lifecycle" if self.operation == "detail" => {
                 let op: Operation = serde_json::from_value(Value::String(get("operation").into()))
                     .map_err(|_| Error::Invalid)?;
@@ -407,7 +480,7 @@ impl LiveState<Scope, Error> for CompanyPage {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
-                    self.params = params(values)?;
+                    self.params = list_state(values)?;
                     self.columns.from_params(request.scope, values).await?;
                 }
                 LiveInput::Event(value) => {
@@ -423,6 +496,9 @@ impl LiveState<Scope, Error> for CompanyPage {
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
+        if !self.history {
+            return Vec::new();
+        }
         self.id
             .map(|id| {
                 vec![PanelSpec {

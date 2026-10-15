@@ -1,7 +1,7 @@
 //! Companies: the Organisation of the approved party model, its reference
 //! catalogs (legal entity types, department types), departments, the tenant's
-//! primary company and provisioning, plus the demo list/detail pages with
-//! their audited inline edits. See `README.md` for the K1 contract.
+//! primary company and provisioning, plus shared-UI list/create/detail pages
+//! and audited inline facts. See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;
 pub mod departments;
@@ -93,7 +93,7 @@ impl Default for Params {
 }
 impl Params {
     pub fn validate(&self) -> Result<()> {
-        if !(1..=100_000).contains(&self.page)
+        if !(1..=1_000_000).contains(&self.page)
             || ![25, 50, 100, 300].contains(&self.size)
             || !["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str())
             || !["asc", "desc"].contains(&self.dir.as_str())
@@ -626,7 +626,7 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","core/geonames"],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","core/geonames"],
         migrations:&[MIGRATION, MIGRATION_ORGANISATION],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
@@ -641,7 +641,7 @@ inventory::submit! {
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
             })))) },
         ],
     }

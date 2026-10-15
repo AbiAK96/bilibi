@@ -567,6 +567,13 @@
 
     // The sidebar row a pin control names: its page and label.
     pinFromControl(control) {
+      // A record page supplies its own resolved label and same-origin path;
+      // the server still validates the destination on /api/pins/toggle.
+      if (control.dataset.navPinRecord === 'true') {
+        const url = this.normalizePinnedUrl(control.dataset.navPinUrl);
+        const label = control.dataset.navPinLabel;
+        return url && label ? {label, url, icon: null} : null;
+      }
       const item = this.navItem(control.dataset.navPin);
       const url = this.normalizePinnedUrl(item?.getAttribute('href'));
       const label = item?.dataset.navLabel;

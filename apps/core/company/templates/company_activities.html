@@ -1,0 +1,3 @@
+{% import "components.html" as ui %}
+<p class="text-xs text-ink-subtle">Industry, services, and business focus areas of this company.</p>
+<div class="mt-2 flex flex-wrap items-center gap-2">{% for activity in activities %}<span class="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-3 py-1 text-xs font-medium text-ink">{{ activity }}{% if editable %}{% call ui::icon_button(icon="close",label="Remove " ~ activity,context=bilibi_ui::IconContext::Inline,kind=bilibi_ui::IconKind::Danger,event="request_remove_activity",name="index",value=loop.index0.to_string()) %}{% endcall %}{% endif %}</span>{% endfor %}{% if editable %}{{ add }}{% elif activities.is_empty() %}<span class="text-ink-muted">—</span>{% endif %}</div>

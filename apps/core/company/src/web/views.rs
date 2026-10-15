@@ -134,11 +134,18 @@ pub(super) async fn list(
         "Legal Entity Types",
         "/companies/legal-entity-types",
     )?);
+    let mut pin = IconButton::new("bilimbi-pin", "Pin Companies to sidebar");
+    pin.id = "companies-pin";
+    pin.context = IconContext::Inline;
+    pin.nav_pin = "nav-admin-company";
     let header = render(&Header {
+        title_actions: render(&pin)?,
         title: Html::text("Companies"),
         subtitle: "Every live company in this tenant",
-        actions,
-        ..Header::default()
+        actions: render(&Actions {
+            class: "flex flex-wrap items-center gap-2 sm:gap-3",
+            body: actions,
+        })?,
     })?;
     let placeholder = if masked.contains("email") && masked.contains("jurisdiction") {
         "Search by name, code, or legal name..."
@@ -214,24 +221,21 @@ pub(super) async fn list(
         row.slots.insert("status".into(), badge(&company.status)?);
         row.slots.insert(
             "jurisdiction".into(),
-            Html::text(company.jurisdiction.as_deref().unwrap_or("—")),
+            render(&ReadValue {
+                value: company.jurisdiction.as_deref(),
+                empty: "—",
+            })?,
         );
         if let Some(fact) = facts.iter().find(|r| r.get::<_, i64>(0) == company.id) {
             row.slots.insert(
                 "parent_name".into(),
-                Html::text(
-                    fact.get::<_, Option<String>>(1)
-                        .as_deref()
-                        .unwrap_or("None"),
-                ),
+                render(&ReadValue {
+                    value: fact.get::<_, Option<String>>(1).as_deref(),
+                    empty: "None",
+                })?,
             );
             if fact.get::<_, bool>(2) {
-                row.actions = render(&Badge {
-                    kind: BadgeKind::Neutral,
-                    dot: false,
-                    class: "",
-                    body: Html::text("Primary"),
-                })?;
+                row.actions = render(&Badge::status(BadgeKind::Neutral, "Primary"))?;
             }
         }
     }
@@ -363,16 +367,27 @@ fn choice(
         .find(|c| c.value == value)
         .map(|c| c.label.as_str())
         .unwrap_or(if name == "parent_id" { "None" } else { "—" });
-    let editor = render(
-        &Field::named(name)
-            .id(format!("{id}-input"))
-            .kind(InputKind::Select)
-            .value(&value)
-            .prompt("None")
-            .options(options.clone())
-            .aria_label(name)
-            .wrapper_class("mb-0"),
-    )?;
+    let editor = if name == "jurisdiction" {
+        render(
+            &Combobox::new(format!("{id}-input"), name)
+                .value(&value)
+                .options(options.clone())
+                .placeholder("None")
+                .aria_label("Jurisdiction")
+                .wrapper_class("mb-0 inline-block min-w-56"),
+        )?
+    } else {
+        render(
+            &Field::named(name)
+                .id(format!("{id}-input"))
+                .kind(InputKind::Select)
+                .value(&value)
+                .prompt("None")
+                .options(options.clone())
+                .aria_label(name)
+                .wrapper_class("mb-0"),
+        )?
+    };
     let mut field = InlineField::new(id, name, format!("Edit {}", name.replace('_', " ")), value)
         .version(company.version)
         .status(status)
@@ -417,6 +432,7 @@ pub(super) async fn detail(
     statuses: &CommitStates,
     pending: Option<&Pending>,
     notice: &str,
+    pending_activity: Option<&(String, i64)>,
 ) -> Result<String> {
     let (company, masked) = crate::detail(client, scope, id).await?;
     let editable = allowed(client, scope, crate::UPDATE).await? && !company.archived();
@@ -432,14 +448,20 @@ pub(super) async fn detail(
     actions.push(&render(&History {})?);
     actions.push(&back("company-back")?);
     let header = render(&Header {
+        title_actions: render(&RecordPin {
+            pin_label: format!("Administration / Companies / {}", company.name),
+            url: format!("/companies/{id}"),
+        })?,
         title: Html::text(&company.name),
         subtitle: company
             .legal_name
             .as_deref()
             .filter(|n| *n != company.name)
             .unwrap_or(&company.code),
-        actions,
-        ..Header::default()
+        actions: render(&Actions {
+            class: "flex items-center gap-3",
+            body: actions,
+        })?,
     })?;
     let mut notices = Html::EMPTY;
     for (show, kind, message) in [
@@ -453,7 +475,15 @@ pub(super) async fn detail(
             StatusKind::Warning,
             "This company is archived and read-only. Archiving is final.",
         ),
-        (!notice.is_empty(), StatusKind::Info, notice),
+        (
+            !notice.is_empty(),
+            if notice == "Company status changed." {
+                StatusKind::Success
+            } else {
+                StatusKind::Error
+            },
+            notice,
+        ),
     ] {
         if show {
             notices.push(&render(&Alert {
@@ -557,7 +587,6 @@ pub(super) async fn detail(
             "Website",
             company.website.as_deref().unwrap_or(""),
         ),
-        ("phone", "Phone", company.phone.as_str()),
     ] {
         facts.push(Fact {
             title: label,
@@ -596,6 +625,36 @@ pub(super) async fn detail(
         (1, "metadata", "Metadata"),
     ] {
         let value: Option<Value> = context.get(index);
+        if name == "scope_activities" && value.as_ref().is_none_or(|value| value.is_array()) {
+            let activities = value
+                .and_then(|v| v.as_array().cloned())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            let mut field = InlineField::new(
+                "company-new-activity",
+                "scope_activities",
+                "Add business activity",
+                "",
+            )
+            .version(company.version)
+            .status(statuses.get("scope_activities"))
+            .placeholder("Add activity");
+            field.id_value = id.to_string();
+            field.save_event = "add_activity".into();
+            field.editable = editable;
+            facts.push(Fact {
+                title: label,
+                id: "scope-activities-section",
+                value: render(&ActivityBody {
+                    activities,
+                    editable,
+                    add: render(&InlineEdit { field })?,
+                })?,
+            });
+            continue;
+        }
         let mut field = InlineField::new(
             format!("company-{name}"),
             name,
@@ -609,6 +668,8 @@ pub(super) async fn detail(
         .status(statuses.get(name));
         field.id_value = id.to_string();
         field.editable = editable;
+        field.class = "font-mono text-xs".into();
+        field.input_class = "font-mono text-xs".into();
         facts.push(Fact {
             title: label,
             id: "",
@@ -624,7 +685,14 @@ pub(super) async fn detail(
         id: "company-details",
         items: facts,
     })?);
-    let mut content = card("company-details-card", details, false)?;
+    let mut content = render(&Card {
+        id: "company-details-card",
+        inner_class: "p-5 sm:p-6",
+        role: "region",
+        labelledby: "company-details-heading",
+        body: details,
+        ..Card::default()
+    })?;
     // Child-owning slices contribute the remaining panels; subsidiaries are
     // Company-owned and can be shown immediately without an upward dependency.
     let children=client.query("SELECT id,name,status FROM companies WHERE tenant_id=$1 AND parent_id=$2 AND deleted_at IS NULL ORDER BY name,id LIMIT 300",&[&scope.tenant(),&id]).await?;
@@ -668,7 +736,19 @@ pub(super) async fn detail(
         children_body.push(&render(&table)?);
         content.push(&card("company-subsidiaries-card", children_body, false)?);
     }
-    let modal = if let Some(pending) = pending {
+    let modal = if let Some((activity, _)) = pending_activity {
+        render(&ConfirmDialog {
+            id: "company-remove-activity-dialog",
+            consequence: &format!(
+                "Business activity “{activity}” will be removed from this company."
+            ),
+            detail: "The company and its other activities are kept.",
+            confirm: "Remove",
+            working: "Removing…",
+            confirm_event: "remove_activity",
+            cancel_event: "cancel_remove_activity",
+        })?
+    } else if let Some(pending) = pending {
         let (_, verb) = operation_name(pending.operation);
         let consequence = format!(
             "{} will be {}.",
@@ -769,6 +849,12 @@ fn text_fact(
         .status(status);
     field.id_value = company.id.to_string();
     field.editable = editable;
+    field.class = match name {
+        "name" => "font-semibold",
+        "code" => "font-mono",
+        _ => "",
+    }
+    .into();
     if !["name", "code"].contains(&name) {
         field.allow_empty = true;
     }
@@ -780,6 +866,7 @@ fn text_fact(
 struct CreateBody {
     header: Html,
     fields: Vec<Html>,
+    contacts: Vec<Html>,
     context: Vec<Html>,
     submit: Html,
 }
@@ -851,8 +938,20 @@ pub(super) async fn create(
             "status" => field.options(choices(&[("Active", "active"), ("Pending", "pending")])),
             _ => field.attr("maxlength", if name == "name" { "160" } else { "255" }),
         };
-        fields.push(render(&field)?);
+        if name == "jurisdiction" {
+            fields.push(render(
+                &Combobox::new(&field.id, name)
+                    .label(label)
+                    .value(&field.value)
+                    .options(opts.countries.clone())
+                    .placeholder("Select country...")
+                    .errors(field.errors.clone()),
+            )?);
+        } else {
+            fields.push(render(&field)?);
+        }
     }
+    let contacts = fields.split_off(8);
     let context = [
         ("scope_activities", "Business Activities (JSON)"),
         ("metadata", "Metadata (JSON)"),
@@ -864,6 +963,11 @@ pub(super) async fn create(
                 .id(format!("company-{name}"))
                 .label(label)
                 .kind(InputKind::Textarea)
+                .placeholder(if name == "metadata" {
+                    r#"{"employee_count":120}"#
+                } else {
+                    r#"{"industry":"Manufacturing"}"#
+                })
                 .value(values.get(name).cloned().unwrap_or_default())
                 .errors(
                     errors
@@ -895,6 +999,7 @@ pub(super) async fn create(
         render(&CreateBody {
             header,
             fields,
+            contacts,
             context,
             submit,
         })?,
@@ -941,4 +1046,35 @@ pub(super) fn new_company(
     let activities = object("scope_activities");
     let metadata = object("metadata");
     (new, activities, metadata, errors)
+}
+
+#[derive(Template)]
+#[template(path = "company_activities.html")]
+struct ActivityBody {
+    activities: Vec<String>,
+    editable: bool,
+    add: Html,
+}
+
+#[derive(Template)]
+#[template(source = "<div class=\"{{ class }}\">{{ body }}</div>", ext = "html")]
+struct Actions<'a> {
+    class: &'a str,
+    body: Html,
+}
+#[derive(Template)]
+#[template(
+    source = "<span{% if value.is_none() %} class=\"text-ink-faint\"{% endif %}>{{ value.unwrap_or(empty) }}</span>",
+    ext = "html"
+)]
+struct ReadValue<'a> {
+    value: Option<&'a str>,
+    empty: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "company_pin.html")]
+struct RecordPin {
+    pin_label: String,
+    url: String,
 }

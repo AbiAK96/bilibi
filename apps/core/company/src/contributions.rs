@@ -3,7 +3,7 @@
 //! roles that carry it, the Company pages' routes and the Companies menu
 //! entry. Web owns dispatch and scope guards; a route here bypasses nothing.
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_grid::{Field, FieldType::*, GridContribution, Source, TableDecl};
+use bilibi_grid::{Field, FieldType::*, GridContribution, LinkDecl, LinkKind, Source, TableDecl};
 use bilibi_menu::{MenuItem, Requirement};
 use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
@@ -87,30 +87,34 @@ static GRID: GridContribution = GridContribution {
         "Companies",
         LIST,
         Source::tenant(
-            "SELECT id, parent_id, code, name, legal_name, registration_number, legal_entity_type_id, jurisdiction, website, status, email, phone, tax_id, revenue, created_at FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
+            "SELECT id, parent_id, code, name, legal_name, registration_number, legal_entity_type_id, jurisdiction, website, status, email, phone, tax_id, revenue, created_at, updated_at FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
         ),
         "id",
         &[
             Field::new("id", "ID", Integer),
-            Field::new("code", "Code", String),
-            Field::new("legal_name", "Legal Name", String),
+            Field::new("code", "Code", String).protected(),
+            Field::new("legal_name", "Legal Name", String).protected(),
             Field::new("registration_number", "Registration Number", String),
             Field::new("jurisdiction", "Jurisdiction", String),
             Field::new("website", "Website", String),
             Field::new("parent_id", "Parent", Integer).hidden(),
             Field::new("name", "Name", String),
-            Field::choice("status", "Status", &["active", "suspended", "pending", "archived"]),
+            Field::choice("status", "Status", &["active", "suspended", "pending", "archived"]).protected(),
             Field::new("email", "Email", String),
             Field::new("phone", "Phone", String),
             Field::new("tax_id", "Tax ID", String),
             Field::new("revenue", "Revenue", Integer),
             Field::new("created_at", "Created", DateTime),
+            Field::new("updated_at", "Updated", DateTime),
         ],
     )
     .label_field("name")
     .time_field("created_at")
     .record_types(&["company"])],
-    links: &[],
+    links: &[
+        LinkDecl::on("parent", "Parent company", LinkKind::One, "companies", "parent_id", "companies", "id"),
+        LinkDecl::on("children", "Subsidiaries", LinkKind::Many, "companies", "id", "companies", "parent_id"),
+    ],
 };
 bilibi_grid::contribute!("core/company", "company.grid", &GRID);
 

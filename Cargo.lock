@@ -413,6 +413,7 @@ dependencies = [
  "bilibi-datetime",
  "bilibi-geonames",
  "bilibi-grid",
+ "bilibi-locale",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",

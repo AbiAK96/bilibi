@@ -197,9 +197,12 @@ it through Grid's `PageViews` service.
 
 Create uses K1 validation and records optional business context on the same
 audited transaction. Detail uses shared read-first inline text, choice and
-long-text controls, per-field commit outcomes and version fencing. Parent
+long-text controls, activity chips with confirmed removal, per-field commit
+outcomes and version fencing. Legacy activity JSON objects remain editable
+without silently converting their business meaning. Parent
 changes serialize on the tenant and reject a cycle. Lifecycle buttons come
 only from `lifecycle::operations_from`, hold the record version in server state,
-and confirm with an optional reason; archive remains final. The Audit history
+and confirm with an optional reason; archive remains final. Record pins use
+the shell's existing account pin API, with a resolved record label and URL. The Audit history
 panel retains its mount through detail patches. Child-owned panels are attached
 by their later owner slices.
