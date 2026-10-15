@@ -4,7 +4,9 @@
     so a split, close or resize never re-creates a frame. Geometry travels in
     `data-place`, never a `style` attribute: the host CSP allows no inline
     style, so the Tiling hook (base/ui assets/tiling.js) writes the position
-    through the CSSOM after every patch. -#}
+    through the CSSOM after every patch. `data-history="params"` makes Back
+    and Forward a params update in place (base/ui `assets/live.js`), so the
+    frames that stay are reconciled, never reloaded. -#}
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as feedback -%}
 {%- import "lists.html" as lists -%}
@@ -18,7 +20,7 @@
 <div id="workspace-actions" class="flex shrink-0 items-center justify-end gap-1">
 {% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
 </div>
-<div id="workspace" data-hook="Tiling" data-focused="{{ focused }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
+<div id="workspace" data-hook="Tiling" data-history="params" data-focused="{{ focused }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
 {%- if !tiles.is_empty() %}
 {% call tabstrip::tabs(id="workspace-tabs", items=tabs, label="Tiles", class="shrink-0 lg:hidden") %}{% endcall %}
 {%- endif %}

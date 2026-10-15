@@ -12,7 +12,15 @@
 //!
 //! Each tile shows its page in a same-origin frame at the page's own URL; the
 //! tile is judged by that route's access before the frame is drawn, so a tile
-//! the account may not open shows the refusal instead of a frame.
+//! the account may not open shows the refusal instead of a frame. The page in
+//! a frame is its own live session: it mounts, authorizes and refreshes
+//! exactly as when opened alone, and nothing here reads its state. The Tiling
+//! hook (base/ui `assets/tiling.js`) reports where each frame went and what
+//! its page is called; the tree records the path and replaces the address,
+//! so Back steps through the workspace's own changes and then leaves it.
+//! Back and Forward within the workspace arrive as params (`data-history`),
+//! and the tree read back is reconciled with the one on screen, so the frames
+//! that stay keep their documents.
 use crate::layout::{At, Direction, Layout, Leaf, Node, Rect, Side, DEFAULT_VIEWPORT};
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
@@ -170,6 +178,13 @@ enum Event {
         w: f64,
         h: f64,
     },
+    /// A frame loaded or its live page changed address; `title` is the name
+    /// the page gives itself.
+    TileNavigated {
+        id: String,
+        path: String,
+        title: Option<String>,
+    },
     /// The narrow-screen tab strip names its value `tab`.
     FocusTile {
         #[serde(alias = "tab")]
@@ -243,6 +258,9 @@ struct Workspace {
     flash: Option<(StatusKind, String)>,
     /// A full navigation the next reply asks for instead of a patch.
     leave: Option<String>,
+    /// The names the frames report, by tile id; a tile is named by its path
+    /// until its page reports.
+    titles: HashMap<String, String>,
 }
 
 impl Workspace {
@@ -266,6 +284,7 @@ impl Workspace {
             picker_for: None,
             flash: None,
             leave: None,
+            titles: HashMap::new(),
         };
         if framed {
             return workspace;
@@ -342,6 +361,26 @@ impl Workspace {
                     self.viewport = (w, h);
                 }
             }
+            // The tree keeps where a tile went, so a reload or a copied
+            // address shows the page the tile shows now. A path no framed page
+            // of this deployment serves is not recorded.
+            Event::TileNavigated { id, path, title } => {
+                if self.known(&id).is_some()
+                    && path.len() <= 2048
+                    && crate::layout::page_path(&path)
+                    && core.route(&path).is_some()
+                {
+                    self.layout.update_path(&id, &path);
+                    match title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                        Some(title) => {
+                            self.titles.insert(id, title.chars().take(80).collect());
+                        }
+                        None => {
+                            self.titles.remove(&id);
+                        }
+                    }
+                }
+            }
             Event::FocusTile { id } => self.focus(&id),
             Event::FocusDirection { side: s } => {
                 if let (Some(s), Some(id)) = (side(&s), self.focused.clone()) {
@@ -390,6 +429,7 @@ impl Workspace {
                     self.layout.close(&id);
                 }
                 self.monocle = self.monocle && self.layout.count() > 1;
+                self.titles.remove(&id);
                 self.keep_focus();
                 if self.in_place {
                     if let [only] = self.layout.leaves().as_slice() {
@@ -514,7 +554,11 @@ impl Workspace {
                 TileView {
                     id: leaf.id.clone(),
                     path: leaf.path.clone(),
-                    title: leaf.path.clone(),
+                    title: self
+                        .titles
+                        .get(&leaf.id)
+                        .cloned()
+                        .unwrap_or_else(|| leaf.path.clone()),
                     place: if self.monocle && focused {
                         place(Rect::FULL)
                     } else {
@@ -777,8 +821,15 @@ impl LiveState<Scope, Error> for Mounted {
                     self.workspace.layout =
                         previous.layout.reconcile(self.workspace.layout.clone());
                     self.workspace.viewport = previous.viewport;
-                    self.workspace.focused = previous.focused;
+                    self.workspace.focused = previous.focused.clone();
+                    self.workspace.titles = previous.titles;
+                    self.workspace
+                        .titles
+                        .retain(|id, _| self.workspace.layout.fetch_leaf(id).is_some());
                     self.workspace.keep_focus();
+                    self.workspace.monocle = previous.monocle
+                        && self.workspace.focused == previous.focused
+                        && self.workspace.layout.count() > 1;
                 }
                 LiveInput::Event(value) => {
                     let event: Event =
