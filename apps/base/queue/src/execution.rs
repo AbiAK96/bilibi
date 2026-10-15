@@ -10,6 +10,7 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Dura
 use tokio::{sync::watch, task::JoinSet};
 
 pub const HANDLERS: &str = "base/queue.handlers";
+pub const OBSERVERS: &str = "base/queue.observers";
 pub type HandlerFuture<'a> = Pin<Box<dyn Future<Output = Outcome> + Send + 'a>>;
 /// Owner services implement this bridge and contribute a matching HandlerBinding.
 /// A retry/cancel code must be lowercase [a-z][a-z0-9_]{0,63}; error payloads,
@@ -58,6 +59,45 @@ fn validate_bindings(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
     Ok(())
 }
 inventory::submit! { Consumer::new::<HandlerBinding>(HANDLERS,"base/queue",validate_bindings) }
+
+/// What an observer may know about one attempt: stable facts only, never
+/// arguments, actor or tenant.
+#[derive(Clone, Debug)]
+pub struct JobFacts {
+    pub worker_id: String,
+    pub attempt: i32,
+    pub max_attempts: i32,
+}
+/// Wraps one whole attempt (actor rehydration, authorization and the owner's
+/// handler) to measure it. An observer must never delay, alter or fail the work:
+/// it returns the same outcome it was handed. If the attempt is dropped (lease
+/// timeout, shutdown) the wrapped future is dropped with it.
+pub trait Observer: Send + Sync {
+    fn observe<'a>(&'a self, job: JobFacts, work: HandlerFuture<'a>) -> HandlerFuture<'a>;
+}
+pub struct ObserverService(pub Arc<dyn Observer>);
+/// Contributed to `OBSERVERS` by a module that measures jobs (Perf). Its `service`
+/// must belong to that module and resolve to `ObserverService`.
+#[derive(Clone, Copy)]
+pub struct ObserverBinding {
+    pub service: &'static str,
+}
+fn validate_observers(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    for entry in entries {
+        let binding = entry.get::<ObserverBinding>()?;
+        if !binding
+            .service
+            .starts_with(&format!("{}.", entry.provenance.module))
+        {
+            return Err(RegistryError::Contribution(format!(
+                "invalid observer binding {}",
+                entry.id
+            )));
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<ObserverBinding>(OBSERVERS,"base/queue",validate_observers) }
 
 /// Who the job runs as, re-proven on every attempt and again in `begin`.
 #[derive(Clone, Debug)]
@@ -186,6 +226,7 @@ pub struct Executor {
     authentication: Arc<Authentication>,
     boundary: Arc<MutationBoundary>,
     handlers: BTreeMap<&'static str, BoundHandler>,
+    observers: Vec<Arc<ObserverService>>,
     config: Config,
 }
 impl Executor {
@@ -218,12 +259,18 @@ impl Executor {
         if queue.workers().iter().any(|w| !handlers.contains_key(w.id)) {
             return Err(Error::Invalid);
         }
+        let observers = catalog
+            .entries::<ObserverBinding>(OBSERVERS)?
+            .iter()
+            .map(|entry| services.get(entry.get::<ObserverBinding>()?.service))
+            .collect::<bilibi_module_registry::Result<_>>()?;
         Ok(Arc::new(Self {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             queue,
             authentication: services.get("base/tenancy.authentication")?,
             boundary: services.get("base/database.mutations")?,
             handlers,
+            observers,
             config: config.validate()?,
         }))
     }
@@ -353,14 +400,28 @@ impl Executor {
         // Preparation runs in a child too: validator panics and slow verifiers
         // are isolated, bounded, and heartbeat-protected just like owner code.
         let executor = self.clone();
+        let facts = JobFacts {
+            worker_id: claim.row.get("worker_id"),
+            attempt,
+            max_attempts: max,
+        };
         let mut child = JoinSet::new();
         child.spawn(async move {
-            match executor.prepare(&claim).await {
-                Ok((execution, handler, args)) => handler.0.perform(&execution, args).await,
-                Err(Error::Unauthorized | Error::Forbidden) => Outcome::Cancel("actor_refused"),
-                Err(Error::Invalid | Error::NotFound) => Outcome::Cancel("worker_args_refused"),
-                Err(_) => Outcome::Retry("prepare_unavailable"),
-            }
+            let work: HandlerFuture<'_> = Box::pin(async {
+                match executor.prepare(&claim).await {
+                    Ok((execution, handler, args)) => handler.0.perform(&execution, args).await,
+                    Err(Error::Unauthorized | Error::Forbidden) => Outcome::Cancel("actor_refused"),
+                    Err(Error::Invalid | Error::NotFound) => Outcome::Cancel("worker_args_refused"),
+                    Err(_) => Outcome::Retry("prepare_unavailable"),
+                }
+            });
+            executor
+                .observers
+                .iter()
+                .fold(work, |work, observer| {
+                    observer.0.observe(facts.clone(), work)
+                })
+                .await
         });
         let mut heartbeat =
             tokio::time::interval(Duration::from_secs(self.config.lease_seconds as u64 / 3));
