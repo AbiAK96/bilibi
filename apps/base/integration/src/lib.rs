@@ -10,9 +10,11 @@
 //! deletion is an audited mutation.
 mod contributions;
 pub mod redaction;
+pub mod reference_webhook;
 mod retention;
 mod transport;
-pub use contributions::{DELETE, LIST, PAYLOAD, RETENTION_DAYS};
+pub mod webhooks;
+pub use contributions::{WebhookLimits, DELETE, LIST, PAYLOAD, RETENTION_DAYS, WEBHOOK_SETTINGS};
 pub use transport::{Failure, Outgoing, Reply, Streamed};
 
 use bilibi_authz::{authorize_key, SystemScope};
@@ -629,13 +631,16 @@ async fn visible_tenant(
 inventory::submit! {
     Module { id: "base/integration", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings"],
-        migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql"))],
+        migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
+            ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
             let integration = Integration::new(db, boundary)
                 .map_err(|_| bilibi_module_registry::RegistryError::Service("base/integration HTTP client".into()))?;
             Ok(Arc::new(integration))
+        } }, Service { id: reference_webhook::SERVICE, factory: |services| {
+            Ok(reference_webhook::service(services.get::<Db>("base/database.pool")?.as_ref().clone()))
         } }, Service { id: "base/integration.retention", factory: |services| {
             Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::Retention {
                 integration: services.get(SERVICE)?,

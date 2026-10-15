@@ -100,3 +100,25 @@ server: retained/redacted preview, HTTP error, body limit, streamed download,
 connect failure, timeout, tenant and system incoming rows, every visibility and
 capability gate, audited deletion and payload pruning. The API Exchanges pages
 (`/system/api-exchanges`) are slice O2.
+
+## Inbound webhooks
+
+`webhooks.rs` is the contract between a module and the host's
+`/webhooks/{identifier}` boundary (`apps/web/src/webhooks.rs`). Contribute
+`Webhook { identifier, service }` to `WEBHOOKS`; the service is a
+`WebhookService(Arc<dyn WebhookHandler>)`. `verify` authenticates the raw
+delivery (exact bytes, all headers, attributed sender) and returns an opaque
+proof; `handle` acts on it idempotently. Both answer `Refused` without a reason:
+the host exposes one fixed refusal and audits only its own codes. Handlers must
+not panic and never see the response.
+
+`reference_webhook.rs` is the specimen at `/webhooks/integration-reference`:
+HMAC-SHA256 over `"{timestamp}.{nonce}." + body` in `X-Bilibi-Signature`
+(lowercase hex), `X-Bilibi-Timestamp` within ±300 s and a single-use
+`X-Bilibi-Nonce` claimed atomically in `base_integration_reference_webhook`, so
+a replayed delivery is refused while a delivery the host rate-limited after
+verification can be retried unchanged. Its secret is
+`BILIBI_REFERENCE_WEBHOOK_SECRET` at boot, because a webhook has no actor and
+Settings releases encrypted values only to an authorized scope; unset, it
+refuses everything. Production owners resolve credentials from their own
+definitions. The host reads the `webhooks.*` limits contributed here.

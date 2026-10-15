@@ -1,5 +1,6 @@
-//! Integration's contributed vocabulary, retention setting, scheduled payload
-//! retention and the audit redaction for manually deleted exchanges.
+//! Integration's contributed vocabulary, retention and webhook settings,
+//! scheduled payload retention and the audit redaction for manually deleted
+//! exchanges.
 use bilibi_audit::{Redaction, REDACTIONS};
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -48,3 +49,62 @@ inventory::submit! { Contribution::new(REDACTIONS, "base/integration.exchange", 
     kind: "base/integration.exchange",
     fields: &["endpoint", "request_headers", "request_body", "response_headers", "response_body", "error_message"],
 }) }
+
+/// Platform-wide inbound webhook limits the host reads once per admission
+/// window (Bilimbi `webhooks.*`): bytes per body, verified deliveries per
+/// handler per window, attempts per sender per handler per window before
+/// verification, the window length and the body read timeout.
+pub const WEBHOOK_SETTINGS: WebhookLimits<&str> = WebhookLimits {
+    max_bytes: "webhooks.max_bytes",
+    rate_limit: "webhooks.rate_limit",
+    sender_rate_limit: "webhooks.sender_rate_limit",
+    window_ms: "webhooks.window_ms",
+    read_timeout_ms: "webhooks.read_timeout_ms",
+};
+/// The five webhook settings, as keys or as values read together.
+#[derive(Clone, Copy, Debug)]
+pub struct WebhookLimits<T> {
+    pub max_bytes: T,
+    pub rate_limit: T,
+    pub sender_rate_limit: T,
+    pub window_ms: T,
+    pub read_timeout_ms: T,
+}
+macro_rules! webhook_setting {
+    ($key:expr, $default:literal, $max:literal, $label:literal, $help:literal) => {
+        inventory::submit! { Contribution::new(DEFINITIONS, $key, provenance!(), &Setting::Definition(Definition {
+            value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!($default), nullable: false, encrypted: false,
+            minimum: Some(1.0), maximum: Some($max), validator: None,
+            editor: Some(Editor { group: "Webhooks", label: $label, help: $help, capability: None, reveal_duration_ms: 5_000 }),
+        })) }
+    };
+}
+webhook_setting!(
+    WEBHOOK_SETTINGS.max_bytes,
+    1_048_576,
+    67_108_864.0,
+    "Webhook body limit",
+    "Maximum bytes per inbound webhook."
+);
+webhook_setting!(
+    WEBHOOK_SETTINGS.rate_limit,
+    120,
+    1_000_000.0,
+    "Webhook delivery limit",
+    "Maximum verified deliveries per registered handler per window, on each host node."
+);
+webhook_setting!(WEBHOOK_SETTINGS.sender_rate_limit, 120, 1_000_000.0, "Webhook sender limit", "Maximum attempts per sender address per registered handler per window, on each host node, before verification.");
+webhook_setting!(
+    WEBHOOK_SETTINGS.window_ms,
+    60_000,
+    3_600_000.0,
+    "Webhook rate window",
+    "Rate window in milliseconds."
+);
+webhook_setting!(
+    WEBHOOK_SETTINGS.read_timeout_ms,
+    15_000,
+    120_000.0,
+    "Webhook read timeout",
+    "Maximum wait in milliseconds for the body."
+);
