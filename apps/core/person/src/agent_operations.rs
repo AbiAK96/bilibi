@@ -1,0 +1,228 @@
+//! Headless adapters call the owner; E2 owns review, replay and outer commit.
+use crate::{
+    contributions::*, identity, DuplicateQuery, Person, PersonId, PersonInput, Search, Update,
+    WriteError,
+};
+use bilibi_agent_api::{
+    json::{Data, Output, Page},
+    Definitions, Guide, Handler, Operation, OperationClient, OperationFuture, ReadHandler,
+    WriteHandler, DEFINITIONS,
+};
+use bilibi_database::{Db, Error, MutationTransaction};
+use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_tenancy::Scope;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::OnceLock,
+};
+
+static DB: OnceLock<Db> = OnceLock::new();
+pub fn bind(db: Db) -> bilibi_module_registry::Result<()> {
+    DB.set(db).map_err(|_| {
+        bilibi_module_registry::RegistryError::Service("duplicate person agent binding".into())
+    })
+}
+fn db() -> bilibi_agent_api::Result<&'static Db> {
+    DB.get().ok_or(Error::Internal.into())
+}
+fn parse<T: for<'a> Deserialize<'a>>(value: &Value) -> bilibi_agent_api::Result<T> {
+    serde_json::from_value(value.clone()).map_err(|_| Error::Invalid.into())
+}
+fn id(input: &Value) -> bilibi_agent_api::Result<PersonId> {
+    PersonId::new(input["person_id"].as_i64().ok_or(Error::Invalid)?)
+        .map_err(|_| Error::Invalid.into())
+}
+fn version(input: &Value) -> bilibi_agent_api::Result<i64> {
+    input["version"]
+        .as_i64()
+        .filter(|v| *v > 0)
+        .ok_or(Error::Invalid.into())
+}
+fn invalid(error: WriteError) -> bilibi_agent_api::Error {
+    match error {
+        WriteError::Backend(Error::NotFound) => bilibi_agent_api::Error::NotFound,
+        WriteError::Backend(error) => error.into(),
+        WriteError::Validation(errors) => {
+            let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for error in errors {
+                fields
+                    .entry(error.field.into())
+                    .or_default()
+                    .push(error.message.into());
+            }
+            bilibi_agent_api::Error::InvalidInput(fields)
+        }
+        WriteError::Retired | WriteError::SystemIdentity => Error::Forbidden.into(),
+    }
+}
+fn record(person: Person) -> Data {
+    let masked: HashSet<_> = person.restricted.iter().cloned().collect();
+    Data::restricted(person.json(), &masked)
+}
+enum Read {
+    List,
+    Get,
+    Duplicates,
+}
+impl ReadHandler for Read {
+    fn owner(&self) -> &'static str {
+        "core/person"
+    }
+    fn call<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let client = db()?.get().await.map_err(Error::from)?;
+            match self {
+                Self::List => {
+                    let page = identity::search(&**client, scope, &parse::<Search>(input)?).await?;
+                    Ok(Output::Page(Page {
+                        entries: Data::Array(page.entries.into_iter().map(record).collect()),
+                        page: page.page as u64,
+                        page_size: page.page_size as u64,
+                        total: page.total as u64,
+                    }))
+                }
+                Self::Get => Ok(Output::Data(record(
+                    identity::read(&**client, scope, id(input)?).await?,
+                ))),
+                Self::Duplicates => Ok(Output::Data(Data::Array(
+                    identity::duplicates(&**client, scope, &parse::<DuplicateQuery>(input)?)
+                        .await?
+                        .into_iter()
+                        .map(record)
+                        .collect(),
+                ))),
+            }
+        })
+    }
+}
+enum Write {
+    Create,
+    Update,
+    Retire,
+}
+impl WriteHandler for Write {
+    fn owner(&self) -> &'static str {
+        "core/person"
+    }
+    fn preview<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let client = db()?.get().await.map_err(Error::from)?;
+            let value = match self {
+                Self::Create => {
+                    let person = identity::preview(&**client, scope, &parse::<PersonInput>(input)?)
+                        .await
+                        .map_err(invalid)?;
+                    json!({"summary":"Create person without an account or access grants", "identity":person})
+                }
+                Self::Update => {
+                    let update = Update {
+                        version: version(input)?,
+                        identity: parse(&input["identity"])?,
+                    };
+                    let (old, identity) =
+                        identity::preview_update(&**client, scope, id(input)?, &update)
+                            .await
+                            .map_err(invalid)?;
+                    // Record JSON already lacks masked values. Null for a hidden
+                    // contact means preserve; the guide explains this to clients.
+                    json!({"summary":"Update person", "person_id":old.id, "version":old.version, "before":old, "identity":identity})
+                }
+                Self::Retire => {
+                    let old =
+                        identity::preview_retire(&**client, scope, id(input)?, version(input)?)
+                            .await
+                            .map_err(invalid)?;
+                    json!({"summary":"Retire person; retain identity and history", "person_id":old.id, "version":old.version})
+                }
+            };
+            Ok(value.into())
+        })
+    }
+    fn commit<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let person = match self {
+                Self::Create => identity::create(tx, scope, &parse::<PersonInput>(input)?).await,
+                Self::Update => {
+                    identity::update(
+                        tx,
+                        scope,
+                        id(input)?,
+                        &Update {
+                            version: version(input)?,
+                            identity: parse(&input["identity"])?,
+                        },
+                    )
+                    .await
+                }
+                Self::Retire => identity::retire(tx, scope, id(input)?, version(input)?).await,
+            }
+            .map_err(invalid)?;
+            Ok(Output::Data(record(person)))
+        })
+    }
+}
+fn identity_schema() -> Value {
+    json!({"type":"object","required":["name","kind"],"properties":{
+        "name":{"type":"string","maxLength":160},"kind":{"type":"string","enum":["human","agent"]},
+        "email":{"type":"string","maxLength":254},"phone":{"type":"string","maxLength":64}
+    }})
+}
+fn list_schema() -> Value {
+    json!({"type":"object","properties":{
+        "search":{"type":"string","maxLength":200},"kind":{"type":"string","enum":["human","agent"]},
+        "include_retired":{"type":"boolean"},"page":{"type":"integer","minimum":1,"maximum":1000000},"page_size":{"type":"integer","minimum":1,"maximum":100}
+    }})
+}
+fn id_schema() -> Value {
+    json!({"type":"integer","minimum":1})
+}
+fn get_schema() -> Value {
+    json!({"type":"object","required":["person_id"],"properties":{"person_id":id_schema()}})
+}
+fn duplicate_schema() -> Value {
+    json!({"type":"object","properties":{
+        "name":{"type":"string","maxLength":160},"email":{"type":"string","maxLength":254},"phone":{"type":"string","maxLength":64},
+        "except_id":id_schema(),"limit":{"type":"integer","minimum":1,"maximum":100}
+    }})
+}
+fn update_schema() -> Value {
+    json!({"type":"object","required":["person_id","version","identity"],"properties":{"person_id":id_schema(),"version":id_schema(),"identity":identity_schema()}})
+}
+fn retire_schema() -> Value {
+    json!({"type":"object","required":["person_id","version"],"properties":{"person_id":id_schema(),"version":id_schema()}})
+}
+fn one_output() -> Value {
+    json!({"type":"object","description":"Person identity/contact facts; hidden contacts read as {\"restricted\":true}. No credentials or grants."})
+}
+fn many_output() -> Value {
+    json!({"type":"array","description":"Bounded Person identities with contacts redacted under your current role restrictions."})
+}
+inventory::submit! { Contribution::new(DEFINITIONS, "core/person.agent", Provenance { module: "core/person", source: file!(), line: line!() }, &Definitions {
+    operations: &[
+        Operation { key:"core.person.list", title:"List persons", summary:"Search identities and visible contacts in your tenant.", keywords:&["people","contact","find"], capability:LIST, input:list_schema, output:many_output, handler:Handler::Read(&Read::List) },
+        Operation { key:"core.person.get", title:"Read a person", summary:"Read one identity and its visible personal contacts.", keywords:&["identity","contact"], capability:VIEW, input:get_schema, output:one_output, handler:Handler::Read(&Read::Get) },
+        Operation { key:"core.person.duplicates", title:"Find duplicate candidates", summary:"Find exact name, email or phone candidates, including retired identities. Does not merge or infer identity.", keywords:&["contact","reuse","lookup"], capability:LIST, input:duplicate_schema, output:many_output, handler:Handler::Read(&Read::Duplicates) },
+        Operation { key:"core.person.create", title:"Create a person", summary:"Record a human or agent contact without creating an account, credentials, employment or grants.", keywords:&["contact","add","human","agent"], capability:CREATE, input:identity_schema, output:one_output, handler:Handler::SafeWrite(&Write::Create) },
+        Operation { key:"core.person.update", title:"Update a person", summary:"Replace identity and visible contact facts using the current version.", keywords:&["contact","edit"], capability:UPDATE, input:update_schema, output:one_output, handler:Handler::SafeWrite(&Write::Update) },
+        Operation { key:"core.person.retire", title:"Retire a person", summary:"Retain the contact and history while refusing new identity bindings. Protected system identities cannot retire.", keywords:&["contact","archive"], capability:RETIRE, input:retire_schema, output:one_output, handler:Handler::SafeWrite(&Write::Retire) },
+    ],
+    guides: &[Guide { key:"core.person", title:"Persons and personal contacts", summary:"Identity, duplicate candidates, agents and optional account binding without People.", keywords:&["contact","human","agent","account"], capability:LIST,
+        body:"A Person is a human or agent identity with optional personal email and phone, independent of any company, employment or login account. Search with core.person.list and core.person.duplicates before creating; duplicate email and name are allowed and never imply the same person. Duplicate lookup matches exact case-insensitive trimmed name/email or exact trimmed phone and includes retired records. It never probes a contact field you may not see.\n\nCreate through safe-write review and plan-code commit. Employee numbers, employment lifecycle, account IDs, grants and reserved system keys are refused. Agent kind grants no login or capability. The operator explicitly provisions the protected platform-orchestrator identity through its owner API, never by a magic numeric ID.\n\nUpdate sends person_id, current version and identity (name, kind, optional email/phone). Empty strings clear visible contacts; omitted visible contacts also clear. A hidden contact must be omitted and is preserved. Read results mark hidden contacts as restricted. Retirement retains identity/history and prevents new account bindings. Optional account links belong to User and require its live Person/Company/Affiliation proof; Person creation never creates a link. Work contacts and dated company affiliations belong to Affiliation; HR belongs to People." }],
+}) }

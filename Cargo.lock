@@ -415,6 +415,7 @@ dependencies = [
  "bilibi-company",
  "bilibi-geonames",
  "bilibi-party",
+ "bilibi-person",
  "bilibi-user",
 ]
 
@@ -694,6 +695,27 @@ dependencies = [
  "inventory",
  "jiff",
  "serde_json",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-person"
+version = "0.1.0"
+dependencies = [
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-grid",
+ "bilibi-module-registry",
+ "bilibi-party",
+ "bilibi-principal-directory",
+ "bilibi-tenancy",
+ "bilibi-web",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio",
  "tokio-postgres",
 ]
