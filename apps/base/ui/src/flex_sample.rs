@@ -217,12 +217,56 @@ fn iso_date(days: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-/// Deterministic categorical position in 0..=1 over eight slots.
+/// Deterministic categorical position in 0..=1 over eight slots: Bilimbi's
+/// `:erlang.phash2(text, 8) / 7`, so each category paints the source's band.
 fn category(text: &str) -> f64 {
-    let hash = text.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
-        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
-    });
-    f64::from(hash % 8) / 7.0
+    f64::from(phash2(text.as_bytes()) % 8) / 7.0
+}
+
+/// `erlang:phash2/1` of a binary: Bob Jenkins' lookup2 block hash seeded with
+/// erts' `HCONST_13`.
+fn phash2(bytes: &[u8]) -> u32 {
+    const GOLDEN: u32 = 0x9e37_79b9;
+    fn mix([mut a, mut b, mut c]: [u32; 3]) -> [u32; 3] {
+        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 13);
+        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 8);
+        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 13);
+        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 12);
+        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 16);
+        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 5);
+        a = a.wrapping_sub(b).wrapping_sub(c) ^ (c >> 3);
+        b = b.wrapping_sub(c).wrapping_sub(a) ^ (a << 10);
+        c = c.wrapping_sub(a).wrapping_sub(b) ^ (b >> 15);
+        [a, b, c]
+    }
+    // Little-endian words of up to four bytes; a short tail word reads as
+    // lookup2's fall-through switch adds it.
+    let word = |chunk: &[u8]| {
+        chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |word, (i, byte)| word | u32::from(*byte) << (8 * i))
+    };
+    let mut state = [GOLDEN, GOLDEN, GOLDEN.wrapping_mul(13)];
+    let (blocks, tail) = bytes.as_chunks::<12>();
+    for block in blocks {
+        for (lane, chunk) in state.iter_mut().zip(block.chunks(4)) {
+            *lane = lane.wrapping_add(word(chunk));
+        }
+        state = mix(state);
+    }
+    // The tail fills a and b from its first eight bytes; its last three land
+    // in c above the low byte, which holds the length.
+    state[2] = state[2].wrapping_add(bytes.len() as u32);
+    for (index, chunk) in tail.chunks(4).enumerate() {
+        let added = if index == 2 {
+            word(chunk) << 8
+        } else {
+            word(chunk)
+        };
+        state[index] = state[index].wrapping_add(added);
+    }
+    mix(state)[2]
 }
 
 /// The specimen's state: what a person arranged, sorted and opened.
@@ -365,6 +409,7 @@ impl FlexSample {
         table.framed = false;
         for row in &mut table.rows {
             row.actions = Html::EMPTY;
+            row.slots.clear();
         }
         table
     }
@@ -603,7 +648,7 @@ impl FlexSpecimens {
             [("op", "suggest"), ("add", "count")],
         ] {
             let mut values: BTreeMap<&str, &str> = op.into_iter().collect();
-            values.entry("key").or_insert("15");
+            values.entry("key").or_insert("3");
             compact.apply(&|key| values.get(key).map(|value| (*value).to_owned()));
         }
         Ok(Self {
