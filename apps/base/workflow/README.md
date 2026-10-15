@@ -1,11 +1,12 @@
 # Workflow status kernel
 
 Workflow owns status configuration, edges, subject bindings, append-only
-history, and immutable versioned process runs with their lifecycle. Its facade accepts a sealed
+history, and immutable versioned process runs with their lifecycle and
+worker leases. Its facade accepts a sealed
 `bilibi_tenancy::Scope`, a subject kind (public key or alias) and the owner's
 record ID. It never queries an owner's table: the owner proves identity, tenant
-and current status through its `SubjectAdapter`. Worker leases, human-action
-replay and durable transition delivery are later slices.
+and current status through its `SubjectAdapter`. Human-action replay and
+durable transition delivery are later slices.
 
 ## Contributions
 
@@ -67,7 +68,7 @@ other business writes, and a refusal poisons that whole transaction. Each
 command re-authenticates the scope, locks the subject, then the run, then its
 work items, and asks both adapters to authorize its own operation
 (`ReconcileRun`, `CompleteWork`, `SignalRun`, `PauseRun`, `ResumeRun`,
-`SupersedeRun`). `ReadRun` never grants any of them.
+`SupersedeRun`, `WaiveWork`, `BlockWork`). `ReadRun` never grants any of them.
 
 - `Complete { step_key, completion }` finishes an `available`, due item of a
   running run. `completion.expected_version` and `executor_key` must match the
@@ -82,17 +83,67 @@ work items, and asks both adapters to authorize its own operation
   with another signal or payload conflicts. Signals need a running run.
 - A released step starts its timer at the later of the run's `available_at`
   and now, plus `delay_seconds`, and becomes `available` once due. `Reconcile`
-  releases due timers; no background sweep exists yet.
+  expires dead leases (see below) and releases due timers; the periodic
+  every-tenant sweep is W6, so until then a claim or `Reconcile` does it.
 - `Pause { reason }` and `Resume` toggle a running run; repeating either is a
   no-op. A paused run refuses completion and signals, and resuming re-settles
   the graph from its saved facts.
 - `Supersede { reason }` blocks every unfinished item with cause
   `process_superseded`, keeps terminal work as recorded, and finishes the run.
   A live worker lease refuses it; a finished run returns unchanged.
+- `Waive { step_key, reason, outcome }` and `Block { step_key, reason }` are
+  the owner or operator path: they finish one unfinished item (pending,
+  available or leased, even under a live lease) with the reason as its error,
+  then settle the graph. Terminal work returns unchanged.
 
 Every write appends to the run's event log with a contiguous per-run
 `sequence`, and the run finishes as `failed`, `blocked` or `completed` (in
 that precedence) once every item is terminal.
+
+## Worker leases
+
+`Engine::claim_work(scope, worker, ClaimOptions { lease_seconds, definition_key,
+executor_keys, run_ids })` leases one due item to `worker` and returns
+`Claimed { run, work_item, claim }`, or `None`. Candidates are chosen without
+row locks from running runs saved under an installed key/version/fingerprint,
+ordered by run priority, work priority, availability and ID; the chosen run is
+then locked in the kernel order and both adapters authorize `ClaimWork`. The
+locked run is settled first, so due pending work and expired leases are
+candidates too. A candidate refused under its lock is skipped and the claim
+gives up after eight, so retained unsupported runs never starve supported work.
+An empty `executor_keys` or `run_ids` claims nothing. Each claim increments
+`attempts` and appends `work.claimed` with the worker and attempt.
+
+`Claim { run_id, work_item_id, lease_token }` is the worker's durable
+credential: keep it with the in-flight work so a restarted worker can still
+finish it. Run and work facts, audit changes and events never carry the token,
+and `Claim`'s `Debug` hides it. `Engine::update_work(scope, &claim, command)`
+and `update_work_in(&mut MutationTransaction, ...)` apply one `WorkCommand`;
+use the `_in` form to commit the owner's business writes with the completion.
+
+- `Heartbeat { lease_seconds }` (`HeartbeatWork`) extends a live lease to now
+  plus `lease_seconds`.
+- `Complete { outcome, output, result_ref }` (`CompleteWork`) finishes the item
+  as `completed`; it is allowed on a paused run, which then stays paused.
+- `Fail { error, retryable, category, retry_at }` (`FailWork`) returns
+  retryable work with attempts left to `pending` at `retry_at` (UTC whole
+  seconds, the caller's backoff; `None` is now) with `work.retry_scheduled`;
+  otherwise the item fails with output `{"failure": {retryable, category}}`.
+- `Block { reason, output, result_ref }` (`BlockClaimedWork`) finishes it as
+  `blocked`.
+
+Each command needs the item to be `leased` under the same token, compared in
+constant time, with an unexpired lease; anything else conflicts. Complete,
+Fail and Block on an item that is already terminal return it unchanged, so a
+worker may repeat its last call; Heartbeat always needs the live lease.
+
+Expiry is fenced on the saved rows, so it survives any restart. Whenever a
+running run is settled (any lifecycle command or claim), a lease whose expiry
+has passed loses its owner and token and its `version` increments: the final
+attempt fails the item (`work.lease_expired_failed`), otherwise it returns to
+the queue at once (`work.lease_expired_requeued`). The old worker's token and
+any `Complete` read before expiry then conflict. A paused run keeps its
+leases until resumed. A live lease is never touched.
 
 `Engine::initialize` is the explicit insert-only seed for flows, statuses and
 edges, run by a trusted admin or seed adapter holding
@@ -220,6 +271,41 @@ two-second timer on `delayed`; `reconcile` releases it once due, after which
 first rejected` blocks `all`, `signal` and `delayed`; `complete-outer-fail
 4 <run> second` completes inside an owner transaction that rolls back, leaving
 `second` available; `supersede 4 <run>` blocks the remaining work.
+
+To demonstrate worker leases and their recovery after a crash, start the
+four-step `reference.worker` graph (`fetch` allows two attempts; `render`,
+then `publish`, depend on it; `notify` is independent). `claim` prints the
+claim JSON and exits, which is the crash: its process ends holding a two-second
+lease. Pass that JSON back in the record-ID position of a worker command.
+
+```sh
+cargo run -p bilibi-workflow --example owner -- start-worker 4 1
+cargo run -p bilibi-workflow --example owner -- claim-race 4 1
+sleep 3
+cargo run -p bilibi-workflow --example owner -- complete-claimed 4 '<fetch claim>'
+cargo run -p bilibi-workflow --example owner -- reconcile 4 1
+cargo run -p bilibi-workflow --example owner -- claim 4 1
+sleep 3
+cargo run -p bilibi-workflow --example owner -- claim 4 1
+cargo run -p bilibi-workflow --example owner -- events 4 1
+```
+
+`claim-race` claims concurrently as two workers, which lease different items.
+After the leases expire the old claim conflicts; `reconcile` requeues `fetch`
+(version 2) and fails `notify` on its final attempt. The second `claim` leases
+`fetch` attempt 2; once that expires too, the next worker's claim fails it,
+blocks `render` and `publish`, finishes the run `failed` and finds nothing
+claimable.
+
+On a second record, `claim 4 <run> 30 worker-a reference.fetch` (lease
+seconds, worker, executor filter) and then `fail 4 '<claim>'` requeue `fetch`
+for its second attempt (`fail 4 '<claim>' final` fails it instead).
+`heartbeat 4 '<claim>' 120` extends a lease and `complete-claimed` finishes it;
+repeating `complete-claimed` returns the same item while `heartbeat` conflicts.
+`waive 4 <run> render "Rendered by hand"` releases `publish`, and
+`block-claimed 4 '<claim>' "reason"` blocks a leased item. With `notify` leased,
+`supersede` conflicts, `block 4 <run> notify "reason"` finishes it anyway, and
+the leaseholder's `complete-claimed` then returns the blocked item.
 
 Arguments are `command [user-id] [record-id]`; user 4 is the seeded admin.
 For `run`, `run-drift`, `events` and the lifecycle commands, the record-ID
