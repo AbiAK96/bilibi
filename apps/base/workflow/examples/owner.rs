@@ -193,6 +193,9 @@ register!(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::var("BILIBI_DISPOSABLE_WORKFLOW_DEMO").as_deref() != Ok("yes") {
+        return Err(Error::Invalid);
+    }
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
@@ -218,6 +221,10 @@ async fn main() -> Result<()> {
     let engine = services.get::<Engine>("base/workflow.engine")?;
     match command {
         "init" => {
+            let client = db.get().await?;
+            // Disposable specimen only: initialize needs the platform operator.
+            client.execute("INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1) ON CONFLICT DO NOTHING",&[]).await?;
+            drop(client);
             engine.initialize(&scope).await?;
             let client = db.get().await?;
             client.execute("INSERT INTO workflow_reference_records(id,tenant_id) SELECT n,1 FROM generate_series(1,20) n ON CONFLICT DO NOTHING",&[]).await?;
@@ -237,6 +244,10 @@ async fn main() -> Result<()> {
                 serde_json::to_string_pretty(&page.entries).map_err(|_| Error::Internal)?
             );
         }
+        "adopt" => println!(
+            "binding={}",
+            engine.adopt(&scope, "ReferenceRecord", id).await?
+        ),
         "available" => println!(
             "{}",
             serde_json::to_string(&engine.available(&scope, "reference.record", id).await?)

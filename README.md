@@ -156,6 +156,7 @@ apps/base/authz       contributed vocabulary, live grants, decisions, masking
 apps/base/grid        contributed table/field/link catalog, scoped and restriction-aware
 apps/base/mail        validated outgoing mail: SMTP relay or dev mailbox files
 apps/base/notifications  transactional notification sink and adapter readiness
+apps/base/workflow    status definitions, append-only history, owner-transaction transition kernel
 apps/base/ui          shared shell, styles, small live browser adapter
 apps/core/user        credentials, password reset/verification, sessions, notifications, owned SQL
 apps/core/company     Companies API, owned SQL, page templates

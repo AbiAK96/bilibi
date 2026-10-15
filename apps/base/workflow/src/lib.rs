@@ -33,6 +33,9 @@ pub enum Operation {
     Transition,
     RecordInitial,
     RecordComment,
+    /// Installed owner binds an existing subject and its history, under its
+    /// own explicit adoption policy; never a tenant guessed from history.
+    Adopt,
 }
 /// The owner facade accepts the kernel transaction, scopes every query, locks
 /// and rereads on `Load::Lock`, and enforces live record policy even on edges
