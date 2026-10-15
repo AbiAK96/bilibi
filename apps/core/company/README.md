@@ -5,7 +5,8 @@
 (legal entity types, department types), a company's departments, the tenant's
 primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and the free functions of
-`organisation`, `reference_types`, `departments` and `primary`; table layout
+`organisation`, `reference_types`, `departments`, `primary`, `lifecycle`
+and `eligibility`; table layout
 and SQL stay private. The demo list and detail pages (`web.rs`) remain until
 K3 ports Bilimbi's screens.
 
@@ -74,7 +75,8 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 
 Inline edits on the demo detail page (`save`) now accept code, legal name,
 registration number, jurisdiction and website with the same rules; `status`
-stays an inline choice there until K2 lands the lifecycle.
+is read-only there; K3 adds the lifecycle dialog. Forged generic status
+edits are rejected in the domain too.
 
 ## Agent operations
 
@@ -114,3 +116,68 @@ columns, the reference catalogs, departments on company 1, the archived
 refusals, primary assignment, the agent operations and a plan commit with
 replay, and both provisioning commands. It creates a tenant and, when none
 exists, the platform operator. No unit tests belong here.
+
+## Lifecycle and account freeze (K2)
+
+Use `CompanyService::{activate_company,reactivate_company,suspend_company,
+archive_company}` for explicit business commands, or `transition_company`
+with an expected version for a dialog. `lifecycle::apply` shares an existing
+`MutationTransaction` for headless/owner composition. The transition table
+is `lifecycle::Operation`; `operations_from` returns the offered actions in
+activate/reactivate/suspend/archive order. Pending → activate → active;
+active → suspend → suspended; suspended → reactivate → active. Archive
+accepts pending/active/suspended and is final. Creation still accepts only
+pending/active. No generic field edit accepts `status`.
+
+Each command requires `admin.company.update` and, for a company other than
+the actor's own proven organisation, `admin.company.tenant-wide.manage`.
+An explicit operator identity or admin grant does not bypass tenant scope,
+standing checks, field restrictions, or the final archive state. Archive
+and suspend refuse the tenant's primary company and the actor's own company.
+The primary assignment and lifecycle commands both lock the tenant before
+the company, so the standing check is atomic with primary transfer.
+
+An optional reason is trimmed, blank becomes absent, and the limit is 500
+Unicode characters. A version conflict is `WriteError::Stale`; a disallowed
+transition carries its current status in `LifecycleError::InvalidTransition`.
+The company row lock covers transition judgment, version increment and the
+status write. `tx.mutate` captures the status change and writes a retained
+semantic `company.activated/reactivated/suspended/archived` action with
+subject, summary, old/new status and reason. The outer transaction also
+records its usual `company.lifecycle` boundary action. Either audit failure
+rolls everything back, even if a caller catches it. The returned company
+honors the actor's field restrictions.
+
+`eligibility::account_eligibility` supplies the company fact to K9's account
+binder for login, session/bearer validation, impersonation and reset issue /
+redeem. Only archived/deleted/missing freezes an account; pending and
+suspended do not. No role or business relationship confers account eligibility.
+Today's accounts have no durable company link, so K2 does not invent one or
+claim those flows have been rebound. K9 must call this on every validation,
+not cache it or write a derived account status. Core remains independent of
+People.
+
+Account/affiliation/attached-owner writes take the company lock **before**
+the child row and retain it until commit. Use `eligibility::lock_account_company`
+for an account write and `lock_writable_companies` for moves / relationships
+whose two companies must both be writable. The latter sorts and deduplicates
+IDs before locking; use the same order in either direction. A write that wins
+finishes before archive; a write that loses sees `WriteError::Archived`.
+`organisation::require_writable(..., false)` alone is a preview, never an
+atomic write guard. Existing department writes already hold the company lock.
+`organisation::list_tenant_company_ids` includes archived and deleted IDs for
+User's historical read model; the caller authorizes the read separately, and
+these IDs grant no write/login authority.
+
+For manual runtime inspection (fresh disposable migrated/seeded database):
+
+```sh
+BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k2-lifecycle-walkthrough --locked
+```
+
+The walkthrough prints transitions and refusals, own-company versus tenant-wide
+reach, Unicode reason validation, stale versions, a deliberate PostgreSQL audit
+failure/rollback, two connections contending for an account/company lock, the
+final archive freeze and retained-action count. Its own-company scopes use a
+trusted specimen provider through the real authentication boundary until K9
+binds durable affiliation facts. It never creates an account link.

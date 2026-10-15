@@ -717,3 +717,22 @@ impl Company {
         .collect()
     }
 }
+
+/// Tenant-wide User read-model seam (Bilimbi `list_tenant_company_ids/1`).
+/// Includes archived and soft-deleted companies so historical accounts remain
+/// listable. The caller authorizes its own read; these IDs convey no write or
+/// login authority and are never used to decide account eligibility.
+pub async fn list_tenant_company_ids(
+    client: &impl GenericClient,
+    scope: &Scope,
+) -> Result<Vec<OrganisationId>> {
+    client
+        .query(
+            "SELECT id FROM companies WHERE tenant_id=$1 ORDER BY id",
+            &[&scope.tenant()],
+        )
+        .await?
+        .into_iter()
+        .map(|row| OrganisationId::new(row.get(0)).map_err(|_| Error::Internal))
+        .collect()
+}

@@ -5,6 +5,8 @@
 mod agent_operations;
 mod contributions;
 pub mod departments;
+pub mod eligibility;
+pub mod lifecycle;
 pub mod organisation;
 pub mod primary;
 pub mod reference_types;
@@ -249,9 +251,6 @@ impl Edit {
         let valid = match self.field.as_str() {
             "name" => !value.is_empty() && value.chars().count() <= 160,
             "code" => !value.is_empty() && value.chars().count() <= 255,
-            "status" => {
-                ["active", "suspended", "pending", "archived"].contains(&self.value.as_str())
-            }
             "email" => {
                 self.value.len() <= 254 && (value.is_empty() || organisation::email_shaped(value))
             }
