@@ -42,3 +42,27 @@ pub fn form_values(
         .take(64)
         .collect()
 }
+
+/// The scalar fields of a live event payload as the column hosts take them
+/// (`ListColumns::handle`, `PageColumns::handle`): strings as they are, numbers
+/// and booleans as their text; other values and keys past the first 64 are
+/// ignored, and a string longer than 1 KiB is dropped. Use this for a flex table's `grid`
+/// event rather than walking the object in each page.
+pub fn string_values(payload: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    let Some(object) = payload.as_object() else {
+        return Default::default();
+    };
+    object
+        .iter()
+        .filter_map(|(key, value)| {
+            let text = match value {
+                serde_json::Value::String(text) if text.len() <= 1024 => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                serde_json::Value::Bool(flag) => flag.to_string(),
+                _ => return None,
+            };
+            Some((key.clone(), text))
+        })
+        .take(64)
+        .collect()
+}

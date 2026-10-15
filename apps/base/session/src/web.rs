@@ -29,9 +29,10 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Badge, BadgeKind, Card, Column, ConfirmDialog, FilterToolbar, FlashMap, Header, Html,
-    IconButton, IconContext, IconKind, ListSpec, ListState, PageCounts, Pagination, Row, SortDir,
-    StatItem, StatStrip, StatusKind, Table, TableEmpty, ToolbarControl, NO_FLASH,
+    params, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, ConfirmDialog,
+    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconContext, IconKind,
+    ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, StatItem, StatStrip,
+    StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
 };
 use serde_json::Value;
 use std::{
@@ -71,6 +72,24 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .expect("session list spec")
 });
 
+/// The list's own columns (Bilimbi `@builtins`): the sortable ones keep the
+/// source's sort keys and button ids.
+fn builtins() -> Vec<BuiltinColumn> {
+    let sortable = |id: &str, label: &str, kind| {
+        let mut column = BuiltinColumn::new(id, label).sortable(id);
+        column.kind = kind;
+        column.sort_id = Some(format!("sessions-sort-{id}"));
+        column
+    };
+    vec![
+        sortable("user_id", "User", ColumnType::String),
+        sortable("ip_address", "IP Address", ColumnType::String),
+        sortable("user_agent", "User Agent", ColumnType::String),
+        sortable("last_activity", "Last Activity", ColumnType::Datetime),
+        BuiltinColumn::new("status", "Status"),
+    ]
+}
+
 struct Core {
     db: Db,
     sessions: Arc<Sessions>,
@@ -107,10 +126,28 @@ struct IndexView<'a> {
 struct Index {
     core: Arc<Core>,
     state: ListState,
+    /// The column arrangement and row height, kept while mounted.
+    columns: ListColumns,
+    /// Whether this render reads the rows anew, so the columns forget an
+    /// unfinished add box (Bilimbi `ListColumns.load/3` on `load_page`).
+    rows_changed: bool,
     /// The rows last shown, by key: a termination request names one of these.
     rows: Vec<Summary>,
     pending: Option<Summary>,
     flash: Option<(StatusKind, String)>,
+}
+impl Index {
+    fn new(core: Arc<Core>, query: &HashMap<String, String>) -> Result<Self> {
+        Ok(Self {
+            core,
+            state: parse(query)?,
+            columns: ListColumns::mount("sessions", builtins()).map_err(|_| Error::Internal)?,
+            rows_changed: true,
+            rows: Vec::new(),
+            pending: None,
+            flash: None,
+        })
+    }
 }
 fn parse(query: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)
@@ -202,6 +239,14 @@ impl Index {
                 }
             }
             "page" => self.state.put_page(get("page")),
+            "grid" => match self.columns.handle(&params::string_values(value)) {
+                ColumnsOutcome::Sort(column) => {
+                    if !self.state.next_sort(&column) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
+            },
             "clear-flash" => {
                 if self
                     .flash
@@ -324,28 +369,10 @@ impl Index {
                 "Search by IP address or user agent...",
             )],
         ))?;
-        let mut table = Table::new(
-            "sessions",
-            vec![
-                Column::new("User")
-                    .sort("user_id")
-                    .sort_id("sessions-sort-user_id"),
-                Column::new("IP Address")
-                    .sort("ip_address")
-                    .sort_id("sessions-sort-ip_address"),
-                Column::new("User Agent")
-                    .sort("user_agent")
-                    .sort_id("sessions-sort-user_agent"),
-                Column::new("Last Activity")
-                    .sort("last_activity")
-                    .sort_id("sessions-sort-last_activity"),
-                Column::new("Status"),
-            ],
-        )
-        .sorted(self.state.sort_by.as_deref(), self.state.sort_dir);
-        table.caption = "Sessions";
-        table.framed = false;
-        table.actions = can_manage;
+        if self.rows_changed {
+            self.columns.load(&page.entries, Summary::key);
+        }
+        let mut rows = Vec::with_capacity(page.entries.len());
         for session in &page.entries {
             let key = session.key();
             let is_current = session.id == current;
@@ -368,28 +395,43 @@ impl Index {
             } else {
                 Html::EMPTY
             };
-            table.rows.push(Row {
-                id: format!("sessions-{key}"),
-                cells: vec![
-                    Html::text(&user_label(session, &names)),
+            let mut row = FlexRow::new(key.clone())
+                .slot("user_id", Html::text(&user_label(session, &names)))
+                .slot(
+                    "ip_address",
                     Html::raw(format!(
                         "<span class=\"tabular-nums text-ink-muted\">{}</span>",
                         Html::text(session.ip_address.as_deref().unwrap_or("—"))
                     )),
+                )
+                .slot(
+                    "user_agent",
                     Html::raw(format!(
                         "<span class=\"max-w-xs truncate text-ink-muted\" title=\"{}\">{}</span>",
                         Html::text(agent),
                         Html::text(&truncate_agent(agent))
                     )),
+                )
+                .slot(
+                    "last_activity",
                     Html::raw(format!(
                         "<span class=\"text-ink-muted\">{}</span>",
                         Html::text(&relative_activity(session.idle_seconds))
                     )),
-                    status,
-                ],
-                actions,
-            });
+                )
+                .slot("status", status);
+            row.dom_id = Some(format!("sessions-{key}"));
+            row.actions = actions;
+            rows.push(row);
         }
+        let mut table = FlexTable::new("sessions", self.columns.flex_columns(), rows)
+            .sorted(self.state.sort_by.as_deref(), self.state.sort_dir);
+        table.zoom = self.columns.zoom;
+        table.suggestions = self.columns.flex_suggestions();
+        table.add_query = &self.columns.add_query;
+        table.caption = "Sessions";
+        table.framed = false;
+        table.actions = can_manage;
         if page.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text("No sessions found.")));
         }
@@ -476,6 +518,9 @@ impl Index {
 impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            // Every input reads the rows again except a column operation
+            // that only changes what is on screen, which `event` says.
+            self.rows_changed = true;
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => self.state = parse(values)?,
@@ -554,13 +599,7 @@ impl Page<Scope, Error> for Pages {
                 return Err(Error::NotFound);
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut index = Index {
-                core: self.0.clone(),
-                state: parse(request.query)?,
-                rows: Vec::new(),
-                pending: None,
-                flash: None,
-            };
+            let mut index = Index::new(self.0.clone(), request.query)?;
             let html = index.render(scope).await?;
             Ok(PageBody { html, live: true })
         })
@@ -568,13 +607,7 @@ impl Page<Scope, Error> for Pages {
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
-                "index" => Box::new(Index {
-                    core: self.0.clone(),
-                    state: parse(request.query)?,
-                    rows: Vec::new(),
-                    pending: None,
-                    flash: None,
-                }),
+                "index" => Box::new(Index::new(self.0.clone(), request.query)?),
                 "dashboard-stats" => Box::new(Panel {
                     core: self.0.clone(),
                     args: bilibi_dashboard::PanelArgs::from_request(&request)?,

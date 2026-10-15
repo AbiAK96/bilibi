@@ -34,9 +34,10 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Alert, BadgeKind, Button, ButtonVariant, Card, Column, ConfirmDialog, Filter,
-    FilterToolbar, FlashMap, Html, ListSpec, ListState, PageCounts, Pagination, Row, SortDir,
-    StatusKind, Tab, Table, TableEmpty, Tabs, ToolbarControl, NO_FLASH,
+    params, Alert, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
+    ColumnsOutcome, ConfirmDialog, Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Html,
+    ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, SortDir, StatusKind, Tab,
+    TableEmpty, Tabs, ToolbarControl, NO_FLASH,
 };
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
 use serde_json::Value;
@@ -119,6 +120,44 @@ static RUNS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         ],
     )
 });
+
+/// The board's own columns (Bilimbi `@task_columns`/`@run_columns`): a sortable
+/// one keeps the source's sort key and button id, so the heading raises the
+/// same intent the plain table did.
+fn builtin(id: &str, label: &str, kind: ColumnType, sort: Option<(&str, &str)>) -> BuiltinColumn {
+    let mut column = BuiltinColumn::new(id, label);
+    column.kind = kind;
+    if let Some((key, table)) = sort {
+        column = column.sortable(key);
+        column.sort_id = Some(format!("{table}-sort-{key}"));
+    }
+    column
+}
+fn task_builtins() -> Vec<BuiltinColumn> {
+    let sortable = |id, label, kind| builtin(id, label, kind, Some((id, "schedule-tasks")));
+    vec![
+        sortable("name", "Name", ColumnType::String),
+        builtin("source", "Source", ColumnType::String, None),
+        builtin("cron", "Cron schedule", ColumnType::String, None),
+        sortable("next_due", "Next run", ColumnType::Datetime),
+        builtin("status", "Status", ColumnType::String, None),
+        sortable("last_run", "Last run", ColumnType::Datetime),
+        builtin("result", "Result", ColumnType::String, None),
+    ]
+}
+fn run_builtins() -> Vec<BuiltinColumn> {
+    let sortable = |id, label, kind| builtin(id, label, kind, Some((id, "schedule-runs")));
+    vec![
+        sortable("started_at", "Started", ColumnType::Datetime),
+        sortable("name", "Name", ColumnType::String),
+        sortable("source", "Source", ColumnType::String),
+        sortable("status", "Status", ColumnType::String),
+        builtin("detail", "Detail", ColumnType::String, None),
+    ]
+}
+fn columns(id: &str, builtins: Vec<BuiltinColumn>) -> Result<ListColumns> {
+    ListColumns::mount(id, builtins).map_err(|_| Error::Internal)
+}
 
 struct Core {
     db: Db,
@@ -220,8 +259,30 @@ struct Board {
     tab: &'static str,
     tasks: ListState,
     runs: ListState,
+    /// Each table's column arrangement and row height, kept while mounted.
+    task_columns: ListColumns,
+    run_columns: ListColumns,
+    /// Whether the rows are read anew for this render: the columns then forget
+    /// an unfinished add box, as Bilimbi's `ListColumns.load/3` does.
+    rows_changed: bool,
     pending: Option<(Command, Task)>,
     flash: Option<(StatusKind, String)>,
+}
+impl Board {
+    fn new(core: Arc<Core>, query: &HashMap<String, String>) -> Result<Self> {
+        let (tab, tasks, runs) = parse(query)?;
+        Ok(Self {
+            core,
+            tab,
+            tasks,
+            runs,
+            task_columns: columns("schedule-tasks", task_builtins())?,
+            run_columns: columns("schedule-runs", run_builtins())?,
+            rows_changed: true,
+            pending: None,
+            flash: None,
+        })
+    }
 }
 
 fn parse(query: &HashMap<String, String>) -> Result<(&'static str, ListState, ListState)> {
@@ -313,6 +374,12 @@ impl Board {
             "sort_tasks" => {
                 self.tasks.next_sort(get("sort").unwrap_or_default());
             }
+            "grid_tasks" => match self.task_columns.handle(&params::string_values(value)) {
+                ColumnsOutcome::Sort(column) => {
+                    self.tasks.next_sort(&column);
+                }
+                ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
+            },
             "filter_runs" => {
                 self.runs
                     .apply_filters(&params::form_values(value, FILTERS_FORM));
@@ -321,6 +388,12 @@ impl Board {
             "sort_runs" => {
                 self.runs.next_sort(get("sort").unwrap_or_default());
             }
+            "grid_runs" => match self.run_columns.handle(&params::string_values(value)) {
+                ColumnsOutcome::Sort(column) => {
+                    self.runs.next_sort(&column);
+                }
+                ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
+            },
             "page" => self.runs.put_page(get("page")),
             "clear-flash" => {
                 if self
@@ -581,29 +654,14 @@ impl Board {
                 ("Disabled", "disabled"),
             ]))
             .class("rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none");
-        let mut table = Table::new(
-            "schedule-tasks",
-            vec![
-                Column::new("Name")
-                    .sort("name")
-                    .sort_id("schedule-tasks-sort-name"),
-                Column::new("Source"),
-                Column::new("Cron schedule"),
-                Column::new("Next run")
-                    .sort("next_due")
-                    .sort_id("schedule-tasks-sort-next_due"),
-                Column::new("Status"),
-                Column::new("Last run")
-                    .sort("last_run")
-                    .sort_id("schedule-tasks-sort-last_run"),
-                Column::new("Result"),
-            ],
-        )
-        .sorted(self.tasks.sort_by.as_deref(), self.tasks.sort_dir);
-        table.caption = "Scheduled tasks";
-        table.framed = false;
-        table.actions = true;
-        table.sort.event = "sort_tasks";
+        if self.rows_changed {
+            self.task_columns
+                .load(shown.as_deref().unwrap_or_default(), |task| {
+                    task.key.to_owned()
+                });
+        }
+        let compact = self.task_columns.mode() == RowMode::Compact;
+        let mut rows = Vec::new();
         for task in shown.iter().flatten() {
             let dom = format!("schedule-task-{}", dom_key(task.key));
             let next = instant(display, format!("{dom}-next-due"), task.next_due_at);
@@ -617,36 +675,62 @@ impl Board {
             );
             let duration = duration(task.last_runtime_ms);
             let cells = [
-                Cell::TaskName {
-                    name: task.name,
-                    key: task.key,
-                },
-                Cell::Source {
-                    owner: task.owner,
-                    route: task.owner_route,
-                },
-                Cell::Cron {
-                    expression: task.expression,
-                    zone: task.timezone,
-                },
-                Cell::Instant(&next),
-                Cell::Status {
-                    kind: task_status_kind(task),
-                    label: &label,
-                    detail: &overlap,
-                },
-                Cell::Instant(&last),
-                Cell::Result {
-                    label: &result,
-                    detail: &duration,
-                },
+                (
+                    "name",
+                    Cell::TaskName {
+                        name: task.name,
+                        key: task.key,
+                    },
+                ),
+                (
+                    "source",
+                    Cell::Source {
+                        owner: task.owner,
+                        route: task.owner_route,
+                    },
+                ),
+                (
+                    "cron",
+                    Cell::Cron {
+                        expression: task.expression,
+                        zone: task.timezone,
+                    },
+                ),
+                ("next_due", Cell::Instant(&next)),
+                (
+                    "status",
+                    Cell::Status {
+                        kind: task_status_kind(task),
+                        label: &label,
+                        detail: &overlap,
+                    },
+                ),
+                ("last_run", Cell::Instant(&last)),
+                (
+                    "result",
+                    Cell::Result {
+                        label: &result,
+                        detail: &duration,
+                    },
+                ),
             ];
-            table.rows.push(Row {
-                id: dom.clone(),
-                cells: cells.into_iter().map(cell).collect::<Result<_>>()?,
-                actions: actions(task, &dom, can_execute, can_manage)?,
-            });
+            let mut row = FlexRow::new(task.key);
+            row.dom_id = Some(dom.clone());
+            for (id, content) in cells {
+                row = row.slot(id, cell(content, compact)?);
+            }
+            row.actions = actions(task, &dom, can_execute, can_manage)?;
+            rows.push(row);
         }
+        let mut table = FlexTable::new("schedule-tasks", self.task_columns.flex_columns(), rows)
+            .sorted(self.tasks.sort_by.as_deref(), self.tasks.sort_dir);
+        table.zoom = self.task_columns.zoom;
+        table.suggestions = self.task_columns.flex_suggestions();
+        table.add_query = &self.task_columns.add_query;
+        table.event = "grid_tasks";
+        table.caption = "Scheduled tasks";
+        table.framed = false;
+        table.actions = true;
         if shown.as_ref().is_some_and(Vec::is_empty) {
             let text = if self.tasks.search.is_empty() && status.is_empty() {
                 "Nothing is scheduled."
@@ -778,57 +862,59 @@ impl Board {
                 ],
             )
         })?;
-        let mut table = Table::new(
-            "schedule-runs",
-            vec![
-                Column::new("Started")
-                    .sort("started_at")
-                    .sort_id("schedule-runs-sort-started_at"),
-                Column::new("Name")
-                    .sort("name")
-                    .sort_id("schedule-runs-sort-name"),
-                Column::new("Source")
-                    .sort("source")
-                    .sort_id("schedule-runs-sort-source"),
-                Column::new("Status")
-                    .sort("status")
-                    .sort_id("schedule-runs-sort-status"),
-                Column::new("Detail"),
-            ],
-        )
-        .sorted(self.runs.sort_by.as_deref(), self.runs.sort_dir);
-        table.caption = "Schedule run history";
-        table.framed = false;
-        table.sort.event = "sort_runs";
         let total = page.as_ref().map_or(0, |page| page.total);
-        for run in page.iter().flat_map(|page| &page.entries) {
+        let entries: &[Run] = page.as_ref().map_or(&[], |page| page.entries.as_slice());
+        if self.rows_changed {
+            self.run_columns.load(entries, |run| run.id.to_string());
+        }
+        let compact = self.run_columns.mode() == RowMode::Compact;
+        let mut rows = Vec::with_capacity(entries.len());
+        for run in entries {
             let dom = format!("schedule-run-{}", run.id);
             let started = instant(display, format!("{dom}-started-at"), Some(run.started_at));
             let runtime = duration(run.runtime_ms);
             let status = status_label(&run.status);
             let trigger = trigger_label(run);
             let cells = [
-                Cell::Started {
-                    at: &started,
-                    detail: &runtime,
-                },
-                Cell::TaskName {
-                    name: &run.name,
-                    key: &run.key,
-                },
-                Cell::RunSource { detail: &trigger },
-                Cell::Badge {
-                    kind: status_kind(&run.status),
-                    label: &status,
-                },
-                Cell::Detail(&status),
+                (
+                    "started_at",
+                    Cell::Started {
+                        at: &started,
+                        detail: &runtime,
+                    },
+                ),
+                (
+                    "name",
+                    Cell::TaskName {
+                        name: &run.name,
+                        key: &run.key,
+                    },
+                ),
+                ("source", Cell::RunSource { detail: &trigger }),
+                (
+                    "status",
+                    Cell::Badge {
+                        kind: status_kind(&run.status),
+                        label: &status,
+                    },
+                ),
+                ("detail", Cell::Detail(&status)),
             ];
-            table.rows.push(Row {
-                id: dom,
-                cells: cells.into_iter().map(cell).collect::<Result<_>>()?,
-                actions: Html::default(),
-            });
+            let mut row = FlexRow::new(run.id.to_string());
+            row.dom_id = Some(dom);
+            for (id, content) in cells {
+                row = row.slot(id, cell(content, compact)?);
+            }
+            rows.push(row);
         }
+        let mut table = FlexTable::new("schedule-runs", self.run_columns.flex_columns(), rows)
+            .sorted(self.runs.sort_by.as_deref(), self.runs.sort_dir);
+        table.zoom = self.run_columns.zoom;
+        table.suggestions = self.run_columns.flex_suggestions();
+        table.add_query = &self.run_columns.add_query;
+        table.event = "grid_runs";
+        table.caption = "Schedule run history";
+        table.framed = false;
         if loaded == Loaded::Available && total == 0 {
             let unfiltered = self.runs.search.is_empty()
                 && status.is_empty()
@@ -1149,11 +1235,14 @@ pub(crate) enum Cell<'a> {
 struct CellView<'a> {
     cell: Cell<'a>,
     source: &'a str,
+    /// A compact row is one line: the second line a cell draws is left out.
+    compact: bool,
 }
-fn cell(cell: Cell<'_>) -> Result<Html> {
+fn cell(cell: Cell<'_>, compact: bool) -> Result<Html> {
     render(CellView {
         cell,
         source: board::SOURCE,
+        compact,
     })
 }
 #[derive(Template)]
@@ -1210,15 +1299,7 @@ impl Page<Scope, Error> for Pages {
                 return Err(Error::NotFound);
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let (tab, tasks, runs) = parse(request.query)?;
-            let mut board = Board {
-                core: self.0.clone(),
-                tab,
-                tasks,
-                runs,
-                pending: None,
-                flash: None,
-            };
+            let mut board = Board::new(self.0.clone(), request.query)?;
             Ok(PageBody {
                 html: board.render(scope).await?,
                 live: true,
@@ -1230,15 +1311,8 @@ impl Page<Scope, Error> for Pages {
             if request.operation != "board" {
                 return Err(Error::NotFound);
             }
-            let (tab, tasks, runs) = parse(request.query)?;
-            let state: Box<dyn LiveState<Scope, Error>> = Box::new(Board {
-                core: self.0.clone(),
-                tab,
-                tasks,
-                runs,
-                pending: None,
-                flash: None,
-            });
+            let state: Box<dyn LiveState<Scope, Error>> =
+                Box::new(Board::new(self.0.clone(), request.query)?);
             Ok(Some(state))
         })
     }
@@ -1248,6 +1322,9 @@ impl LiveState<Scope, Error> for Board {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let before = self.flash.clone();
+            // Every input reads the rows again except a column operation
+            // that only changes what is on screen, which `event` says.
+            self.rows_changed = true;
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {

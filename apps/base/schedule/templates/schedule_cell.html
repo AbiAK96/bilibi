@@ -1,5 +1,6 @@
-{#- One board cell, mirroring the Bilimbi flex_table `:col` slots in normal
-    row mode. A missing instant is a dash, as Bilimbi `<.datetime>`. -#}
+{#- One board cell, mirroring the Bilimbi flex_table `:col` slots. A second
+    line shows in normal rows only (`:if={@task_columns.mode == :normal}`); a
+    compact row is one line. A missing instant is a dash, as Bilimbi `<.datetime>`. -#}
 {%- import "components.html" as ui -%}
 {%- macro datetime(instant) -%}
 {%- if let Some((iso, text, company, utc, mode)) = instant.value -%}
@@ -10,21 +11,21 @@
 {%- endmacro -%}
 {%- match cell -%}
 {%- when Cell::TaskName { name, key } -%}
-<div class="min-w-[13rem]"><p class="font-medium text-ink">{{ name }}</p><p class="font-mono text-xs text-ink-muted">{{ key }}</p></div>
+<div class="min-w-[13rem]"><p class="font-medium text-ink">{{ name }}</p>{% if !compact %}<p class="font-mono text-xs text-ink-muted">{{ key }}</p>{% endif %}</div>
 {%- when Cell::Source { owner, route } -%}
-{% call ui::badge() %}{{ source }}{% endcall %}<div class="mt-1 text-xs text-ink-muted">{% if let Some(route) = route %}<a href="{{ route }}" class="font-mono text-action hover:underline">{{ owner }}</a>{% else %}<span class="font-mono">{{ owner }}</span>{% endif %}</div>
+{% call ui::badge() %}{{ source }}{% endcall %}{% if !compact %}<div class="mt-1 text-xs text-ink-muted">{% if let Some(route) = route %}<a href="{{ route }}" class="font-mono text-action hover:underline">{{ owner }}</a>{% else %}<span class="font-mono">{{ owner }}</span>{% endif %}</div>{% endif %}
 {%- when Cell::Cron { expression, zone } -%}
-<code class="whitespace-nowrap text-xs text-ink">{{ expression }}</code><p class="text-xs text-ink-muted">{{ zone }}</p>
+<code class="whitespace-nowrap text-xs text-ink">{{ expression }}</code>{% if !compact %}<p class="text-xs text-ink-muted">{{ zone }}</p>{% endif %}
 {%- when Cell::Instant(at) -%}
 {% call datetime(instant=at) %}{% endcall %}
 {%- when Cell::Status { kind, label, detail } -%}
-{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>
+{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}{% if !compact %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>{% endif %}
 {%- when Cell::Result { label, detail } -%}
-<span class="text-xs text-ink">{{ label }}</span><p class="text-xs text-ink-muted">{{ detail }}</p>
+<span class="text-xs text-ink">{{ label }}</span>{% if !compact %}<p class="text-xs text-ink-muted">{{ detail }}</p>{% endif %}
 {%- when Cell::Started { at, detail } -%}
-{% call datetime(instant=at) %}{% endcall %}<p class="text-xs text-ink-muted">{{ detail }}</p>
+{% call datetime(instant=at) %}{% endcall %}{% if !compact %}<p class="text-xs text-ink-muted">{{ detail }}</p>{% endif %}
 {%- when Cell::RunSource { detail } -%}
-{% call ui::badge() %}{{ source }}{% endcall %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>
+{% call ui::badge() %}{{ source }}{% endcall %}{% if !compact %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>{% endif %}
 {%- when Cell::Badge { kind, label } -%}
 {% call ui::badge(kind=kind) %}{{ label }}{% endcall %}
 {%- when Cell::Detail(text) -%}
