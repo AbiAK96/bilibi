@@ -29,6 +29,9 @@
     socket.onmessage = ({data}) => {
       const message = JSON.parse(data);
       if (message.type === 'page') {
+        // The owner hands the person to another origin (an OAuth callback):
+        // navigate instead of installing the page.
+        if (message.redirect) { location.assign(message.redirect); return; }
         const target = document.getElementById('app');
         if (message.html !== lastHTML) {
           // Keep unfinished inline input across bell/refresh patches. Retain the
@@ -126,7 +129,18 @@
     if (type === 'sort') send({type:'event', target:button.dataset.target || 'page', payload:{type, field:button.dataset.field}});
     else if (type === 'page') send({type:'event', target:button.dataset.target || 'page', payload:{type, delta:Number(button.dataset.delta)}});
     else if (type === 'read') send({type:'event', target:'shell', payload:{type}});
-    else send({type:'event', target:button.dataset.target || 'page', payload:{type}});
+    else {
+      // The control's other data-* values travel with the intent, as Bilimbi's
+      // phx-value-* did: data-value-id becomes id, data-key stays key. A named
+      // button contributes its value under its name.
+      const payload = {type};
+      for (const [key, value] of Object.entries(button.dataset)) {
+        if (['event', 'target', 'working', 'workingFrom', 'hook'].includes(key)) continue;
+        payload[key.startsWith('value') && key.length > 5 ? key[5].toLowerCase() + key.slice(6) : key] = value;
+      }
+      if (button.name) payload[button.name] = button.value;
+      send({type:'event', target:button.dataset.target || 'page', payload});
+    }
   });
   window.addEventListener('popstate', () => {
     send({type:'mount', path:location.pathname, params:Object.fromEntries(new URLSearchParams(location.search))});

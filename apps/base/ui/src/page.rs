@@ -51,6 +51,9 @@ pub struct LiveBody {
     pub query: HashMap<String, String>,
     pub notice: String,
     pub rows: usize,
+    /// A full browser navigation instead of installing `html`, for a page that
+    /// hands the person to an external callback (an OAuth client's redirect).
+    pub redirect: Option<String>,
 }
 /// Server-owned child mounts. Client events cannot pick an arbitrary embed/service.
 /// `id` must name the HTML element containing this panel's complete fragment.

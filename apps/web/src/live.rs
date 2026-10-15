@@ -284,7 +284,7 @@ impl Session {
             format!("{}?{query}", self.path)
         };
         Ok(
-            json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows}),
+            json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows, "redirect":body.redirect}),
         )
     }
     async fn sync_panels(&mut self, app: &App, token: &str, scope: &Scope) -> Result<Vec<Value>> {
