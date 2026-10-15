@@ -177,7 +177,7 @@ async fn main() -> Result<(), Error> {
         CreateOutcome::Refused(_) => return Err("the walkthrough company was refused".into()),
     };
     show(
-        "viewer may not create",
+        "create with accents and punctuation (generated code)",
         companies
             .create_company(
                 &manager,

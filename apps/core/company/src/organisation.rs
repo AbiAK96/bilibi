@@ -652,9 +652,13 @@ pub async fn search(
         )
         .await?
         .get(0);
+    // Qualify each complete expression: replacing `id,` also rewrites the
+    // suffix of `tenant_id`, `parent_id` and `legal_entity_type_id`.
     let columns = COLUMNS
-        .replace("id,", "c.id,")
-        .replace("tenant_id,", "c.tenant_id,");
+        .split(',')
+        .map(|column| format!("c.{column}"))
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!("SELECT {columns},p.name AS parent_name,(t.company_id IS NOT NULL) AS is_primary FROM companies c LEFT JOIN companies p ON p.tenant_id=c.tenant_id AND p.id=c.parent_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE {filter} ORDER BY c.name, c.id LIMIT $4 OFFSET $5");
     let entries = client
         .query(
