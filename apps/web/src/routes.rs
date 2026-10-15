@@ -5,7 +5,7 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
     routing::{on, MethodFilter},
     Router,
 };
@@ -36,6 +36,8 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             "/",
             "/login",
             "/logout",
+            "/forgot-password",
+            "/reset-password/{token}",
             "/live",
             "/fonts/{name}",
             "/favicon.svg",
@@ -198,7 +200,7 @@ async fn dispatch(
     let credential = token(&headers).ok();
     let scope = match check_access(&app, bound.route.access, credential.as_deref()).await {
         Err(Error::Unauthorized) if bound.route.method == Method::Get => {
-            return Ok(Redirect::to("/login").into_response())
+            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
         }
         result => result?,
     };

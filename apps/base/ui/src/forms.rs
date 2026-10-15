@@ -629,6 +629,7 @@ pub struct SecretInput {
     pub stored_reveal: Option<StoredReveal>,
     pub mask: String,
     pub hint: String,
+    pub errors: Vec<String>,
     pub wrapper_class: String,
     pub class: String,
     pub attrs: Attrs,
@@ -647,6 +648,7 @@ impl SecretInput {
             stored_reveal: None,
             mask: SECRET_MASK.to_owned(),
             hint: String::new(),
+            errors: Vec::new(),
             wrapper_class: String::new(),
             class: String::new(),
             attrs: Attrs::default(),
@@ -692,6 +694,13 @@ impl SecretInput {
 
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = hint.into();
+        self
+    }
+
+    /// The error lines under the control, as a form field's errors reach
+    /// Bilimbi's `secret_input` through its field.
+    pub fn errors(mut self, errors: Vec<String>) -> Self {
+        self.errors = errors;
         self
     }
 
@@ -765,6 +774,7 @@ impl SecretInput {
                 Reveal::Hidden
             },
             hint: self.hint.clone(),
+            errors: self.errors.clone(),
             class: self.class.clone(),
             wrapper_class: if self.stored { "mb-1.5" } else { "mb-0" }.to_owned(),
             attrs,

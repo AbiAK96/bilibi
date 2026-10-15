@@ -16,6 +16,7 @@ pub struct Framed<'a> {
 // inside the crate and from every importing module alike.
 extern crate self as bilibi_ui;
 
+mod auth;
 pub mod components;
 mod feedback;
 mod feedback_specimen;
@@ -24,6 +25,10 @@ mod html;
 pub mod icons;
 mod specimen;
 
+pub use auth::{
+    AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, ResetForm, ResetPasswordPage,
+    CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, SESSION_EXPIRED,
+};
 pub use components::{card_flat, card_pads, stat_strip_columns};
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
@@ -55,16 +60,13 @@ pub struct Shell<'a> {
     pub body: &'a str,
 }
 
+/// The HTML document around a page. `title` follows Bilimbi's live title:
+/// the page's own name, or the product name when a page has none.
 #[derive(Template)]
 #[template(path = "document.html")]
 pub struct Document<'a> {
+    pub title: &'a str,
     pub body: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "login.html")]
-pub struct Login<'a> {
-    pub error: &'a str,
 }
 
 pub const CSS: &str = include_str!("../assets/app.css");

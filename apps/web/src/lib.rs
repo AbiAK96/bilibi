@@ -1,4 +1,5 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+mod auth;
 mod live;
 mod media;
 mod pdf;
@@ -13,7 +14,7 @@ use axum::{
     Router,
 };
 use bilibi_database::{Db, Error, Result};
-use bilibi_ui::{Document, Login};
+use bilibi_ui::Document;
 use bilibi_user::Notifications;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
@@ -90,8 +91,16 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 
 pub fn router(app: App) -> Router {
     routes::install(Router::new(), &app.routes)
-        .route("/", get(|| async { Redirect::to("/companies") }))
-        .route("/login", get(login_page).post(login))
+        .route("/", get(auth::home))
+        .route("/login", get(auth::home).post(auth::login))
+        .route(
+            "/forgot-password",
+            get(auth::forgot_page).post(auth::forgot),
+        )
+        .route(
+            "/reset-password/{token}",
+            get(auth::reset_page).post(auth::reset),
+        )
         .route("/logout", post(logout))
         .route("/live", get(upgrade))
         .route(media::STREAM, get(media::stream))
@@ -217,7 +226,10 @@ fn render<T: Template>(template: T) -> Result<String> {
     template.render().map_err(|_| Error::Internal)
 }
 fn document(body: &str) -> Result<Html<String>> {
-    Ok(Html(render(Document { body })?))
+    document_titled("Bilibi", body)
+}
+fn document_titled(title: &str, body: &str) -> Result<Html<String>> {
+    Ok(Html(render(Document { title, body })?))
 }
 fn token(headers: &HeaderMap) -> Result<String> {
     headers
@@ -241,53 +253,6 @@ fn origin(app: &App, headers: &HeaderMap) -> Result<()> {
         Err(Error::Forbidden)
     }
 }
-async fn login_page() -> std::result::Result<Html<String>, HttpError> {
-    Ok(document(&render(Login { error: "" })?)?)
-}
-#[derive(Deserialize)]
-struct Credentials {
-    tenant: i64,
-    email: String,
-    password: String,
-}
-async fn login(
-    State(app): State<App>,
-    headers: HeaderMap,
-    Form(form): Form<Credentials>,
-) -> std::result::Result<Response, HttpError> {
-    origin(&app, &headers)?;
-    match app
-        .user
-        .login(form.tenant, &form.email, &form.password)
-        .await
-    {
-        Ok(session) => {
-            let secure = if app.origin.starts_with("https://") {
-                "; Secure"
-            } else {
-                ""
-            };
-            let cookie = format!(
-                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{secure}",
-                session.token
-            );
-            let mut response = Redirect::to("/companies").into_response();
-            response.headers_mut().insert(
-                header::SET_COOKIE,
-                HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
-            );
-            Ok(response)
-        }
-        Err(Error::Unauthorized) => Ok((
-            StatusCode::UNAUTHORIZED,
-            document(&render(Login {
-                error: "Tenant, email or password is incorrect",
-            })?)?,
-        )
-            .into_response()),
-        Err(error) => Err(error.into()),
-    }
-}
 #[derive(Deserialize)]
 struct Logout {
     csrf: String,
@@ -299,7 +264,7 @@ async fn logout(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     app.user.logout(&token(&headers)?, &form.csrf).await?;
-    let mut response = Redirect::to("/login").into_response();
+    let mut response = Redirect::to("/").into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_static("bilibi_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
