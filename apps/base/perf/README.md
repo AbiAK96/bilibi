@@ -2,11 +2,42 @@
 
 `base/perf` records redacted request, live-event, job and process samples into
 `base_perf_samples` without ever delaying the work it measures. Reading the
-history for the Performance page is O4; this module owns recording, storage,
-retention and the read queries.
+history, its Performance page and its dashboard health widget are owned here,
+alongside recording, storage and retention.
 
 The service is `base/perf.recorder` (`Recorder`). Re-exported as
 `bilibi_base::perf`.
+
+## Operator page and dashboard health
+
+Open `/system/performance` as a platform operator with
+`admin.system.perf.view`. Operator standing and the capability are independently
+required on HTTP, socket mount, URL changes, events and background refreshes.
+The page never accepts a tenant parameter to widen access. The discovered menu
+entry and `base-perf-health` dashboard widget use the same platform capability.
+
+The page composes Base UI's `ListState`, filter toolbar, `ListColumns`,
+`FlexTable` and pagination (`src/web/`). Kind, outcome, exact identity, page
+size (25/50/100/300), page and time range survive reload and browser Back.
+`range` accepts `all` (all retained history, the default), `1h`, `24h` and `7d`;
+relative windows use inclusive start/exclusive end instants in UTC. Regression
+diagnostics always compare the last hour with its preceding hour, with at least
+five samples in both windows and the configured p95 threshold. The page labels
+these windows separately from the history range. Column changes and zoom reuse
+the loaded data; the next host refresh reloads it. Timestamps follow the shell's
+Company/UTC/Local display policy.
+
+An empty read says there is no matching history; a failed read says history is
+unavailable and withholds a fabricated zero count/pager. A failed regression
+read has its own unavailable state. Recorder health, backlog and dropped
+counts describe this process. Disabling recording leaves retained history
+readable and displays a notice.
+
+`dashboard.performance` is an independent dashboard embed, refreshed through
+`PanelCache` every 60 seconds. It checks operator access before its cache on
+every update. A refused panel clears that cache, skips diagnostics and renders
+an em dash without a link; the dashboard also removes entries whose offering
+capability is lost. Customize mode withholds the navigation link.
 
 ## Observing work: use `observe`, not your own timer
 
