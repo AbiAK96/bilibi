@@ -246,3 +246,37 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
     })?
     .to_string())
 }
+
+/// Keep mount-time facts stable while the shared transport services shell
+/// panels and live authorization. A refresh checks access, not the probes.
+pub(super) struct Snapshot {
+    pages: Pages,
+    html: Option<String>,
+}
+impl Snapshot {
+    pub(super) fn new(pages: Pages) -> Self {
+        Self { pages, html: None }
+    }
+}
+impl bilibi_ui::page::LiveState<Scope, bilibi_database::Error> for Snapshot {
+    fn update<'a>(
+        &'a mut self,
+        request: bilibi_ui::page::LiveRequest<'a, Scope>,
+    ) -> bilibi_ui::page::LiveFuture<'a, bilibi_database::Error> {
+        Box::pin(async move {
+            self.pages
+                .authorize(request.scope, super::INFO_VIEW)
+                .await?;
+            if matches!(request.input, bilibi_ui::page::LiveInput::Event(_)) {
+                return Err(bilibi_database::Error::Invalid);
+            }
+            if self.html.is_none() {
+                self.html = Some(page(&self.pages, request.scope).await?);
+            }
+            Ok(bilibi_ui::page::LiveBody {
+                html: self.html.clone().ok_or(bilibi_database::Error::Internal)?,
+                ..bilibi_ui::page::LiveBody::default()
+            })
+        })
+    }
+}

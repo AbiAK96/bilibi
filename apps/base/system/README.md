@@ -13,7 +13,9 @@ events, URL changes and refresh; owners also reauthorize calls to their page
 services. No unit tests or test-only infrastructure are included.
 
 System Info reads facts once per HTTP navigation, matching Bilimbi's static
-snapshot. Rust replaces Elixir/OTP/ERTS with the actual compiler, Tokio worker
+snapshot. A mounted page retains those facts while the live transport keeps
+shell panels and authorization active; background refresh does not re-probe.
+Rust replaces Elixir/OTP/ERTS with the actual compiler, Tokio worker
 and live process facts from Perf. The Database card exercises a fresh bounded
 query, exposes no connection string or credentials, and distinguishes an
 unreachable database from a missing probe. Applications lists the installed

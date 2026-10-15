@@ -64,10 +64,7 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody {
-                html,
-                live: request.operation != "info",
-            })
+            Ok(PageBody { html, live: true })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
@@ -82,7 +79,10 @@ impl Page<Scope, Error> for Pages {
                     self.authorize(scope, MENU_VIEW).await?;
                     Box::new(inspector::Inspector::new(self.clone(), request.query)?)
                 }
-                "info" => return Ok(None),
+                "info" => {
+                    self.authorize(scope, INFO_VIEW).await?;
+                    Box::new(info::Snapshot::new(self.clone()))
+                }
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
