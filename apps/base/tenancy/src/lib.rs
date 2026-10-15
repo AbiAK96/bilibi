@@ -43,6 +43,18 @@ pub trait ActorVerifier: Send + Sync {
         tenant: i64,
         user: i64,
     ) -> ProofFuture<'a, AccountIdentity>;
+    /// Re-proves the holder of an authenticated session before a sensitive
+    /// read (stored-secret reveal). A verifier that cannot check credentials
+    /// keeps this default, which never confirms.
+    fn confirm_password<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _tenant: i64,
+        _user: i64,
+        _password: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async { Ok(false) })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +155,20 @@ impl Authentication {
         self.verifier.get().map(|_| ()).ok_or_else(|| {
             bilibi_module_registry::RegistryError::Service("missing actor verifier".into())
         })
+    }
+    /// Whether `password` is the scope's own current password. Callers throttle
+    /// and audit attempts; this grants nothing and a missing verifier refuses.
+    pub async fn confirm_password(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        password: &str,
+    ) -> Result<bool> {
+        self.verifier
+            .get()
+            .ok_or(Error::Unauthorized)?
+            .confirm_password(client, scope.tenant(), scope.user(), password)
+            .await
     }
     /// Authentication edge only: IDs must come from a durable credential/session.
     /// This method establishes identity; it grants no capabilities.

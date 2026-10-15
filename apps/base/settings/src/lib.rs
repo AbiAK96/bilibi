@@ -174,6 +174,33 @@ impl Settings {
         target: Target,
         keys: &[&str],
     ) -> Result<std::collections::BTreeMap<String, Resolved>> {
+        self.resolve(client, actor, target, keys, true).await
+    }
+    /// `resolve_many` for editors: an encrypted value found in storage is never
+    /// decrypted and resolves to null with its `source`, so a screen can show a
+    /// keep-current mask, even without the key, and no plaintext leaves here.
+    pub async fn resolve_masked(
+        &self,
+        client: &(impl GenericClient + Sync),
+        actor: &Scope,
+        target: Target,
+        keys: &[&str],
+    ) -> Result<std::collections::BTreeMap<String, Resolved>> {
+        self.resolve(client, actor, target, keys, false).await
+    }
+    /// Whether `BILIBI_SETTINGS_KEY` holds a valid key; without one, encrypted
+    /// values can be deleted but neither read nor written.
+    pub fn encryption_available(&self) -> bool {
+        self.encryption.available()
+    }
+    async fn resolve(
+        &self,
+        client: &(impl GenericClient + Sync),
+        actor: &Scope,
+        target: Target,
+        keys: &[&str],
+        decrypt: bool,
+    ) -> Result<std::collections::BTreeMap<String, Resolved>> {
         if keys.len() > 512 {
             return Err(Error::Invalid);
         }
@@ -202,6 +229,17 @@ impl Settings {
                     .map(|row| (*scope, row))
             });
             let resolved = match found {
+                Some((scope, row)) if encrypted && !decrypt => {
+                    if !row.get::<_, bool>("is_encrypted") {
+                        return Err(Error::Invalid);
+                    }
+                    Resolved {
+                        value: Value::Null,
+                        source: Some(scope),
+                        overridden: chain.first() == Some(&scope),
+                        encrypted,
+                    }
+                }
                 Some((scope, row)) => {
                     let value = self.decode(key, scope, row, encrypted)?;
                     if let Some(d) = definition {

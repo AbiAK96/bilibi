@@ -28,6 +28,10 @@ impl Encryption {
         });
         Self { cipher }
     }
+    /// Whether a valid key was configured; encrypted reads and writes refuse otherwise.
+    pub fn available(&self) -> bool {
+        self.cipher.is_some()
+    }
     pub fn encrypt(&self, value: &Value, identity: &[u8]) -> Result<Value> {
         let cipher = self.cipher.as_ref().ok_or(Error::Invalid)?;
         let nonce = <[u8; 12]>::try_generate().map_err(|_| Error::Internal)?;

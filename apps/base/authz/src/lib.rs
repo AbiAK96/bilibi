@@ -268,6 +268,17 @@ pub async fn authorize_operator(
     authorize_key(client, scope, key).await?;
     bilibi_tenancy::prove_operator(client, scope).await
 }
+/// Whether `key` is granted by name, directly or through a role listing it,
+/// with no direct denial. A `grant_all` role does not count: some capabilities
+/// (stored-secret reveal) must be handed out deliberately. Pair it with
+/// `decide`, which still applies tenant, platform and logging rules.
+pub async fn explicitly_granted(
+    client: &impl GenericClient,
+    scope: &Scope,
+    key: &str,
+) -> Result<bool> {
+    Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
+}
 pub async fn restrictions(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
     restrictions_for(client, scope, "companies").await
 }

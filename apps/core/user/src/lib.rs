@@ -188,4 +188,19 @@ impl bilibi_security::ActorVerifier for AccountVerifier {
             })
         })
     }
+    fn confirm_password<'a>(
+        &'a self,
+        client: &'a dyn bilibi_security::ProofClient,
+        tenant: i64,
+        user: i64,
+        password: &'a str,
+    ) -> bilibi_security::ProofFuture<'a, bool> {
+        Box::pin(async move {
+            if password.len() > password::MAX_LENGTH {
+                return Ok(false);
+            }
+            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.map(|row| row.get(0));
+            password::verify(password, stored.as_deref()).await
+        })
+    }
 }
