@@ -4,6 +4,7 @@
 //! Library itself. Secondary slots are built through the typed models, so the
 //! page exercises both the macro and the Rust paths.
 use crate::inline_specimen::InlineSamples;
+use crate::section::sections;
 use crate::{
     choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, CodeInput, Combobox,
     Field, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect, PageVariant,
@@ -11,6 +12,7 @@ use crate::{
 };
 use askama::Template;
 
+/// The page is cut into sections, each its own template; see `section`.
 #[derive(Template)]
 #[template(path = "ui_components_specimen.html")]
 pub struct ComponentsSpecimen {
@@ -29,6 +31,29 @@ pub struct ComponentsSpecimen {
     field_states: Html,
     radio_disabled: Html,
     inline: InlineSamples,
+}
+
+sections! {
+    ComponentsSpecimen {
+        layout: "ui_components_specimen/layout.html",
+        records: "ui_components_specimen/records.html",
+        buttons: "ui_components_specimen/buttons.html",
+        links: "ui_components_specimen/links.html",
+        code_input: "ui_components_specimen/code_input.html",
+        text_inputs: "ui_components_specimen/text_inputs.html",
+        text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
+        text_inputs_typed: "ui_components_specimen/text_inputs_typed.html",
+        choices: "ui_components_specimen/choices.html",
+        multi_select: "ui_components_specimen/multi_select.html",
+        date_secret: "ui_components_specimen/date_secret.html",
+        date_inputs: "ui_components_specimen/date_inputs.html",
+        secret_inputs: "ui_components_specimen/secret_inputs.html",
+        stored_secret: "ui_components_specimen/stored_secret.html",
+        input_variants: "ui_components_specimen/input_variants.html",
+        combobox: "ui_components_specimen/combobox.html",
+        restricted: "ui_components_specimen/restricted.html",
+        inline_facts: "ui_components_specimen/inline_facts.html",
+    }
 }
 
 /// The form controls of the specimen, mirroring Bilimbi's Design Library

@@ -1,0 +1,31 @@
+{%- import "components.html" as ui -%}
+<div class="grid gap-3 lg:grid-cols-2">
+{% call ui::card(id="specimen-back-link", title="Back link", inner_class="p-3") %}
+<p class="mb-2 text-xs text-ink-muted">Returning is a secondary action, so it is a plain link, never a button.</p>
+<div class="flex flex-wrap items-center gap-6">{% call ui::back_link(id="specimen-back-link-plain", href="/system/design-library") %}{% endcall %}{% call ui::back_link(id="specimen-back-link-titled", href="/system/design-library", title="Back to Design Library") %}{% endcall %}</div>
+{% endcall %}
+{% call ui::card(id="specimen-action-link", title="Action link", inner_class="p-3") %}
+<p class="mb-2 text-xs text-ink-muted">Reaching a related workflow is a secondary action, so it is a plain link, never a button.</p>
+<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
+{% endcall %}
+</div>
+<div id="specimen-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::badge() %}Archived{% endcall %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% call ui::badge(kind=BadgeKind::Warning) %}Pending{% endcall %}{% call ui::badge(kind=BadgeKind::Danger) %}Suspended{% endcall %}{% call ui::badge(dot=false) %}Manager{% endcall %}
+</div>
+<div id="specimen-create-button" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+{% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
+</div>
+<div id="specimen-icons" class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Bilimbi-specific icons</h3><div class="flex flex-wrap gap-5">
+<div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span></div><div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span></div>
+</div></div>
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Navigation</h3><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+<div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-building-office-2", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Companies</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-users", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Users</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-shield-check", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Authorization</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-cog-6-tooth", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">System</span></div>
+</div></div>
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Status</h3><div class="flex flex-wrap gap-5">
+<div class="flex items-center gap-2 text-success-ink">{% call ui::icon(name="success", class="size-5") %}{% endcall %}<span class="text-sm">Completed</span></div><div class="flex items-center gap-2 text-warning-ink">{% call ui::icon(name="warning", class="size-5") %}{% endcall %}<span class="text-sm">Attention</span></div><div class="flex items-center gap-2 text-danger-ink">{% call ui::icon(name="error", class="size-5") %}{% endcall %}<span class="text-sm">Failed</span></div><div class="flex items-center gap-2 text-ink-muted">{% call ui::icon(name="information", class="size-5") %}{% endcall %}<span class="text-sm">Information</span></div>
+</div></div>
+<div id="specimen-icon-variants" class="border-t border-line pt-4"><h3 class="mb-2 text-sm font-semibold text-ink">Icon treatments</h3><div class="flex flex-wrap items-end gap-6">
+<div class="text-center">{% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Outline — the default</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Solid</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Mini</p></div>
+</div></div>
+</div>

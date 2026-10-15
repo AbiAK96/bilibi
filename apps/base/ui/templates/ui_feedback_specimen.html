@@ -1,121 +1,24 @@
-{%- import "components.html" as ui -%}
-{%- import "feedback.html" as fb -%}
-{%- import "dialog.html" as d -%}
-{%- import "tabs.html" as t -%}
+{#- The content lives in the section templates under ui_feedback_specimen/, listed in
+    src/feedback_specimen.rs; see src/section.rs for why one template is too big. -#}
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi feedback specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/ui.js" defer></script><script src="/assets/ui-feedback-demo.js" defer></script></head>
 <body class="bg-canvas text-ink">
-{% call fb::flash_group() %}{% endcall %}
+{{ self.flash_group()? }}
 <main class="mx-auto max-w-5xl space-y-6 p-8">
 <header class="space-y-1"><h1 class="text-2xl font-semibold text-ink-strong">Feedback, dialogs and tabs specimen</h1><p class="text-sm text-ink-muted">Flash, alert, panel notice, connection banners, modal and confirmation dialogs, and the tab strip. Dialogs and flashes are rendered by the server in production; here a small driver (<code>ui-feedback-demo.js</code>) stands in for the server by inserting and removing the same markup.</p></header>
 
-{% call ui::card(id="component-flash", title="Flash", inner_class="space-y-3 p-4") %}
-<p class="text-xs text-ink-muted">One message per severity. Info, warning and error stay until dismissed; only a success times out, after eight seconds. Success and info are announced as a status; warning and error interrupt as an alert.</p>
-<div class="flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
-{% call fb::flash(kind=bilibi_ui::StatusKind::Error, id="design-library-flash-error", title="Save failed", message="The changes could not be saved.") %}{% endcall %}
-{% call fb::flash(kind=bilibi_ui::StatusKind::Warning, id="design-library-flash-warning", title="Review before continuing", message="Two employees still report to the archived department.") %}{% endcall %}
-{% call fb::flash(kind=bilibi_ui::StatusKind::Success, id="design-library-flash-success", title="Saved", message="Your changes were saved.") %}{% endcall %}
-{% call fb::flash(kind=bilibi_ui::StatusKind::Info, id="design-library-flash-info", message="This change affects future records only.") %}{% endcall %}
-</div>
-<div id="flash-triggers" class="flex flex-wrap gap-2 border-t border-line pt-3">
-{% call ui::button(id="show-flash-success", button_type="button", event="show-flash-success") %}Send a success{% endcall %}
-{% call ui::button(id="show-flash-info", button_type="button", event="show-flash-info") %}Send an info{% endcall %}
-{% call ui::button(id="show-flash-warning", button_type="button", event="show-flash-warning") %}Send a warning{% endcall %}
-{% call ui::button(id="show-flash-error", button_type="button", event="show-flash-error") %}Send an error{% endcall %}
-</div>
-<p class="text-xs text-ink-muted">The buttons send into the layout's flash group at the top right. Click a message to dismiss it; the success leaves on its own.</p>
-{% endcall %}
+{{ self.flash()? }}
 
-{% call ui::card(id="component-alert", title="Alert", inner_class="p-4") %}
-<div class="grid gap-2 lg:grid-cols-2">
-{% call fb::alert(kind=bilibi_ui::StatusKind::Info) %}This change affects future records.{% endcall %}
-{% call fb::alert(kind=bilibi_ui::StatusKind::Success) %}The company was created.{% endcall %}
-{% call fb::alert(kind=bilibi_ui::StatusKind::Warning) %}Review the missing address before continuing.{% endcall %}
-{% call fb::alert(kind=bilibi_ui::StatusKind::Error) %}The record could not be saved.{% endcall %}
-</div>
-{% endcall %}
+{{ self.alerts()? }}
 
-{% call ui::card(id="component-panel-notice", title="Panel notice", inner_class="space-y-2 p-4") %}
-<p class="text-xs text-ink-muted">What the last action on a panel did, reported above the panel's table or inside its open dialog. Dismiss clears it.</p>
-<div class="grid gap-2 lg:grid-cols-2">
-{% call fb::panel_notice(id="design-library-panel-notice-success", kind=bilibi_ui::NoticeKind::Success, dismiss_event="dismiss-notice") %}Address attached.{% endcall %}
-{% call fb::panel_notice(id="design-library-panel-notice-info", kind=bilibi_ui::NoticeKind::Info, dismiss_event="dismiss-notice") %}Nothing changed: the address already had those kinds.{% endcall %}
-{% call fb::panel_notice(id="design-library-panel-notice-error", kind=bilibi_ui::NoticeKind::Error, dismiss_event="dismiss-notice") %}The address was not unlinked. Try again.{% endcall %}
-</div>
-{% endcall %}
+{{ self.connection()? }}
 
-{% call ui::card(id="component-connection-banners", title="Connection banners", inner_class="space-y-3 p-4") %}
-<p class="text-xs text-ink-muted">The two banners the browser reveals when the websocket drops: "Connection interrupted" while it cannot reach the server, "Server unavailable" when the server refused or lost the page. Shown here already revealed and bound to no connection event; the real pair is the flash group's at the top right, or an open dialog's.</p>
-<div class="grid gap-3 lg:grid-cols-2">
-{% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Client) %}{% endcall %}
-{% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Server) %}{% endcall %}
-</div>
-<div id="connection-triggers" class="flex flex-wrap gap-2 border-t border-line pt-3">
-{% call ui::button(id="simulate-client-drop", button_type="button", event="simulate-client-drop") %}Simulate a dropped connection{% endcall %}
-{% call ui::button(id="simulate-server-drop", button_type="button", event="simulate-server-drop") %}Simulate server down{% endcall %}
-{% call ui::button(id="simulate-reconnect", button_type="button", event="simulate-reconnect") %}Reconnect{% endcall %}
-</div>
-<p class="text-xs text-ink-muted">These dispatch the same <code>bilibi:disconnected</code> and <code>bilibi:connected</code> events the live transport raises. Open a dialog while dropped: its own pair is revealed above it.</p>
-{% endcall %}
+{{ self.dialogs()? }}
 
-{% call ui::card(id="component-modal", title="Modal dialog", inner_class="space-y-2 p-4") %}
-<p class="text-xs text-ink-muted">A short workflow over the current screen. Focus enters the dialog, the page behind is inert, and Escape or Cancel returns focus to the control that opened it. The open dialog carries its own connection banners.</p>
-<div class="flex flex-wrap gap-2">
-{% call ui::button(id="design-library-open-modal", button_type="button", event="open-modal") %}Open dialog{% endcall %}
-{% call ui::button(id="design-library-open-wide-modal", button_type="button", event="open-wide-modal") %}Open wide dialog{% endcall %}
-{% call ui::button(id="design-library-open-long-modal", button_type="button", event="open-long-modal") %}Open long dialog{% endcall %}
-{% call ui::button(id="design-library-open-flash-modal", button_type="button", event="open-flash-modal") %}Open dialog with flash{% endcall %}
-</div>
-<div id="modal-host"></div>
-{% endcall %}
-
-{% call ui::card(id="component-confirm-dialog", title="Confirmation dialog", inner_class="space-y-3 p-4") %}
-<p class="text-xs text-ink-muted">An action that cannot be undone confirms here, never in the browser's own dialog. The dialog leads with the consequence, offers Cancel (which takes focus) and a calm danger confirm named by the verb, and Escape and Cancel are one action. The first row deletes; the second refuses because companies still use it.</p>
-<div class="flex flex-wrap items-center gap-3">
-{% call ui::button(id="design-library-confirm-in-flight", variant=bilibi_ui::ButtonVariant::Danger, disabled=true) %}Deleting…{% endcall %}
-<p class="text-xs text-ink-muted">In flight, the confirm reads its working label for the round trip: the browser disables it and swaps the verb until the server replies.</p>
-</div>
-<ul id="design-library-confirm-rows" class="divide-y divide-line rounded-md border border-line text-sm">
-<li id="design-library-confirm-row-1" class="flex items-center justify-between px-3 py-2"><span>LLC</span>{% call ui::icon_button(id="design-library-confirm-delete-1", icon="delete", label="Delete LLC", kind=bilibi_ui::IconKind::Danger, event="confirm-request") %}{% endcall %}</li>
-<li id="design-library-confirm-row-2" class="flex items-center justify-between px-3 py-2"><span>Partnership</span>{% call ui::icon_button(id="design-library-confirm-delete-2", icon="delete", label="Delete Partnership", kind=bilibi_ui::IconKind::Danger, event="confirm-request") %}{% endcall %}</li>
-</ul>
-<div id="design-library-confirm-outcome-host" class="space-y-2"></div>
-{% call ui::button(id="design-library-confirm-reset", button_type="button", event="confirm-reset") %}Restore examples{% endcall %}
-<div id="confirm-host"></div>
-{% endcall %}
-
-{% call ui::card(id="component-tabs", title="Tabs", inner_class="space-y-3 p-3") %}
-<p id="design-library-tabs-overflow" class="text-xs text-ink-muted">Labels stay on one line. What does not fit scrolls, and an edge control appears only while a tab is out of view.</p>
-{% call t::tabs(id="example-tabs", label="Example views", items=tabs_links) %}{% endcall %}
-<div id="design-library-tabs-narrow" class="max-w-xs border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">The same strip in a narrow column</p>
-{% call t::tabs(id="example-narrow-tabs", label="Example narrow views", items=tabs_narrow) %}{% endcall %}</div>
-<div id="design-library-tabs-buttons" class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">In-page switching: tabs without an href are buttons that raise an event</p>
-{% call t::tabs(id="example-button-tabs", label="Example switched views", items=tabs_buttons) %}{% endcall %}
-<p id="design-library-tabs-panel" class="pt-3 text-sm text-ink">Showing: Overview</p></div>
-<div id="design-library-tabs-single" class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">One section needs no switching</p>
-{% call t::tabs(id="example-single-tab", label="Example single view", items=tabs_single) %}{% endcall %}</div>
-{% endcall %}
+{{ self.tab_strips()? }}
 </main>
 
-<template id="tpl-flash-success">{% call fb::flash(kind=bilibi_ui::StatusKind::Success, title="Saved", message="Your changes were saved.", auto_dismiss=true) %}{% endcall %}</template>
-<template id="tpl-flash-info">{% call fb::flash(kind=bilibi_ui::StatusKind::Info, message="This change affects future records only.") %}{% endcall %}</template>
-<template id="tpl-flash-warning">{% call fb::flash(kind=bilibi_ui::StatusKind::Warning, title="Review before continuing", message="Two employees still report to the archived department.") %}{% endcall %}</template>
-<template id="tpl-flash-error">{% call fb::flash(kind=bilibi_ui::StatusKind::Error, title="Save failed", message="The changes could not be saved.") %}{% endcall %}</template>
-<template id="tpl-modal">{% call d::modal(id="design-library-modal", title="Rename example company", cancel_event="close-modal", description="Changes stay in this preview.") %}
-<form id="design-library-modal-form" class="mt-4 space-y-4"><label class="block text-sm font-medium text-ink" for="design-library-modal-name">Company name</label><input id="design-library-modal-name" name="name" value="Acme Holdings" class="block w-full rounded-md border border-high-contrast-line bg-surface px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30"><div class="flex justify-end gap-2">{% call ui::button(button_type="button", event="close-modal") %}Cancel{% endcall %}{% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Save{% endcall %}</div></form>
-{% endcall %}</template>
-<template id="tpl-wide-modal">{% call d::modal(id="design-library-wide-modal", title="Edit example company", cancel_event="close-modal", width=bilibi_ui::ModalWidth::Wide) %}
-<form id="design-library-wide-modal-form" class="mt-4 space-y-4"><div class="grid gap-4 sm:grid-cols-2"><div><label class="block text-sm font-medium text-ink" for="design-library-wide-modal-name">Company name</label><input id="design-library-wide-modal-name" name="name" value="Acme Holdings" class="block w-full rounded-md border border-high-contrast-line bg-surface px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30"></div><div><label class="block text-sm font-medium text-ink" for="design-library-wide-modal-code">Code</label><input id="design-library-wide-modal-code" name="code" value="ACME" class="block w-full rounded-md border border-high-contrast-line bg-surface px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30"></div></div><div class="flex justify-end gap-2">{% call ui::button(button_type="button", event="close-modal") %}Cancel{% endcall %}{% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Save{% endcall %}</div></form>
-{% endcall %}</template>
-<template id="tpl-long-modal">{% call d::modal(id="design-library-long-modal", title="Terms of the example agreement", cancel_event="close-modal", description="The dialog never scrolls; its body does.") %}
-<div id="design-library-long-modal-text" class="mt-4 space-y-3 text-sm text-ink">{% for n in long_paragraphs %}<p>Clause {{ n }}. The parties agree that this paragraph exists to make the dialog body taller than the viewport, so the body scrolls inside the rounded surface while the title stays attached to the top of the content.</p>{% endfor %}</div>
-<div class="mt-5 flex justify-end gap-2">{% call ui::button(button_type="button", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Close{% endcall %}</div>
-{% endcall %}</template>
-<template id="tpl-flash-modal">{% call d::modal(id="design-library-flash-modal", title="Dialog that owns the flash", cancel_event="close-modal", description="The page behind is inert, so the flash renders in here.", owns_flash=true, messages=flash_in_dialog) %}
-<div class="mt-5 flex justify-end gap-2">{% call ui::button(button_type="button", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Close{% endcall %}</div>
-{% endcall %}</template>
-<template id="tpl-confirm-1">{% call d::confirm_dialog(id="design-library-confirm", consequence="Legal entity type “LLC” will be deleted.", detail="It can no longer be chosen for a company. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm-run", cancel_event="confirm-cancel") %}{% endcall %}</template>
-<template id="tpl-confirm-2">{% call d::confirm_dialog(id="design-library-confirm", consequence="Legal entity type “Partnership” will be deleted.", detail="It can no longer be chosen for a company. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm-run", cancel_event="confirm-cancel") %}{% endcall %}</template>
-<template id="tpl-alert-success">{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="design-library-confirm-outcome") %}Legal entity type “LLC” was deleted.{% endcall %}</template>
-<template id="tpl-alert-error">{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="design-library-confirm-outcome") %}Legal entity type “Partnership” was not deleted: 3 companies still use it. Reassign them first.{% endcall %}</template>
+{{ self.flash_templates()? }}
+{{ self.modal_templates()? }}
+{{ self.confirm_templates()? }}
 </body></html>

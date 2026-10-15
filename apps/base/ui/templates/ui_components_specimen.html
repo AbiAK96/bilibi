@@ -1,204 +1,24 @@
-{%- import "components.html" as ui -%}
-{%- import "forms.html" as form -%}
+{#- The content lives in the section templates under ui_components_specimen/, listed in
+    src/specimen.rs; see src/section.rs for why one template is too big. -#}
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi component specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/ui.js" defer></script><script src="/assets/hooks.js" defer></script></head>
 <body class="bg-canvas text-ink"><main class="mx-auto max-w-5xl space-y-6 p-8">
 <header class="space-y-1"><h1 class="text-2xl font-semibold text-ink-strong">UI component specimen</h1><p class="text-sm text-ink-muted">Page, header, section heading, card, facts, stat strip, buttons, links, badges and icons</p></header>
-{% call ui::card(id="specimen-page", title="Page widths", inner_class="space-y-2 p-4") %}
-<div class="overflow-x-auto"><div class="w-[1280px] space-y-3">
-{% call ui::page(id="specimen-page-list", variant=PageVariant::List, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">List — wide for filters and tables</p>{% endcall %}
-{% call ui::page(id="specimen-page-detail", variant=PageVariant::Detail, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Detail — the list width, for a record or dashboard</p>{% endcall %}
-{% call ui::page(id="specimen-page-form", variant=PageVariant::Form, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Form — narrow for focused entry</p>{% endcall %}
-</div></div>
-<p class="text-xs text-ink-muted">Each variant is centered on a 1280px stage at full scale; scroll to follow the widest.</p>
-{% endcall %}
-{% call ui::card(id="specimen-header", title="Page header", inner_class="space-y-5 p-4") %}
-<div id="specimen-header-default"><p class="mb-2 text-xs text-ink-muted">Title, subtitle, and trailing action</p>
-{% call ui::header(subtitle="Manage identity and regional defaults.", actions=header_actions) %}Company settings{% endcall %}
-</div>
-<div id="specimen-header-title-action" class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Title action without a trailing action</p>
-{% call ui::header(title_actions=header_title_actions) %}Company details{% endcall %}
-</div>
-{% endcall %}
-{% call ui::card(id="specimen-section-heading", title="Section heading", inner_class="space-y-5 p-4") %}
-<div><p class="mb-2 text-xs text-ink-muted">Title alone</p>
-{% call ui::section_heading(title="Company Details", class="mb-0") %}{% endcall %}
-</div>
-<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Count, title action, description and trailing action</p>
-{% call ui::section_heading(id="specimen-section-heading-location", title="Geographic Location", count=Some(4), class="mb-0", title_actions=section_title_actions, description="Country, division, postcode and locality depend on one another, so they are applied together.", actions=section_actions) %}{% endcall %}
-</div>
-{% endcall %}
-<div class="grid gap-3 lg:grid-cols-2">
-{% call ui::card(id="specimen-card", title="Card", inner_class="space-y-4 p-4") %}
-<div id="specimen-card-titled"><p class="mb-2 text-xs text-ink-muted">With a title</p>
-{{ card_titled }}
-</div>
-<div id="specimen-card-untitled"><p class="mb-2 text-xs text-ink-muted">Without a title</p>
-{{ card_untitled }}
-</div>
-<div id="specimen-card-flat"><p class="mb-2 text-xs text-ink-muted">Flat, framing a table</p>
-{{ card_flat }}
-</div>
-{% endcall %}
-{% call ui::card(id="specimen-facts", title="Record facts", inner_class="space-y-4 px-4") %}
-<div id="specimen-facts-populated"><p class="mb-1 text-xs text-ink-muted">Facts for one record</p>
-{% call ui::facts() %}{% call ui::fact(title="Company") %}Acme Holdings{% endcall %}{% call ui::fact(title="Status") %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% endcall %}{% call ui::fact(title="Jurisdiction") %}Malaysia{% endcall %}{% endcall %}
-</div>
-<div id="specimen-facts-single" class="border-t border-line pt-3"><p class="mb-1 text-xs text-ink-muted">One fact</p>
-{% call ui::facts(id="specimen-facts-single-list") %}{% call ui::fact(title="Company", id="specimen-facts-company") %}Acme Holdings{% endcall %}{% endcall %}
-</div>
-{% endcall %}
-</div>
-{% call ui::card(id="specimen-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}
-<div><p class="mb-2 text-xs text-ink-muted">Linked strip with multiple numeric values</p>
-{% call ui::stat_strip(id="specimen-stat-linked", title="Workspace", href="/system/design-library/components", items=stats_linked) %}{% endcall %}
-</div>
-<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Read-only strip with one text value</p>
-{% call ui::stat_strip(id="specimen-stat-unlinked", title="Storage", items=stats_unlinked) %}{% endcall %}
-</div>
-<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Three values</p>
-{% call ui::stat_strip(id="specimen-stat-three", title="Companies", items=stats_three) %}{% endcall %}
-</div>
-{% endcall %}
-<div id="specimen-buttons" class="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4 shadow-xs">
-{% call ui::button() %}Secondary{% endcall %}{% call ui::button(variant=ButtonVariant::Primary) %}Primary{% endcall %}{% call ui::button(variant=ButtonVariant::Danger) %}Danger{% endcall %}{% call ui::button(disabled=true) %}Disabled{% endcall %}{% call ui::button(href="/system/design-library") %}Navigation{% endcall %}{% call ui::button(variant=ButtonVariant::Primary, busy=true) %}Saving…{% endcall %}
-</div>
-<div id="specimen-button-icons" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-{% call ui::button() %}{% call ui::icon(name="create") %}{% endcall %} Add{% endcall %}
-{% call ui::button() %}{% call ui::icon(name="edit") %}{% endcall %} Edit{% endcall %}
-{% call ui::button() %}{% call ui::icon(name="search") %}{% endcall %} Search{% endcall %}
-{% call ui::button(variant=ButtonVariant::Danger) %}{% call ui::icon(name="delete") %}{% endcall %} Delete{% endcall %}
-</div>
-{% call ui::card(id="specimen-icon-button", title="Compact icon actions", inner_class="p-4") %}
-<div class="flex flex-wrap items-center gap-4">
-<div class="flex items-center gap-2 text-sm text-ink-muted">Inline {% call ui::icon_button(icon="bilimbi-pin", label="Pin Design Library", context=IconContext::Inline) %}{% endcall %}</div>
-<div class="flex items-center gap-2 text-sm text-ink-muted">Table {% call ui::icon_button(icon="edit", label="Edit company") %}{% endcall %} {% call ui::icon_button(icon="delete", label="Delete company", kind=IconKind::Danger) %}{% endcall %}</div>
-<div class="flex items-center gap-2 text-sm text-ink-muted">Disabled {% call ui::icon_button(id="specimen-icon-button-disabled", icon="bilimbi-impersonate", label="Impersonate user", disabled=true) %}{% endcall %}</div>
-<div class="flex items-center gap-2 text-sm text-ink-muted">Busy {% call ui::icon_button(id="specimen-icon-button-busy", icon="export", label="Export companies", busy=true) %}{% endcall %}</div>
-<div class="flex items-center gap-2 text-sm text-ink-muted">Nav chrome {% call ui::icon_button(icon="bilimbi-pin", label="Pin a page", chrome=Chrome::Nav) %}{% endcall %}</div>
-<div class="flex items-center gap-2 text-sm text-ink-muted">Link {% call ui::icon_button(id="specimen-icon-button-link", icon="view", label="View company", href="/companies/1") %}{% endcall %}</div>
-</div>
-{% endcall %}
-<div class="grid gap-3 lg:grid-cols-2">
-{% call ui::card(id="specimen-back-link", title="Back link", inner_class="p-3") %}
-<p class="mb-2 text-xs text-ink-muted">Returning is a secondary action, so it is a plain link, never a button.</p>
-<div class="flex flex-wrap items-center gap-6">{% call ui::back_link(id="specimen-back-link-plain", href="/system/design-library") %}{% endcall %}{% call ui::back_link(id="specimen-back-link-titled", href="/system/design-library", title="Back to Design Library") %}{% endcall %}</div>
-{% endcall %}
-{% call ui::card(id="specimen-action-link", title="Action link", inner_class="p-3") %}
-<p class="mb-2 text-xs text-ink-muted">Reaching a related workflow is a secondary action, so it is a plain link, never a button.</p>
-<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
-{% endcall %}
-</div>
-<div id="specimen-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-{% call ui::badge() %}Archived{% endcall %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% call ui::badge(kind=BadgeKind::Warning) %}Pending{% endcall %}{% call ui::badge(kind=BadgeKind::Danger) %}Suspended{% endcall %}{% call ui::badge(dot=false) %}Manager{% endcall %}
-</div>
-<div id="specimen-create-button" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-{% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
-</div>
-<div id="specimen-icons" class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
-<div><h3 class="mb-2 text-sm font-semibold text-ink">Bilimbi-specific icons</h3><div class="flex flex-wrap gap-5">
-<div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span></div><div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span></div>
-</div></div>
-<div><h3 class="mb-2 text-sm font-semibold text-ink">Navigation</h3><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-<div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-building-office-2", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Companies</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-users", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Users</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-shield-check", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Authorization</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="hero-cog-6-tooth", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">System</span></div>
-</div></div>
-<div><h3 class="mb-2 text-sm font-semibold text-ink">Status</h3><div class="flex flex-wrap gap-5">
-<div class="flex items-center gap-2 text-success-ink">{% call ui::icon(name="success", class="size-5") %}{% endcall %}<span class="text-sm">Completed</span></div><div class="flex items-center gap-2 text-warning-ink">{% call ui::icon(name="warning", class="size-5") %}{% endcall %}<span class="text-sm">Attention</span></div><div class="flex items-center gap-2 text-danger-ink">{% call ui::icon(name="error", class="size-5") %}{% endcall %}<span class="text-sm">Failed</span></div><div class="flex items-center gap-2 text-ink-muted">{% call ui::icon(name="information", class="size-5") %}{% endcall %}<span class="text-sm">Information</span></div>
-</div></div>
-<div id="specimen-icon-variants" class="border-t border-line pt-4"><h3 class="mb-2 text-sm font-semibold text-ink">Icon treatments</h3><div class="flex flex-wrap items-end gap-6">
-<div class="text-center">{% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Outline — the default</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Solid</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Mini</p></div>
-</div></div>
-</div>
+{{ self.layout()? }}
+{{ self.records()? }}
+{{ self.buttons()? }}
+{{ self.links()? }}
 <header id="specimen-forms" class="space-y-1 pt-4"><h2 class="text-xl font-semibold text-ink-strong">Form controls</h2><p class="text-sm text-ink-muted">Inputs, help, error and locked states, combobox, multi-select, radio group, code, secret and restricted controls</p></header>
-{% call ui::card(id="specimen-code-input", title="Code input", inner_class="p-4") %}
-{% call form::code_input(code=controls.code) %}{% endcall %}
-{% endcall %}
+{{ self.code_input()? }}
 <form id="specimen-fields" class="grid gap-3 lg:grid-cols-2">
-{% call ui::card(id="specimen-text-inputs", title="Text and long-form inputs", inner_class="p-4") %}
-{% call form::input(field=controls.text) %}{% endcall %}
-{% call form::input(field=controls.search) %}{% endcall %}
-{% call form::input(field=controls.email) %}{% endcall %}
-<div class="grid gap-x-3 sm:grid-cols-2">{% call form::input(field=controls.tel) %}{% endcall %}{% call form::input(field=controls.number) %}{% endcall %}</div>
-{% call form::input(field=controls.url) %}{% endcall %}
-{% call form::input(field=controls.textarea) %}{% endcall %}
-{% endcall %}
-{% call ui::card(id="specimen-choice-controls", title="Choice controls", inner_class="p-4") %}
-{% call form::input(field=controls.select) %}{% endcall %}
-{% call form::multi_select(control=controls.roles) %}{% endcall %}
-{% call form::input(field=controls.checkbox) %}{% endcall %}
-{% call form::radio_group(group=controls.radio) %}{% endcall %}
-{% endcall %}
-{% call ui::card(id="specimen-multi-select", title="Multi-select", inner_class="p-4") %}
-<p class="mb-2 text-xs text-ink-muted">Required, with helper text</p>
-{% call form::multi_select(control=controls.required_roles) %}{% endcall %}
-<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">With chips: each choice is shown and removed in place, and the trigger keeps its verb</p>
-{% call form::multi_select(control=controls.chip_roles) %}{% endcall %}
-</div>
-<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">Optional, on its own</p>
-{% call form::multi_select(control=controls.plain_roles) %}{% endcall %}
-</div>
-{% endcall %}
-{% call ui::card(id="specimen-radio-locked", title="Data region", inner_class="p-4") %}
-{% call form::radio_group(group=controls.locked_region) %}{% endcall %}
-<p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">Locked, so every choice is inert. The card heading names the group on screen and an <code>aria-label</code> names it for assistive tech, so it passes no label of its own, and the hint says who decided.</p>
-{% endcall %}
-{% call ui::card(id="specimen-date-secret", title="Date, time, and secret inputs", inner_class="p-4") %}
-<div class="grid gap-x-3 sm:grid-cols-2">{% call form::input(field=controls.date) %}{% endcall %}{% call form::input(field=controls.time) %}{% endcall %}{% call form::input(field=controls.datetime) %}{% endcall %}{% call form::input(field=controls.month) %}{% endcall %}{% call form::input(field=controls.week) %}{% endcall %}</div>
-{% call form::secret_input(secret=controls.password) %}{% endcall %}
-{% call form::secret_input(secret=controls.api_key) %}{% endcall %}
-{% endcall %}
-{% call ui::card(id="specimen-stored-secret", title="Stored secret", inner_class="p-4") %}
-{% call form::secret_input(secret=controls.stored_key) %}{% endcall %}
-{% call form::secret_input(secret=controls.no_eye) %}{% endcall %}
-{% endcall %}
-{% call ui::card(id="specimen-input-states", title="Help, error, and locked states", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
-<div class="grid gap-x-3 sm:grid-cols-3">{{ field_states }}</div>
-{{ radio_disabled }}
-{% endcall %}
-{% call ui::card(id="specimen-input-variants", title="Select, multi-value, and search inputs", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
-<div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{% call form::input(field=controls.example_role) %}{% endcall %}{% call form::input(field=controls.example_teams) %}{% endcall %}{% call form::multi_select(control=controls.example_interests) %}{% endcall %}{% call form::multi_select(control=controls.example_teams_chips) %}{% endcall %}{% call form::input(field=controls.quick_search) %}{% endcall %}</div>
-<p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">A prompt names the empty choice, the native multiple select shows what is chosen by highlighting its rows, the multi-select reports the count on its trigger, and the search box takes an <code>aria-label</code> rather than a visible one.</p>
-{% endcall %}
-{% call ui::card(id="specimen-combobox", title="Combobox", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
-<p class="mb-3 text-xs text-ink-muted">Type to filter, use the arrow keys to move, and press Enter to commit. Escape or leaving the field restores the last committed choice. The unlabelled inline editor also reports the cancel to its page, as an inline field editor does.</p>
-<div class="grid gap-x-3 sm:grid-cols-3">{% call form::combobox(combo=controls.combobox_country) %}{% endcall %}{% call form::combobox(combo=controls.combobox_selected) %}{% endcall %}{% call form::combobox(combo=controls.combobox_empty) %}{% endcall %}{% call form::combobox(combo=controls.combobox_inline) %}{% endcall %}</div>
-{% endcall %}
+{{ self.text_inputs()? }}
+{{ self.choices()? }}
+{{ self.multi_select()? }}
+{{ self.date_secret()? }}
+{{ self.stored_secret()? }}
+{{ self.input_variants()? }}
+{{ self.combobox()? }}
 </form>
-<div class="grid gap-3 lg:grid-cols-2">
-<div id="specimen-restricted" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-<p class="text-xs text-ink-muted">A field the viewer may not see, beside an empty one: restricted is not blank. The lock's tooltip says plainly that the viewer has no access; it names no role, because the field is restricted for a role the viewer holds.</p>
-<div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm"><span class="text-ink-muted">Bank account</span>{% call form::restricted(marker=controls.restricted) %}{% endcall %}<span class="text-ink-muted">Bonus</span>{% call form::restricted(marker=controls.restricted_reason) %}{% endcall %}<span class="text-ink-muted">Website</span><span class="text-ink-muted">—</span></div>
-</div>
-<div id="specimen-restricted-field" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-<p class="text-xs text-ink-muted">The same field in a create or edit form: a read-only row that keeps its label, never an omitted input, and submits nothing.</p>
-{% call form::restricted_field(field=controls.restricted_field) %}{% endcall %}
-{% call form::restricted_field(field=controls.restricted_field_reason) %}{% endcall %}
-</div>
-</div>
-<section id="specimen-inline" class="space-y-4">
-<div><h2 class="text-base font-semibold text-ink-strong">Inline facts</h2><p class="text-sm text-ink-muted">Read-first facts: the stored value is the trigger. Nothing is painted until the owner replies; the fact reads "Saving…" for its own round trip, then reports the outcome on itself. This page has no live socket, so it shows the read and outcome states; <code>/inline-reference</code> in the <code>u5-inline</code> example runs the lifecycle.</p></div>
-{% call ui::card(id="specimen-inline-edit-card", title="Inline edit", inner_class="space-y-4 p-4") %}
-<div><p class="mb-2 text-xs text-ink-muted">Click the value, type, then press Enter or leave the field.</p>{{ inline.edit }}</div>
-<div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
-<div><p class="mb-2 text-xs text-ink-muted">Saved</p>{{ inline.edit_saved }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Adds rather than edits</p>{{ inline.edit_add }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Refused, empty allowed</p>{{ inline.edit_error }}</div>
-</div>
-{% endcall %}
-{% call ui::card(id="specimen-inline-long-text", title="Inline long text", inner_class="space-y-4 p-4") %}
-<p class="text-xs text-ink-muted">Multi-line facts open in a textarea, save when focus leaves, and cancel with Escape. The stored value stays visible until the owner confirms the commit.</p>
-<div class="grid gap-4 sm:grid-cols-3">
-<div><p class="mb-2 text-xs text-ink-muted">Read state</p>{{ inline.long_read }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Saved</p>{{ inline.long_saved }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Commit refused</p>{{ inline.long_error }}</div>
-</div>
-{% endcall %}
-{% call ui::card(id="specimen-inline-choice", title="Inline choice fact", inner_class="space-y-4 p-4") %}
-<p class="text-xs text-ink-muted">The read state is the trigger. Choose a value to commit, or press Escape or leave the control to cancel.</p>
-<div class="grid gap-4 sm:grid-cols-3">
-<div><p class="mb-2 text-xs text-ink-muted">Read state</p>{{ inline.choice_read }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Commit refused</p>{{ inline.choice_error }}</div>
-</div>
-{% endcall %}
-</section>
+{{ self.restricted()? }}
+{{ self.inline_facts()? }}
 </main></body></html>

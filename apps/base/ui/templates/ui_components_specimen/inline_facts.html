@@ -1,0 +1,27 @@
+{%- import "components.html" as ui -%}
+<section id="specimen-inline" class="space-y-4">
+<div><h2 class="text-base font-semibold text-ink-strong">Inline facts</h2><p class="text-sm text-ink-muted">Read-first facts: the stored value is the trigger. Nothing is painted until the owner replies; the fact reads "Saving…" for its own round trip, then reports the outcome on itself. This page has no live socket, so it shows the read and outcome states; <code>/inline-reference</code> in the <code>u5-inline</code> example runs the lifecycle.</p></div>
+{% call ui::card(id="specimen-inline-edit-card", title="Inline edit", inner_class="space-y-4 p-4") %}
+<div><p class="mb-2 text-xs text-ink-muted">Click the value, type, then press Enter or leave the field.</p>{{ inline.edit }}</div>
+<div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
+<div><p class="mb-2 text-xs text-ink-muted">Saved</p>{{ inline.edit_saved }}</div>
+<div><p class="mb-2 text-xs text-ink-muted">Adds rather than edits</p>{{ inline.edit_add }}</div>
+<div><p class="mb-2 text-xs text-ink-muted">Refused, empty allowed</p>{{ inline.edit_error }}</div>
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-inline-long-text", title="Inline long text", inner_class="space-y-4 p-4") %}
+<p class="text-xs text-ink-muted">Multi-line facts open in a textarea, save when focus leaves, and cancel with Escape. The stored value stays visible until the owner confirms the commit.</p>
+<div class="grid gap-4 sm:grid-cols-3">
+<div><p class="mb-2 text-xs text-ink-muted">Read state</p>{{ inline.long_read }}</div>
+<div><p class="mb-2 text-xs text-ink-muted">Saved</p>{{ inline.long_saved }}</div>
+<div><p class="mb-2 text-xs text-ink-muted">Commit refused</p>{{ inline.long_error }}</div>
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-inline-choice", title="Inline choice fact", inner_class="space-y-4 p-4") %}
+<p class="text-xs text-ink-muted">The read state is the trigger. Choose a value to commit, or press Escape or leave the control to cancel.</p>
+<div class="grid gap-4 sm:grid-cols-3">
+<div><p class="mb-2 text-xs text-ink-muted">Read state</p>{{ inline.choice_read }}</div>
+<div><p class="mb-2 text-xs text-ink-muted">Commit refused</p>{{ inline.choice_error }}</div>
+</div>
+{% endcall %}
+</section>

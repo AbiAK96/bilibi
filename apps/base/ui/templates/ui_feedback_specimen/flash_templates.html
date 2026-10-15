@@ -1,0 +1,5 @@
+{%- import "feedback.html" as fb -%}
+<template id="tpl-flash-success">{% call fb::flash(kind=bilibi_ui::StatusKind::Success, title="Saved", message="Your changes were saved.", auto_dismiss=true) %}{% endcall %}</template>
+<template id="tpl-flash-info">{% call fb::flash(kind=bilibi_ui::StatusKind::Info, message="This change affects future records only.") %}{% endcall %}</template>
+<template id="tpl-flash-warning">{% call fb::flash(kind=bilibi_ui::StatusKind::Warning, title="Review before continuing", message="Two employees still report to the archived department.") %}{% endcall %}</template>
+<template id="tpl-flash-error">{% call fb::flash(kind=bilibi_ui::StatusKind::Error, title="Save failed", message="The changes could not be saved.") %}{% endcall %}</template>

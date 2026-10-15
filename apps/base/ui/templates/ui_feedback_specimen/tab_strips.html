@@ -1,0 +1,13 @@
+{%- import "components.html" as ui -%}
+{%- import "tabs.html" as t -%}
+{% call ui::card(id="component-tabs", title="Tabs", inner_class="space-y-3 p-3") %}
+<p id="design-library-tabs-overflow" class="text-xs text-ink-muted">Labels stay on one line. What does not fit scrolls, and an edge control appears only while a tab is out of view.</p>
+{% call t::tabs(id="example-tabs", label="Example views", items=tabs_links) %}{% endcall %}
+<div id="design-library-tabs-narrow" class="max-w-xs border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">The same strip in a narrow column</p>
+{% call t::tabs(id="example-narrow-tabs", label="Example narrow views", items=tabs_narrow) %}{% endcall %}</div>
+<div id="design-library-tabs-buttons" class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">In-page switching: tabs without an href are buttons that raise an event</p>
+{% call t::tabs(id="example-button-tabs", label="Example switched views", items=tabs_buttons) %}{% endcall %}
+<p id="design-library-tabs-panel" class="pt-3 text-sm text-ink">Showing: Overview</p></div>
+<div id="design-library-tabs-single" class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">One section needs no switching</p>
+{% call t::tabs(id="example-single-tab", label="Example single view", items=tabs_single) %}{% endcall %}</div>
+{% endcall %}

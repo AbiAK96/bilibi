@@ -1,0 +1,19 @@
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as fb -%}
+{% call ui::card(id="component-alert", title="Alert", inner_class="p-4") %}
+<div class="grid gap-2 lg:grid-cols-2">
+{% call fb::alert(kind=bilibi_ui::StatusKind::Info) %}This change affects future records.{% endcall %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Success) %}The company was created.{% endcall %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Warning) %}Review the missing address before continuing.{% endcall %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Error) %}The record could not be saved.{% endcall %}
+</div>
+{% endcall %}
+
+{% call ui::card(id="component-panel-notice", title="Panel notice", inner_class="space-y-2 p-4") %}
+<p class="text-xs text-ink-muted">What the last action on a panel did, reported above the panel's table or inside its open dialog. Dismiss clears it.</p>
+<div class="grid gap-2 lg:grid-cols-2">
+{% call fb::panel_notice(id="design-library-panel-notice-success", kind=bilibi_ui::NoticeKind::Success, dismiss_event="dismiss-notice") %}Address attached.{% endcall %}
+{% call fb::panel_notice(id="design-library-panel-notice-info", kind=bilibi_ui::NoticeKind::Info, dismiss_event="dismiss-notice") %}Nothing changed: the address already had those kinds.{% endcall %}
+{% call fb::panel_notice(id="design-library-panel-notice-error", kind=bilibi_ui::NoticeKind::Error, dismiss_event="dismiss-notice") %}The address was not unlinked. Try again.{% endcall %}
+</div>
+{% endcall %}

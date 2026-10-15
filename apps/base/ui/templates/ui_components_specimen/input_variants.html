@@ -1,0 +1,6 @@
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{% call ui::card(id="specimen-input-variants", title="Select, multi-value, and search inputs", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{% call form::input(field=controls.example_role) %}{% endcall %}{% call form::input(field=controls.example_teams) %}{% endcall %}{% call form::multi_select(control=controls.example_interests) %}{% endcall %}{% call form::multi_select(control=controls.example_teams_chips) %}{% endcall %}{% call form::input(field=controls.quick_search) %}{% endcall %}</div>
+<p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">A prompt names the empty choice, the native multiple select shows what is chosen by highlighting its rows, the multi-select reports the count on its trigger, and the search box takes an <code>aria-label</code> rather than a visible one.</p>
+{% endcall %}

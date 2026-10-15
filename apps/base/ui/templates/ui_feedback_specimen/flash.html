@@ -1,0 +1,18 @@
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as fb -%}
+{% call ui::card(id="component-flash", title="Flash", inner_class="space-y-3 p-4") %}
+<p class="text-xs text-ink-muted">One message per severity. Info, warning and error stay until dismissed; only a success times out, after eight seconds. Success and info are announced as a status; warning and error interrupt as an alert.</p>
+<div class="flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+{% call fb::flash(kind=bilibi_ui::StatusKind::Error, id="design-library-flash-error", title="Save failed", message="The changes could not be saved.") %}{% endcall %}
+{% call fb::flash(kind=bilibi_ui::StatusKind::Warning, id="design-library-flash-warning", title="Review before continuing", message="Two employees still report to the archived department.") %}{% endcall %}
+{% call fb::flash(kind=bilibi_ui::StatusKind::Success, id="design-library-flash-success", title="Saved", message="Your changes were saved.") %}{% endcall %}
+{% call fb::flash(kind=bilibi_ui::StatusKind::Info, id="design-library-flash-info", message="This change affects future records only.") %}{% endcall %}
+</div>
+<div id="flash-triggers" class="flex flex-wrap gap-2 border-t border-line pt-3">
+{% call ui::button(id="show-flash-success", button_type="button", event="show-flash-success") %}Send a success{% endcall %}
+{% call ui::button(id="show-flash-info", button_type="button", event="show-flash-info") %}Send an info{% endcall %}
+{% call ui::button(id="show-flash-warning", button_type="button", event="show-flash-warning") %}Send a warning{% endcall %}
+{% call ui::button(id="show-flash-error", button_type="button", event="show-flash-error") %}Send an error{% endcall %}
+</div>
+<p class="text-xs text-ink-muted">The buttons send into the layout's flash group at the top right. Click a message to dismiss it; the success leaves on its own.</p>
+{% endcall %}

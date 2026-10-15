@@ -1,0 +1,12 @@
+{%- import "forms.html" as form -%}
+<div class="grid gap-3 lg:grid-cols-2">
+<div id="specimen-restricted" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">A field the viewer may not see, beside an empty one: restricted is not blank. The lock's tooltip says plainly that the viewer has no access; it names no role, because the field is restricted for a role the viewer holds.</p>
+<div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm"><span class="text-ink-muted">Bank account</span>{% call form::restricted(marker=controls.restricted) %}{% endcall %}<span class="text-ink-muted">Bonus</span>{% call form::restricted(marker=controls.restricted_reason) %}{% endcall %}<span class="text-ink-muted">Website</span><span class="text-ink-muted">—</span></div>
+</div>
+<div id="specimen-restricted-field" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">The same field in a create or edit form: a read-only row that keeps its label, never an omitted input, and submits nothing.</p>
+{% call form::restricted_field(field=controls.restricted_field) %}{% endcall %}
+{% call form::restricted_field(field=controls.restricted_field_reason) %}{% endcall %}
+</div>
+</div>

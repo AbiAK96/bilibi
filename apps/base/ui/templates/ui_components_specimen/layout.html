@@ -1,0 +1,25 @@
+{%- import "components.html" as ui -%}
+{% call ui::card(id="specimen-page", title="Page widths", inner_class="space-y-2 p-4") %}
+<div class="overflow-x-auto"><div class="w-[1280px] space-y-3">
+{% call ui::page(id="specimen-page-list", variant=PageVariant::List, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">List — wide for filters and tables</p>{% endcall %}
+{% call ui::page(id="specimen-page-detail", variant=PageVariant::Detail, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Detail — the list width, for a record or dashboard</p>{% endcall %}
+{% call ui::page(id="specimen-page-form", variant=PageVariant::Form, class="rounded-md border border-dashed border-line p-2") %}<p class="text-xs text-ink-muted">Form — narrow for focused entry</p>{% endcall %}
+</div></div>
+<p class="text-xs text-ink-muted">Each variant is centered on a 1280px stage at full scale; scroll to follow the widest.</p>
+{% endcall %}
+{% call ui::card(id="specimen-header", title="Page header", inner_class="space-y-5 p-4") %}
+<div id="specimen-header-default"><p class="mb-2 text-xs text-ink-muted">Title, subtitle, and trailing action</p>
+{% call ui::header(subtitle="Manage identity and regional defaults.", actions=header_actions) %}Company settings{% endcall %}
+</div>
+<div id="specimen-header-title-action" class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Title action without a trailing action</p>
+{% call ui::header(title_actions=header_title_actions) %}Company details{% endcall %}
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-section-heading", title="Section heading", inner_class="space-y-5 p-4") %}
+<div><p class="mb-2 text-xs text-ink-muted">Title alone</p>
+{% call ui::section_heading(title="Company Details", class="mb-0") %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Count, title action, description and trailing action</p>
+{% call ui::section_heading(id="specimen-section-heading-location", title="Geographic Location", count=Some(4), class="mb-0", title_actions=section_title_actions, description="Country, division, postcode and locality depend on one another, so they are applied together.", actions=section_actions) %}{% endcall %}
+</div>
+{% endcall %}

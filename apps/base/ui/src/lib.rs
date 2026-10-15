@@ -22,6 +22,7 @@ pub mod list_columns;
 pub mod list_state;
 pub mod lists;
 pub mod params;
+mod section;
 mod shell;
 mod specimen;
 pub use shell::{navigation, AppShell, DisplayPreferences, Framed, NavNode, ShellContext};

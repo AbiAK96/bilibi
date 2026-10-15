@@ -1,0 +1,6 @@
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{% call ui::card(id="specimen-combobox", title="Combobox", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<p class="mb-3 text-xs text-ink-muted">Type to filter, use the arrow keys to move, and press Enter to commit. Escape or leaving the field restores the last committed choice. The unlabelled inline editor also reports the cancel to its page, as an inline field editor does.</p>
+<div class="grid gap-x-3 sm:grid-cols-3">{% call form::combobox(combo=controls.combobox_country) %}{% endcall %}{% call form::combobox(combo=controls.combobox_selected) %}{% endcall %}{% call form::combobox(combo=controls.combobox_empty) %}{% endcall %}{% call form::combobox(combo=controls.combobox_inline) %}{% endcall %}</div>
+{% endcall %}

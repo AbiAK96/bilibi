@@ -1,0 +1,33 @@
+{%- import "components.html" as ui -%}
+<div class="grid gap-3 lg:grid-cols-2">
+{% call ui::card(id="specimen-card", title="Card", inner_class="space-y-4 p-4") %}
+<div id="specimen-card-titled"><p class="mb-2 text-xs text-ink-muted">With a title</p>
+{{ card_titled }}
+</div>
+<div id="specimen-card-untitled"><p class="mb-2 text-xs text-ink-muted">Without a title</p>
+{{ card_untitled }}
+</div>
+<div id="specimen-card-flat"><p class="mb-2 text-xs text-ink-muted">Flat, framing a table</p>
+{{ card_flat }}
+</div>
+{% endcall %}
+{% call ui::card(id="specimen-facts", title="Record facts", inner_class="space-y-4 px-4") %}
+<div id="specimen-facts-populated"><p class="mb-1 text-xs text-ink-muted">Facts for one record</p>
+{% call ui::facts() %}{% call ui::fact(title="Company") %}Acme Holdings{% endcall %}{% call ui::fact(title="Status") %}{% call ui::badge(kind=BadgeKind::Success) %}Active{% endcall %}{% endcall %}{% call ui::fact(title="Jurisdiction") %}Malaysia{% endcall %}{% endcall %}
+</div>
+<div id="specimen-facts-single" class="border-t border-line pt-3"><p class="mb-1 text-xs text-ink-muted">One fact</p>
+{% call ui::facts(id="specimen-facts-single-list") %}{% call ui::fact(title="Company", id="specimen-facts-company") %}Acme Holdings{% endcall %}{% endcall %}
+</div>
+{% endcall %}
+</div>
+{% call ui::card(id="specimen-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}
+<div><p class="mb-2 text-xs text-ink-muted">Linked strip with multiple numeric values</p>
+{% call ui::stat_strip(id="specimen-stat-linked", title="Workspace", href="/system/design-library/components", items=stats_linked) %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Read-only strip with one text value</p>
+{% call ui::stat_strip(id="specimen-stat-unlinked", title="Storage", items=stats_unlinked) %}{% endcall %}
+</div>
+<div class="border-t border-line pt-4"><p class="mb-2 text-xs text-ink-muted">Three values</p>
+{% call ui::stat_strip(id="specimen-stat-three", title="Companies", items=stats_three) %}{% endcall %}
+</div>
+{% endcall %}

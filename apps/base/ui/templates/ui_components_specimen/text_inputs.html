@@ -1,0 +1,5 @@
+{%- import "components.html" as ui -%}
+{% call ui::card(id="specimen-text-inputs", title="Text and long-form inputs", inner_class="p-4") %}
+{{ self.text_inputs_basic()? }}
+{{ self.text_inputs_typed()? }}
+{% endcall %}

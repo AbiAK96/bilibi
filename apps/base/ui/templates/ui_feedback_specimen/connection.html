@@ -1,0 +1,15 @@
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as fb -%}
+{% call ui::card(id="component-connection-banners", title="Connection banners", inner_class="space-y-3 p-4") %}
+<p class="text-xs text-ink-muted">The two banners the browser reveals when the websocket drops: "Connection interrupted" while it cannot reach the server, "Server unavailable" when the server refused or lost the page. Shown here already revealed and bound to no connection event; the real pair is the flash group's at the top right, or an open dialog's.</p>
+<div class="grid gap-3 lg:grid-cols-2">
+{% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Client) %}{% endcall %}
+{% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Server) %}{% endcall %}
+</div>
+<div id="connection-triggers" class="flex flex-wrap gap-2 border-t border-line pt-3">
+{% call ui::button(id="simulate-client-drop", button_type="button", event="simulate-client-drop") %}Simulate a dropped connection{% endcall %}
+{% call ui::button(id="simulate-server-drop", button_type="button", event="simulate-server-drop") %}Simulate server down{% endcall %}
+{% call ui::button(id="simulate-reconnect", button_type="button", event="simulate-reconnect") %}Reconnect{% endcall %}
+</div>
+<p class="text-xs text-ink-muted">These dispatch the same <code>bilibi:disconnected</code> and <code>bilibi:connected</code> events the live transport raises. Open a dialog while dropped: its own pair is revealed above it.</p>
+{% endcall %}
