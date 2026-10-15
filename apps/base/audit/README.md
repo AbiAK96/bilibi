@@ -77,8 +77,12 @@ C9's `core/user.database_queries` service owns saved queries and the live
 capability/account checks; C10 owns the screen. Both reuse this executor rather
 than running editor SQL themselves.
 
-`record_history` and `recent_actions` are tenant-scoped reads for P12/P13; those
-slices own the capability vocabulary, filters, field withholding and screens.
+`record_history` and `recent_actions` are tenant-scoped reads for P13. P12 added
+`list_actions` (search, actor type, event family, result, diagnostics, sort, bounded
+page), `toggle_retained` (the mutable bookmark; the recorded bit never changes) and
+`recent_mutations` in `src/read.rs`. They never ask who may read: this crate sits
+below Authz, so the screens in `base/audit_views` own the capability vocabulary,
+the checks and the field withholding.
 
 ## Runtime evidence
 

@@ -1,6 +1,11 @@
 //! Durable mutation and action evidence. Capture runs inside the owner's
 //! transaction and fails closed: a refused audit row refuses the business commit.
 pub mod console;
+mod read;
+pub use read::{
+    list_actions, recent_mutations, toggle_retained, ActionEntry, ActionPage, ActionQuery,
+    ActionSort, RecentMutation, EVENT_FAMILIES, MAX_PAGE_SIZE, MAX_SEARCH,
+};
 
 use bilibi_database::{Capture, CaptureFuture, Change, Context, Db, Error, Result};
 use bilibi_tenancy::Scope;
