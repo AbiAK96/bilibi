@@ -9,6 +9,15 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+static PATTERN_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        page_size_param: "perPage".into(),
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("Design Library composite list spec")
+});
+
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
@@ -67,7 +76,8 @@ impl State {
             csrf: String::new(),
             sample,
             list,
-            pattern: ListState::parse(&HashMap::new(), SPEC.clone()).map_err(|_| Error::Invalid)?,
+            pattern: ListState::parse(&HashMap::new(), PATTERN_SPEC.clone())
+                .map_err(|_| Error::Invalid)?,
             flex: FlexSample::default(),
             plain: FlexSample::default(),
             display: DisplayContext::anonymous(),
@@ -421,6 +431,9 @@ pub fn companies(list: &ListState) -> Vec<Company> {
                 .contains(&search)
         })
         .collect();
+    if list.sort_by.is_none() {
+        return rows;
+    }
     rows.sort_by(|a, b| {
         let order = match list.sort_by.as_deref() {
             Some("code") => a.code.cmp(&b.code),

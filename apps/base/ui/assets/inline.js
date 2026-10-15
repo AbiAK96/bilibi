@@ -83,7 +83,11 @@
       if (text) {
         const value = this.el.dataset.value;
         const placeholder = this.el.querySelector('input[data-role="input"]')?.placeholder || '—';
-        if (text.textContent !== (value || placeholder)) text.textContent = value || placeholder;
+        // The source HEEx preserves these line breaks in its pre-wrap span.
+        const displayed = this.long ? `
+      ${value || placeholder}
+    ` : value || placeholder;
+        if (text.textContent !== displayed) text.textContent = displayed;
         text.classList.toggle('text-ink-muted', !value);
         text.classList.toggle('text-ink', !!value);
       }

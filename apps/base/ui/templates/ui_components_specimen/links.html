@@ -1,4 +1,5 @@
 {%- import "components.html" as ui -%}
+{%- import "lists.html" as lists -%}
 <div class="grid gap-3 lg:grid-cols-2">
 {% call ui::card(id="specimen-back-link", title="Back link", inner_class="p-3") %}
 <p class="mb-2 text-xs text-ink-muted">Returning is a secondary action, so it is a plain link, never a button.</p>
@@ -29,3 +30,19 @@
 <div class="text-center">{% call ui::icon(name="hero-check-circle", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Outline — the default</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-solid", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Solid</p></div><div class="text-center">{% call ui::icon(name="hero-check-circle-mini", class="mx-auto text-success") %}{% endcall %}<p class="mt-1 text-xs text-ink-muted">Mini</p></div>
 </div></div>
 </div>
+
+{% call ui::card(id="specimen-record-link", title="Record link", inner_class="p-4 space-y-3") %}
+<p class="text-xs text-ink-muted">
+                The link from a list row to its record. Inside a tiled workspace the same call renders a selection button: when another tile follows that kind of record it opens the record there and the list stays put, otherwise it opens the record here as the link would. Alone, it is a plain navigation.
+              </p>
+              <p id="specimen-record-link-alone" class="text-sm">
+                {% call lists::record_link(workspace=false, kind="core/company", record_id="1", href="/system/design-library/components", class="font-medium text-ink-strong hover:underline") %}
+                  A company, opened alone
+                {% endcall %}
+              </p>
+              <p id="specimen-record-link-followed" class="text-sm">
+                {% call lists::record_link(workspace=true, kind="core/company", record_id="1", href="/system/design-library/components", class="font-medium text-ink-strong hover:underline") %}
+                  A company, selected inside a workspace
+                {% endcall %}
+              </p>
+{% endcall %}
