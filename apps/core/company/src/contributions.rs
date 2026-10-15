@@ -1,6 +1,6 @@
 //! What Company adds to the shared catalogs (Bilimbi
 //! `Bilimbi.Core.Company.Contributions`): its capability vocabulary and the
-//! roles that carry it, the two demo pages' routes and the Companies menu
+//! roles that carry it, the Company pages' routes and the Companies menu
 //! entry. Web owns dispatch and scope guards; a route here bypasses nothing.
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_grid::{Field, FieldType::*, GridContribution, Source, TableDecl};
@@ -10,9 +10,7 @@ use bilibi_module_registry::{
     Contribution, Provenance,
 };
 
-/// Belimbing's durable keys. The two-segment demo keys (`companies.view`,
-/// `companies.update`) still guard the demo list and detail pages until K3
-/// rebinds them; every K1 API asks one of these.
+/// Belimbing's durable keys, shared by the pages, catalog and business APIs.
 pub const VIEW: &str = "admin.company.view";
 pub const LIST: &str = "admin.company.list";
 pub const CREATE: &str = "admin.company.create";
@@ -62,12 +60,12 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/company", provenance!()
 
 inventory::submit! {
     Contribution::new(ROUTES, "core/company.list", provenance!(), &Route {
-        method: Method::Get, path: "/companies", service: "core/company.pages", operation: "list", access: Access::Capability("companies.view"), framed: true,
+        method: Method::Get, path: "/companies", service: "core/company.pages", operation: "list", access: Access::Capability(LIST), framed: true,
     })
 }
 inventory::submit! {
     Contribution::new(ROUTES, "core/company.detail", provenance!(), &Route {
-        method: Method::Get, path: "/companies/{id}", service: "core/company.pages", operation: "detail", access: Access::Capability("companies.view"), framed: true,
+        method: Method::Get, path: "/companies/{id}", service: "core/company.pages", operation: "detail", access: Access::Capability(VIEW), framed: true,
     })
 }
 bilibi_menu::contribute!(
@@ -75,27 +73,31 @@ bilibi_menu::contribute!(
     MenuItem::page("admin.company", "Companies", "/companies")
         .icon("building-office-2")
         .under("admin")
-        .requires(Requirement::Capability("companies.view"))
+        .requires(Requirement::Capability(LIST))
         .order(10)
 );
 
-// The Companies catalog table. Its restrictable fields are the ones the demo
-// seed restricts (`email`, `phone`, `tax_id`, `revenue`), and `record_types`
+// The Companies catalog includes the Organisation facts. `record_types`
 // names the audit kind a company is written under, so a restriction on a
 // company field reaches the Audit screens and a record's History
-// (`bilibi_authz::fields::withheld_by_record_type`): the trail withholds what
-// the company page withholds. The party-model Company replaces this table.
+// (`bilibi_authz::fields::withheld_by_record_type`).
 static GRID: GridContribution = GridContribution {
     tables: &[TableDecl::new(
         "companies",
         "Companies",
-        "companies.view",
+        LIST,
         Source::tenant(
-            "SELECT id, name, status, email, phone, tax_id, revenue, created_at FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
+            "SELECT id, parent_id, code, name, legal_name, registration_number, legal_entity_type_id, jurisdiction, website, status, email, phone, tax_id, revenue, created_at FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
         ),
         "id",
         &[
             Field::new("id", "ID", Integer),
+            Field::new("code", "Code", String),
+            Field::new("legal_name", "Legal Name", String),
+            Field::new("registration_number", "Registration Number", String),
+            Field::new("jurisdiction", "Jurisdiction", String),
+            Field::new("website", "Website", String),
+            Field::new("parent_id", "Parent", Integer).hidden(),
             Field::new("name", "Name", String),
             Field::choice("status", "Status", &["active", "suspended", "pending", "archived"]),
             Field::new("email", "Email", String),
@@ -111,3 +113,9 @@ static GRID: GridContribution = GridContribution {
     links: &[],
 };
 bilibi_grid::contribute!("core/company", "company.grid", &GRID);
+
+inventory::submit! {
+    Contribution::new(ROUTES, "core/company.create", provenance!(), &Route {
+        method: Method::Get, path: "/companies/create", service: "core/company.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
+    })
+}

@@ -24,6 +24,7 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-ui.workspace = true
 bilibi-menu.workspace = true
+bilibi-datetime = { path = "../../base/datetime" }
 bilibi-grid = { path = "../../base/grid" }
 
 [dev-dependencies]

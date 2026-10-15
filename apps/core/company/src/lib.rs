@@ -8,6 +8,7 @@ pub mod departments;
 pub mod eligibility;
 pub mod lifecycle;
 pub mod organisation;
+mod page_data;
 pub mod primary;
 pub mod reference_types;
 pub mod web;
@@ -20,7 +21,7 @@ pub use primary::{AssignmentStatus, ProvisionOutcome, Provisioned};
 
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_notifications::NotificationBoundary;
-use bilibi_security::{authorize, guard, restrictions, Capability, Scope, Sessions};
+use bilibi_security::{guard, restrictions, Scope, Sessions};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
@@ -93,10 +94,10 @@ impl Default for Params {
 impl Params {
     pub fn validate(&self) -> Result<()> {
         if !(1..=100_000).contains(&self.page)
-            || ![25, 50, 100].contains(&self.size)
-            || !["name", "status", "created_at"].contains(&self.sort.as_str())
+            || ![25, 50, 100, 300].contains(&self.size)
+            || !["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str())
             || !["asc", "desc"].contains(&self.dir.as_str())
-            || self.q.chars().count() > 64
+            || self.q.chars().count() > 255
             || !["", "active", "suspended", "pending", "archived"].contains(&self.status.as_str())
         {
             return Err(Error::Invalid);
@@ -182,10 +183,22 @@ use organisation::COLUMNS;
 
 pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
     params.validate()?;
-    authorize(client, scope, Capability::CompaniesView).await?;
+    bilibi_authz::authorize_key(client, scope, LIST).await?;
     let masked = restrictions(client, scope).await?;
     let query = format!("%{}%", organisation::escape_like(&params.q));
-    let filter = "tenant_id=$1 AND deleted_at IS NULL AND ($2='' OR status=$2) AND name ILIKE $3";
+    let searchable = ["name", "code", "legal_name", "email", "jurisdiction"]
+        .into_iter()
+        .filter(|field| !masked.contains(*field))
+        .map(|field| format!("{field} ILIKE $3"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let filter =
+        format!("tenant_id=$1 AND deleted_at IS NULL AND ($2='' OR status=$2) AND ({searchable})");
+    let sort = if masked.contains(&params.sort) {
+        "name"
+    } else {
+        &params.sort
+    };
     let args: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
         &[&scope.tenant(), &params.status, &query];
     let total = client
@@ -198,7 +211,7 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -
     // Only validated enum values reach the two SQL identifiers below.
     let sql = format!(
         "SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {} {}, id {} LIMIT $4 OFFSET $5",
-        params.sort, params.dir, params.dir
+        sort, params.dir, params.dir
     );
     let offset = (params.page - 1) * params.size;
     let rows = client
@@ -224,7 +237,7 @@ pub async fn detail(
     scope: &Scope,
     id: i64,
 ) -> Result<(Company, HashSet<String>)> {
-    authorize(client, scope, Capability::CompaniesView).await?;
+    bilibi_authz::authorize_key(client, scope, VIEW).await?;
     let masked = restrictions(client, scope).await?;
     let row = client.query_opt(&format!("SELECT {COLUMNS} FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"), &[&scope.tenant(),&id]).await?.ok_or(Error::NotFound)?;
     Ok((Company::from_row(&row, &masked), masked))
@@ -286,7 +299,7 @@ pub async fn save(
         .begin(&mut client, scope.mutation_context("company.update"))
         .await?;
     let scope = guard(tx.sql(), token, sessions).await?;
-    authorize(tx.sql(), &scope, Capability::CompaniesUpdate).await?;
+    organisation::authorize_target(tx.sql(), &scope, edit.id, UPDATE).await?;
     if restrictions(tx.sql(), &scope).await?.contains(&edit.field) {
         return Err(Error::Forbidden);
     }
@@ -613,7 +626,7 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","core/geonames"],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","core/geonames"],
         migrations:&[MIGRATION, MIGRATION_ORGANISATION],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
@@ -628,7 +641,7 @@ inventory::submit! {
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?,
             })))) },
         ],
     }

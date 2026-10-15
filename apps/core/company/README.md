@@ -6,9 +6,9 @@
 primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and the free functions of
 `organisation`, `reference_types`, `departments`, `primary`, `lifecycle`
-and `eligibility`; table layout
-and SQL stay private. The demo list and detail pages (`web.rs`) remain until
-K3 ports Bilimbi's screens.
+and `eligibility`; table layout and SQL stay private. The module-owned pages
+(`web.rs`, `web/views.rs`) serve `/companies`, `/companies/create` and
+`/companies/{id}` through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
@@ -42,8 +42,9 @@ update) and `viewer` (view, list). The demo seed grants the same set;
 company or into it is authorized with `organisation::authorize_target`: the
 capability now, and either the company the actor is affiliated with
 (`Scope::actor().organisation()`, bound by K9) or the tenant-wide reach for
-any other company of the tenant. The demo pages still ask the two-segment
-`companies.view`/`companies.update` keys until K3 rebinds them.
+any other company of the tenant. The pages and Grid catalog ask these same durable keys. List and detail use
+`.list` and `.view`; field saves and lifecycle commands use `.update` plus
+company reach. The generic field editor never accepts `status`.
 
 ## Writes
 
@@ -183,3 +184,22 @@ failure/rollback, two connections contending for an account/company lock, the
 final archive freeze and retained-action count. Its own-company scopes use a
 trusted specimen provider through the real authentication boundary until K9
 binds durable affiliation facts. It never creates an account link.
+
+## Company pages (K3)
+
+The list composes shared `FilterToolbar`, `Pagination` and Grid `PageColumns`:
+Name, Code, Parent, Status and unrestricted Jurisdiction are built-ins. Search
+matches only readable name/code/legal-name/email/jurisdiction fields. Search,
+status, sort, page and `per_page` live in the URL; the supported sizes are
+25/50/100/300. `q` and `size` remain accepted for old demo links. Column/lens/
+zoom URL parameters override the account's saved arrangement; resetting forgets
+it through Grid's `PageViews` service.
+
+Create uses K1 validation and records optional business context on the same
+audited transaction. Detail uses shared read-first inline text, choice and
+long-text controls, per-field commit outcomes and version fencing. Parent
+changes serialize on the tenant and reject a cycle. Lifecycle buttons come
+only from `lifecycle::operations_from`, hold the record version in server state,
+and confirm with an optional reason; archive remains final. The Audit history
+panel retains its mount through detail patches. Child-owned panels are attached
+by their later owner slices.
