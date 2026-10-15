@@ -1,0 +1,27 @@
+{% import "components.html" as ui %}
+{{ flash }}
+{% call ui::page(id="database-query-show") %}
+  {{ header }}
+  <div class="space-y-6">
+    {% call ui::card(id="prompt-card", inner_class="p-5 sm:p-6") %}
+      {% call ui::section_heading(id="prompt-heading", title="Prompt") %}{% endcall %}
+      <form id="query-prompt-form" data-event="change_field" data-change>{{ prompt }}</form>
+    {% endcall %}
+    {% call ui::card(id="sql-editor-card", inner_class="p-5 sm:p-6") %}
+      {% call ui::section_heading(id="sql-editor-heading", title="SQL Query", actions=run) %}{% endcall %}
+      <form id="query-sql-form" data-event="change_field" data-change>{{ sql }}</form>
+      {{ caution }}
+      {% if !parameters.is_empty() %}
+      <div id="detected-parameters-section" class="mt-4 pt-3 border-t border-line">
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-ink-subtle mb-2">Query Parameters</h4>
+        <form id="query-params-form" data-event="change_param" data-change><div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          {% for field in parameters %}{{ field }}{% endfor %}
+        </div></form>
+      </div>
+      {% endif %}
+    {% endcall %}
+    {{ error }}
+    {{ results }}
+  </div>
+  {{ confirm }}
+{% endcall %}

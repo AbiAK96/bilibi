@@ -171,3 +171,23 @@ column preservation, pagination, SQL/DB refusals, timeout, audit rollback and
 private-result exclusion; it is not a unit-test suite. It explicitly makes
 fixture tenant 1 the operator, grants fixture capabilities and installs private
 fixture functions/triggers. Never run it against normal data.
+
+The operator's saved-query screens live at `/admin/system/database-queries`
+(and `/{slug}`, with `/_new` for creation). They compose the shared list,
+form, confirmation and FlexTable components in `src/query_ui`; all storage and
+execution go through `database_queries::QueryService`. Both routes require
+explicit operator identity plus `admin.system.database-table.list`; saving,
+duplicating and deleting additionally require `admin.system.database-table.edit`.
+Every live action and refresh checks these requirements again. Queries remain
+private to their account, including for administrators.
+
+The editor keeps SQL, prompt, description and named parameter values in its
+mounted state. Run executes the current draft; result sorting, rows-per-page,
+Back and page navigation retain that draft. A full reload loads saved SQL.
+Parameters bind as PostgreSQL values (a blank input binds NULL). The result
+pager reflects `page` and `page_size` in the URL; periodic refresh does not rerun
+SQL. Save uses the loaded version, so a competing save is refused without
+replacing the draft. Deletion names the saved query in a shared confirmation
+and checks that same saved version. Result values are escaped text; only column
+names from the returned projection may be used for sorting. Read-only execution
+and its success/refusal/failure audit remain C9's responsibility.

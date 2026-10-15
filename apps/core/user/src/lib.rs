@@ -7,6 +7,7 @@ mod inbox;
 pub mod notifications;
 pub mod password;
 mod preferences;
+mod query_ui;
 mod reset;
 mod verification;
 pub mod web;
@@ -119,9 +120,14 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
+        }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
+            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(query_ui::Pages {
+                queries:services.get("core/user.database_queries")?, db:services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,
+            }))))
         }},bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;

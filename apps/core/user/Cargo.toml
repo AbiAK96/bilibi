@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 bilibi-audit.workspace = true
+bilibi-menu = { path = "../../base/menu" }
 bilibi-authz = { path = "../../base/authz" }
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-database.workspace = true
