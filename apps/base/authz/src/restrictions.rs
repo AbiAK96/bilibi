@@ -335,8 +335,15 @@ async fn list_in(
         summary.role_names.push(row.get(3));
     }
     let mut summaries: Vec<RestrictionSummary> = grouped.into_values().collect();
+    // Names read alphabetically; ids stay paired with their names.
     for summary in &mut summaries {
-        summary.role_names.sort_by_key(|name| name.to_lowercase());
+        let mut roles: Vec<(String, i64)> = summary
+            .role_names
+            .drain(..)
+            .zip(summary.role_ids.drain(..))
+            .collect();
+        roles.sort_by_key(|(name, id)| (name.to_lowercase(), *id));
+        (summary.role_names, summary.role_ids) = roles.into_iter().unzip();
     }
     summaries.sort_by(|a, b| {
         (
