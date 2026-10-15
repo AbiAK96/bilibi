@@ -4,9 +4,9 @@ use bilibi_database::{pool, Change, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution as Registration, Provenance, Services};
 use bilibi_tenancy::{Authentication, Scope};
 use bilibi_workflow::{
-    Action, Contribution, Dependency, Edge, Engine, Flow, Guard, Load, Operation, OwnerFuture,
-    Process, ProcessAdapter, Registry, Request, RunFacts, StartOptions, Status, Step, Subject,
-    SubjectAdapter, Transition, CONTRIBUTIONS,
+    Action, Completion, Contribution, Dependency, DependencyMode, Edge, Engine, Flow, Guard, Load,
+    Operation, OwnerFuture, Process, ProcessAdapter, Registry, Request, RunCommand, RunFacts,
+    RunView, StartOptions, Status, Step, Subject, SubjectAdapter, Transition, CONTRIBUTIONS,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -173,6 +173,60 @@ const REVIEW_V2: [Step; 4] = [
         ..Step::new("archive", "Archive")
     },
 ];
+// A bounded graph for operating the lifecycle API against real durable facts.
+const LIFECYCLE: [Step; 6] = [
+    Step::new("first", "First review"),
+    Step::new("second", "Second review"),
+    Step {
+        dependencies: &[
+            Dependency {
+                step: "first",
+                acceptable_outcomes: &["accepted"],
+            },
+            Dependency {
+                step: "second",
+                acceptable_outcomes: &[],
+            },
+        ],
+        ..Step::new("all", "Both reviews")
+    },
+    Step {
+        dependencies: &[
+            Dependency {
+                step: "first",
+                acceptable_outcomes: &["accepted"],
+            },
+            Dependency {
+                step: "second",
+                acceptable_outcomes: &[],
+            },
+        ],
+        mode: DependencyMode::Any,
+        ..Step::new("any", "Either review")
+    },
+    Step {
+        dependencies: &[Dependency {
+            step: "all",
+            acceptable_outcomes: &[],
+        }],
+        required_signal: Some("review.approved"),
+        ..Step::new("signal", "Approval signal")
+    },
+    Step {
+        dependencies: &[
+            Dependency {
+                step: "any",
+                acceptable_outcomes: &[],
+            },
+            Dependency {
+                step: "signal",
+                acceptable_outcomes: &[],
+            },
+        ],
+        delay_seconds: 2,
+        ..Step::new("delayed", "Delayed release")
+    },
+];
 /// Same key and version as the installed v1 with one changed step contract:
 /// the running proof builds a second registry from it to show the refusal.
 static DRIFTED_V1: Contribution = Contribution::Process(Process {
@@ -237,6 +291,16 @@ register!(
     })
 );
 register!(
+    "reference.process.lifecycle",
+    Contribution::Process(Process {
+        key: "reference.lifecycle",
+        version: 1,
+        subject: "reference.record",
+        adapter: &OWNER,
+        steps: &LIFECYCLE,
+    })
+);
+register!(
     "reference.flow",
     Contribution::Flow(Flow {
         code: "reference.approval",
@@ -273,6 +337,36 @@ register!(
         }],
     })
 );
+
+/// One line per run and work item: the facts an operator checks between commands.
+fn print_view(view: &RunView) {
+    let run = &view.run;
+    println!(
+        "run={} status={} definition={} v{} fingerprint={} input={} pause_reason={:?} output={}",
+        run.id,
+        run.status,
+        run.definition_key,
+        run.definition_version,
+        run.definition_fingerprint,
+        run.input,
+        run.pause_reason,
+        run.output.clone().unwrap_or(json!(null))
+    );
+    for item in &view.work_items {
+        println!(
+            "  work={} step={} status={} outcome={:?} output={} signalled={} available_at={:?} version={} error={:?}",
+            item.id,
+            item.step_key,
+            item.status,
+            item.outcome,
+            item.output.clone().unwrap_or(json!(null)),
+            item.signalled_at.is_some(),
+            item.available_at,
+            item.version,
+            item.last_error
+        );
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -336,7 +430,7 @@ async fn main() -> Result<()> {
             serde_json::to_string(&engine.available(&scope, "reference.record", id).await?)
                 .map_err(|_| Error::Internal)?
         ),
-        "start" | "start-v1" | "start-changed" | "start-deny" | "drift" => {
+        "start" | "start-v1" | "start-changed" | "start-deny" | "drift" | "start-lifecycle" => {
             // Keep the v1 drift proof separate from the default v2 replay key.
             let attempt = if matches!(command, "start-v1" | "drift") {
                 1
@@ -344,6 +438,11 @@ async fn main() -> Result<()> {
                 2
             };
             let mut options = StartOptions::new(format!("record:{id}:attempt:{attempt}"));
+            let process_key = if command == "start-lifecycle" {
+                "reference.lifecycle"
+            } else {
+                "reference.review"
+            };
             options.version = (command == "start-v1").then_some(1);
             options.correlation_key = Some(format!("reference-record:{id}"));
             if command == "start-changed" {
@@ -380,9 +479,7 @@ async fn main() -> Result<()> {
                 engine.clone()
             };
             let (key, version, fingerprint) = {
-                let definition = engine
-                    .registry()
-                    .process("reference.review", options.version)?;
+                let definition = engine.registry().process(process_key, options.version)?;
                 (
                     definition.key,
                     definition.version,
@@ -391,28 +488,97 @@ async fn main() -> Result<()> {
             };
             println!("compiled {key} v{version} fingerprint={fingerprint}");
             match engine
-                .start_run(&scope, "reference.review", "ReferenceRecord", id, options)
+                .start_run(&scope, process_key, "ReferenceRecord", id, options)
                 .await
             {
-                Ok(run) => {
-                    let view = engine.get_run(&scope, run.id).await?;
-                    println!(
-                        "run={} status={} definition={} v{} fingerprint={} input={}",
-                        run.id,
-                        run.status,
-                        run.definition_key,
-                        run.definition_version,
-                        run.definition_fingerprint,
-                        run.input
-                    );
-                    for item in view.work_items {
-                        println!(
-                            "  work={} step={} status={} available_at={:?} version={}",
-                            item.id, item.step_key, item.status, item.available_at, item.version
-                        );
+                Ok(run) => print_view(&engine.get_run(&scope, run.id).await?),
+                Err(error) => println!("start refused: {error:?}"),
+            }
+        }
+        "complete"
+        | "complete-stale"
+        | "complete-executor-mismatch"
+        | "complete-outer-fail"
+        | "signal"
+        | "pause"
+        | "resume"
+        | "supersede"
+        | "reconcile" => {
+            let value = args.get(3).map(String::as_str);
+            let command_value = match command {
+                "signal" => RunCommand::Signal {
+                    name: value.unwrap_or("review.approved").into(),
+                    payload: args
+                        .get(4)
+                        .map(|v| serde_json::from_str(v))
+                        .transpose()
+                        .map_err(|_| Error::Invalid)?
+                        .unwrap_or(json!({"approved":true})),
+                    idempotency_key: args.get(5).cloned().unwrap_or("approval:1".into()),
+                },
+                "pause" => RunCommand::Pause {
+                    reason: value.unwrap_or("Operator review").into(),
+                },
+                "resume" => RunCommand::Resume,
+                "supersede" => RunCommand::Supersede {
+                    reason: value.unwrap_or("Replaced by a new process").into(),
+                },
+                "reconcile" => RunCommand::Reconcile,
+                _ => {
+                    let view = engine.get_run(&scope, id).await?;
+                    let item = view
+                        .work_items
+                        .iter()
+                        .find(|i| Some(i.step_key.as_str()) == value)
+                        .ok_or(Error::NotFound)?;
+                    RunCommand::Complete {
+                        step_key: item.step_key.clone(),
+                        completion: Completion {
+                            expected_version: if command == "complete-stale" {
+                                item.version + 1
+                            } else {
+                                item.version
+                            },
+                            executor_key: if command == "complete-executor-mismatch" {
+                                "wrong.executor".into()
+                            } else {
+                                item.executor_key.clone()
+                            },
+                            outcome: args.get(4).cloned().unwrap_or("completed".into()),
+                            output: json!({"recorded_fact":"preserve across resume"}),
+                            result_ref: Some(format!("reference:{}", item.step_key)),
+                        },
                     }
                 }
-                Err(error) => println!("start refused: {error:?}"),
+            };
+            if command == "complete-outer-fail" {
+                let view = engine.get_run(&scope, id).await?;
+                let subject_id = view.run.subject_id;
+                let mut client = db.get().await?;
+                let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+                let mut tx = boundary
+                    .begin(
+                        &mut client,
+                        scope.mutation_context("reference.facade.updated"),
+                    )
+                    .await?;
+                tx.mutate(move |sql|Box::pin(async move {
+                    sql.execute("UPDATE workflow_reference_records SET facade_value=facade_value+1 WHERE tenant_id=1 AND id=$1",&[&subject_id]).await?;
+                    Ok(((),vec![Change {kind:"reference.facade".into(),id:subject_id,old:json!({"increment":0}),new:json!({"increment":1})}]))
+                })).await?;
+                let view = engine
+                    .update_run_in(&mut tx, &scope, id, command_value)
+                    .await?;
+                println!(
+                    "completion inside owner transaction status={} (rolling back owner facade)",
+                    view.run.status
+                );
+                tx.rollback().await?;
+            } else {
+                match engine.update_run(&scope, id, command_value).await {
+                    Ok(view) => print_view(&view),
+                    Err(error) => println!("command refused: {error:?}"),
+                }
             }
         }
         "run" | "run-drift" => {
