@@ -1,5 +1,7 @@
 {% import "components.html" as ui %}
 {% import "inline.html" as inline %}
+{#- Built from shared components only, so the demo compatibility sheet stops here. -#}
+<div data-shared-ui>
 {% call ui::page(id="inline-reference", variant=bilibi_ui::PageVariant::Detail, class="p-6") %}
 {% call ui::header(subtitle="Read-first text, choice and long-text facts") %}Inline editing specimen{% endcall %}
 <p class="mb-4 text-sm text-ink-muted">This manual specimen stores changes in memory for this tenant until the process stops. Open it in two tabs for conflicting edits. Name requires at least three characters. Unavailable is rejected. Enter server-error in any text fact to demonstrate a failed write.</p>
@@ -20,3 +22,4 @@
 </div>
 <p class="mt-4 text-sm text-ink-muted">Text: click, Enter, Space, F2 or type to edit; Enter or blur commits, Escape discards. Notes: Enter adds a line, blur commits. Choice: change commits, blur or Escape cancels. A refused draft opens again unchanged; Escape discards it and starts from the latest stored version.</p>
 {% endcall %}
+</div>
