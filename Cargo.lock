@@ -571,14 +571,20 @@ dependencies = [
 name = "bilibi-schedule"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-audit",
  "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-queue",
+ "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "jiff",
  "serde_json",
@@ -606,8 +612,11 @@ version = "0.1.0"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-queue",
+ "bilibi-schedule",
  "bilibi-tenancy",
  "inventory",
+ "serde_json",
  "tokio-postgres",
 ]
 

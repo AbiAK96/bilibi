@@ -1,11 +1,15 @@
 //! Immutable contributed recurrences, fingerprint review and suppression, and
 //! the durable occurrence claim that hands exactly one job per occurrence to
-//! the Queue. The operator board is Q5. Work itself runs on the Queue.
+//! the Queue, the operator board at `/system/schedule` and history retention.
+//! Work itself runs on the Queue.
+pub mod board;
 pub mod cron;
 pub mod definition;
 pub mod occurrence;
 pub mod recurrence;
+mod retention;
 pub mod scheduler;
+mod web;
 pub mod worker;
 pub use definition::{Definition, Misfire, Overlap, DEFINITIONS, RESERVED_ARGUMENT};
 pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
@@ -106,6 +110,10 @@ pub struct Task {
     pub review: ReviewState,
     pub suppressed: bool,
     pub next_due_at: Option<Timestamp>,
+    /// The latest recorded run's status; `None` when it never ran.
+    pub last_status: Option<String>,
+    pub last_started_at: Option<Timestamp>,
+    pub last_runtime_ms: Option<i32>,
 }
 
 /// A committed claim: the occurrence row and its provisional-until-commit job.
@@ -126,6 +134,7 @@ pub struct Schedule {
     boundary: Arc<MutationBoundary>,
     queue: Arc<Queue>,
     db: Db,
+    heartbeat: board::Heartbeat,
 }
 impl Schedule {
     /// Validates every contribution against the Queue's worker catalog: the
@@ -196,6 +205,7 @@ impl Schedule {
             boundary,
             queue,
             db,
+            heartbeat: board::Heartbeat::default(),
         })
     }
     pub fn definitions(&self) -> impl Iterator<Item = &Registered> {
@@ -238,6 +248,20 @@ impl Schedule {
             .into_iter()
             .map(|row| row.get(0))
             .collect();
+        let latest: BTreeMap<String, (String, Timestamp, Option<i32>)> = client
+            .query(
+                "SELECT DISTINCT ON (key) key,status,started_at,runtime_ms FROM base_schedule_runs WHERE key=ANY($1) ORDER BY key,started_at DESC,id DESC",
+                &[&keys],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get(0),
+                    (row.get(1), occurrence::from_pg(row.get(2)), row.get(3)),
+                )
+            })
+            .collect();
         Ok(self
             .definitions
             .values()
@@ -255,6 +279,9 @@ impl Schedule {
                 review: review_state(item, reviews.get(item.key)),
                 suppressed: suppressed.iter().any(|key| key == item.key),
                 next_due_at: item.next(now).ok(),
+                last_status: latest.get(item.key).map(|run| run.0.clone()),
+                last_started_at: latest.get(item.key).map(|run| run.1),
+                last_runtime_ms: latest.get(item.key).and_then(|run| run.2),
             })
             .collect())
     }
@@ -654,7 +681,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/schedule", Provenance {
 }) }
 inventory::submit! {
     Module { id: "base/schedule", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/settings", "base/locale", "base/datetime", "base/ui", "base/menu"],
         migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql"))],
         services: &[Service { id: "base/schedule.store", factory: |services| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
@@ -662,6 +689,41 @@ inventory::submit! {
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             Ok(Arc::new(Schedule::from_catalog(&catalog, queue, boundary, db)?))
+        } }, Service { id: "base/schedule.retention", factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::Retention {
+                schedule: services.get("base/schedule.store")?,
+                settings: services.get("base/settings.store")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            }))))
+        } }, Service { id: "base/schedule.pages", factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages::new(
+                services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                services.get("base/schedule.store")?,
+                services.get("base/settings.store")?,
+                services.get("base/datetime.display")?,
+                services.get("base/locale.locales")?,
+            )))))
         } }],
     }
 }
+inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS, board::KEEP_DAYS,
+Provenance { module: "base/schedule", source: file!(), line: line!() },
+&bilibi_settings::Setting::Definition(bilibi_settings::Definition {
+    value_type: bilibi_settings::ValueType::Integer, scopes: &[bilibi_settings::ScopeKind::Global],
+    default: || json!(board::KEEP_DAYS_DEFAULT), nullable: false, encrypted: false,
+    minimum: Some(board::KEEP_DAYS_MIN as f64), maximum: Some(board::KEEP_DAYS_MAX as f64), validator: None,
+    editor: Some(bilibi_settings::Editor { group: "Schedule", label: "Schedule history retention",
+        help: "Days of operational schedule history to retain; zero disables pruning.", capability: Some(MANAGE), reveal_duration_ms: 0 }),
+})) }
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "schedule.board",
+Provenance { module: "base/schedule", source: file!(), line: line!() },
+&bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
+    service: "base/schedule.pages", operation: "board", access: bilibi_module_registry::contributions::Access::OperatorCapability(VIEW), framed: true }) }
+bilibi_menu::contribute!(
+    "base/schedule",
+    bilibi_menu::MenuItem::page("admin.system.schedule", "Schedule", "/system/schedule")
+        .under("admin.system")
+        .icon("clipboard-document-list")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(15)
+);

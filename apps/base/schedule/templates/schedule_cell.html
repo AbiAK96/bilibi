@@ -1,0 +1,32 @@
+{#- One board cell, mirroring the Bilimbi flex_table `:col` slots in normal
+    row mode. A missing instant is a dash, as Bilimbi `<.datetime>`. -#}
+{%- import "components.html" as ui -%}
+{%- macro datetime(instant) -%}
+{%- if let Some((iso, text, company, utc, mode)) = instant.value -%}
+<time id="{{ instant.id }}" datetime="{{ iso }}" data-format="datetime" data-precision="minute" data-mode="{{ mode }}" data-text-company="{{ company }}" data-text-utc="{{ utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums whitespace-nowrap text-xs text-ink-muted">{{ text }}</time>
+{%- else -%}
+<span id="{{ instant.id }}" class="whitespace-nowrap text-xs text-ink-muted">—</span>
+{%- endif -%}
+{%- endmacro -%}
+{%- match cell -%}
+{%- when Cell::TaskName { name, key } -%}
+<div class="min-w-[13rem]"><p class="font-medium text-ink">{{ name }}</p><p class="font-mono text-xs text-ink-muted">{{ key }}</p></div>
+{%- when Cell::Source { owner, route } -%}
+{% call ui::badge() %}{{ source }}{% endcall %}<div class="mt-1 text-xs text-ink-muted">{% if let Some(route) = route %}<a href="{{ route }}" class="font-mono text-action hover:underline">{{ owner }}</a>{% else %}<span class="font-mono">{{ owner }}</span>{% endif %}</div>
+{%- when Cell::Cron { expression, zone } -%}
+<code class="whitespace-nowrap text-xs text-ink">{{ expression }}</code><p class="text-xs text-ink-muted">{{ zone }}</p>
+{%- when Cell::Instant(at) -%}
+{% call datetime(instant=at) %}{% endcall %}
+{%- when Cell::Status { kind, label, detail } -%}
+{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>
+{%- when Cell::Result { label, detail } -%}
+<span class="text-xs text-ink">{{ label }}</span><p class="text-xs text-ink-muted">{{ detail }}</p>
+{%- when Cell::Started { at, detail } -%}
+{% call datetime(instant=at) %}{% endcall %}<p class="text-xs text-ink-muted">{{ detail }}</p>
+{%- when Cell::RunSource { detail } -%}
+{% call ui::badge() %}{{ source }}{% endcall %}<p class="mt-1 text-xs text-ink-muted">{{ detail }}</p>
+{%- when Cell::Badge { kind, label } -%}
+{% call ui::badge(kind=kind) %}{{ label }}{% endcall %}
+{%- when Cell::Detail(text) -%}
+<span class="text-xs text-ink">{{ text }}</span>
+{%- endmatch -%}

@@ -81,6 +81,8 @@ impl Scheduler {
             }
             match self.poll(Timestamp::now()).await {
                 Ok(poll) => {
+                    self.schedule
+                        .beat(Timestamp::now(), self.config.poll_interval);
                     for (key, reason) in &poll.failed {
                         eprintln!(
                             "schedule occurrence was not enqueued: key={key} reason={reason}"

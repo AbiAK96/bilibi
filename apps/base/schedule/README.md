@@ -4,8 +4,8 @@ Schedule holds installation-global recurrence definitions, the operator's
 decision about them, and the durable claim that hands exactly one Queue job to
 each intended occurrence. Definitions, fingerprint review, suppression and the
 cron/zone arithmetic are Q3; occurrence claiming, the Queue insertion, overlap
-leases and run history are Q4 (this slice); the operator board is Q5. Work
-itself runs on the Queue, never inline.
+leases and run history are Q4; the operator board at `/system/schedule` and
+history retention are Q5. Work itself runs on the Queue, never inline.
 
 Owners contribute a `Definition` to `base/schedule.definitions` with
 `Contribution::new`; the contribution id is the durable key
@@ -87,8 +87,7 @@ write nothing.
 `base_schedule_runs` is best-effort operational evidence (running, succeeded,
 failed, skipped; trigger and who asked for a manual run); recording failure is
 logged and never changes the owner's outcome. `Schedule::runs` reads it
-redacted with `admin.system.schedule.view`. Retention pruning and the board
-are Q5.
+redacted with `admin.system.schedule.view`.
 
 ## Review and suppression
 
@@ -109,7 +108,7 @@ persistent operator identity plus `admin.system.schedule.manage`
 `MutationTransaction` under a per-key advisory lock (`schedule::lock`). A
 repeated `suppress`/`resume` changes nothing and records nothing. `tasks` needs
 `admin.system.schedule.view` and returns redacted facts (no arguments).
-`admin.system.schedule.execute` is declared for run-now (Q4/Q5).
+`admin.system.schedule.execute` gates run-now.
 
 `Schedule::eligibility` is what a claim or a started job must ask, inside the
 transaction that holds `lock`: `Eligible` only for an enabled, unsuppressed
@@ -152,3 +151,52 @@ cargo run -p bilibi-schedule --example schedule-walkthrough -- inspect
 `worker` process (set `SCHEDULE_DEMO_KEEP=1` so it does not reset the first)
 shows that each minute is claimed by exactly one of them, and the 75-second
 task's next minute is refused for overlap and recorded as skipped while it runs.
+
+## Operator board (`/system/schedule`)
+
+The board is `src/web.rs` (Bilimbi `Schedule.Web.IndexLive`), a framed live
+page behind `OperatorCapability(admin.system.schedule.view)` with a System →
+Schedule menu entry. Its read model is `src/board.rs`: tasks with their latest
+run (filtered and sorted in memory, as Bilimbi does over the bounded definition
+list), an exact run-history page filtered, ordered and paged in PostgreSQL
+(`Schedule::run_page`; the sort is an enum, never a client identifier), and
+diagnostics that report the local scheduler loop's heartbeat, Queue and run
+recorder reads and due work independently (`Unavailable`/`Unknown`, never a
+healthy default). The URL keeps Bilimbi's names (`tab`, `task_search`,
+`task_status`, `task_sort`, `task_dir`, `run_search`, `run_status`,
+`start_date`, `end_date`, `run_sort`, `run_dir`, `page`, `page_size`).
+
+`view` reads, `execute` queues Run now, `manage` enables, disables, pauses,
+resumes and changes retention. The page shows controls from the actor's
+effective capabilities, but every command first re-asks
+`authorize_operator` for its capability and the Schedule API checks it again
+inside the transaction; a refusal flashes "You do not have permission for that
+action." and redraws the controls without clearing the page. Enable, Pause and
+Disable confirm through the shared `ConfirmDialog`, which holds the task it
+describes; the confirmation acts on that held task, never on a key the client
+sends. History dates bound calendar days in the zone the Started column shows:
+the company zone in company display mode, UTC otherwise (there is no browser
+zone report yet, so local mode bounds UTC, the text the server renders).
+
+The board's tables are the shared `Table`; Bilimbi's flex-table column notch
+and zoom arrive with U7's FlexTable.
+
+## Retention and contributed housekeeping
+
+`schedule.history.keep_days` is a global integer setting (default 90, 0–3650,
+zero keeps everything), changed from the board's Settings tab
+(`board::set_keep_days`, operator + `manage`, audited as
+`schedule.retention.changed`). The daily `base/schedule.occurrence-retention`
+task (03:37 UTC, forbid overlap) deletes finished occurrences and finished run
+rows older than that; unfinished claims and each key's latest scheduled claim
+(the watermark) are never deleted. Bilimbi prunes run rows when a worker
+starts; here the same daily task prunes both.
+
+Base Session contributes `base/session-expiry` (every five minutes), which
+deletes sessions past their absolute or idle expiry (`Sessions::prune_expired`).
+Both tasks follow the scheduled-worker contract above (`worker::validate`,
+`Schedule::run`, a handler bound to `EXECUTE`). Like every definition they are
+unreviewed until an operator enables them on the board, and they run only after
+`scheduler` is granted `EXECUTE` in the operator tenant. Copy
+`src/retention.rs` or `apps/base/session/src/expiry.rs` for a new housekeeping
+task rather than starting a Tokio interval of your own.

@@ -1,0 +1,1272 @@
+//! The `/system/schedule` operator board (Bilimbi `Schedule.Web.IndexLive`).
+//!
+//! Definitions are immutable contributor facts; the board reads tasks, run
+//! history and diagnostics through the Schedule API and polls them on the host's
+//! refresh. `can_execute`/`can_manage` only choose which controls to draw. Every
+//! command re-asks Authz before it acts (`authorize_operator`, the same check
+//! the Schedule API repeats inside its transaction), and a refusal flashes the
+//! denial and redraws the controls instead of clearing the page.
+//!
+//! Enable, Pause and Disable confirm through the shared dialog. The request
+//! holds the task whose consequence the dialog states and the confirmation
+//! acts on that held task, never on a client-supplied key; a confirmation with
+//! nothing held is a stale click and does nothing. Resume runs on click.
+//!
+//! History dates bound calendar days in the zone the Started column displays
+//! in: the company zone in company mode, otherwise UTC (the text the server
+//! renders itself; no browser-zone report exists yet), named under the controls.
+use crate::{
+    board::{self, Availability, Diagnostics, DueWork, RunQuery, RunSort, TaskSort},
+    Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
+};
+use askama::Template;
+use bilibi_authz::{authorize_operator, effective_capabilities};
+use bilibi_database::{Db, Error, Result};
+use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Mode, Precision};
+use bilibi_locale::Locales;
+use bilibi_settings::Settings;
+use bilibi_tenancy::Scope;
+use bilibi_ui::{
+    choices,
+    forms::{Field, InputKind},
+    list_state::FILTERS_FORM,
+    page::{
+        LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
+        PageFuture, PageRequest,
+    },
+    params, Alert, BadgeKind, Button, ButtonVariant, Card, Column, ConfirmDialog, Filter,
+    FilterToolbar, FlashMap, Html, ListSpec, ListState, PageCounts, Pagination, Row, SortDir,
+    StatusKind, Tab, Table, TableEmpty, Tabs, ToolbarControl, NO_FLASH,
+};
+use jiff::{civil::Date, tz::TimeZone, Timestamp};
+use serde_json::Value;
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
+
+const PAGE_SIZES: [u64; 3] = [25, 50, 100];
+const DENIED: &str = "You do not have permission for that action.";
+const TABS: [(&str, &str); 3] = [
+    ("tasks", "Tasks"),
+    ("history", "History"),
+    ("settings", "Settings"),
+];
+
+fn spec(
+    sortable: &[(&str, SortDir)],
+    default: &str,
+    names: [&str; 4],
+    size: &str,
+    filters: Vec<(&str, Filter)>,
+) -> Arc<ListSpec> {
+    ListSpec {
+        sortable: sortable
+            .iter()
+            .map(|(key, dir)| ((*key).into(), *dir))
+            .collect(),
+        default_sort: Some(default.into()),
+        page_sizes: PAGE_SIZES.to_vec(),
+        page_size_param: size.into(),
+        param_names: bilibi_ui::list_state::ParamNames {
+            search: names[0].into(),
+            page: names[1].into(),
+            sort_by: names[2].into(),
+            sort_dir: names[3].into(),
+        },
+        filters: filters
+            .into_iter()
+            .map(|(key, filter)| (key.into(), filter))
+            .collect(),
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("schedule board list spec")
+}
+/// Bilimbi's query names: tasks are not paged, so their page keys never reach the URL.
+static TASKS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    let mut statuses = vec![""];
+    statuses.extend(board::TASK_STATUSES);
+    spec(
+        &[
+            ("name", SortDir::Asc),
+            ("next_due", SortDir::Asc),
+            ("last_run", SortDir::Asc),
+        ],
+        "next_due",
+        ["task_search", "task_page", "task_sort", "task_dir"],
+        "task_page_size",
+        vec![("task_status", Filter::one_of(&statuses, ""))],
+    )
+});
+static RUNS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    let mut statuses = vec![""];
+    statuses.extend(board::RUN_STATUSES);
+    spec(
+        &[
+            ("started_at", SortDir::Desc),
+            ("name", SortDir::Asc),
+            ("source", SortDir::Asc),
+            ("status", SortDir::Asc),
+        ],
+        "started_at",
+        ["run_search", "page", "run_sort", "run_dir"],
+        "page_size",
+        vec![
+            ("run_status", Filter::one_of(&statuses, "")),
+            ("start_date", Filter::string("")),
+            ("end_date", Filter::string("")),
+        ],
+    )
+});
+
+struct Core {
+    db: Db,
+    schedule: Arc<Schedule>,
+    settings: Arc<Settings>,
+    display: Arc<DisplayPolicy>,
+    locales: Arc<Locales>,
+}
+pub(crate) struct Pages(Arc<Core>);
+impl Pages {
+    pub fn new(
+        db: Db,
+        schedule: Arc<Schedule>,
+        settings: Arc<Settings>,
+        display: Arc<DisplayPolicy>,
+        locales: Arc<Locales>,
+    ) -> Self {
+        Self(Arc::new(Core {
+            db,
+            schedule,
+            settings,
+            display,
+            locales,
+        }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Command {
+    Enable,
+    Pause,
+    Disable,
+}
+impl Command {
+    fn parse(event: &str) -> Option<Self> {
+        match event {
+            "request_enable" | "enable" => Some(Self::Enable),
+            "request_pause" | "pause" => Some(Self::Pause),
+            "request_disable" | "disable" => Some(Self::Disable),
+            _ => None,
+        }
+    }
+    fn event(self) -> &'static str {
+        match self {
+            Self::Enable => "enable",
+            Self::Pause => "pause",
+            Self::Disable => "disable",
+        }
+    }
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Enable => "Enable",
+            Self::Pause => "Pause",
+            Self::Disable => "Disable",
+        }
+    }
+    fn working(self) -> &'static str {
+        match self {
+            Self::Enable => "Enabling…",
+            Self::Pause => "Pausing…",
+            Self::Disable => "Disabling…",
+        }
+    }
+    /// What the command sets running, or what it does to queued work, which
+    /// resuming or re-enabling does not bring back.
+    fn consequence(self, task: &Task) -> String {
+        let done = match self {
+            Self::Enable => "enabled",
+            Self::Pause => "paused",
+            Self::Disable => "disabled",
+        };
+        format!("Task “{}” will be {done}.", task.name)
+    }
+    fn detail(self, task: &Task) -> String {
+        let print = &task.fingerprint[..12];
+        match self {
+            Self::Enable if task.suppressed => format!(
+                "Its definition is approved at fingerprint {print}, the one under review, but the task stays paused and runs nothing until it is resumed. A later change to the definition needs review again."
+            ),
+            Self::Enable => format!(
+                "It begins running automatically on its schedule ({}, {}) at definition fingerprint {print}, the one under review. A later change to the definition stops it until that change is reviewed.",
+                task.expression, task.timezone
+            ),
+            Self::Pause => "Work already queued for it is cancelled before it starts. The task keeps its definition and can be resumed.".into(),
+            Self::Disable => "Work already queued for it is cancelled before it starts, and the scheduler stops queuing it until this definition is reviewed and enabled again.".into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Loaded {
+    Available,
+    Unavailable,
+    InvalidFilters,
+}
+
+struct Board {
+    core: Arc<Core>,
+    tab: &'static str,
+    tasks: ListState,
+    runs: ListState,
+    pending: Option<(Command, Task)>,
+    flash: Option<(StatusKind, String)>,
+}
+
+fn parse(query: &HashMap<String, String>) -> Result<(&'static str, ListState, ListState)> {
+    let tab = TABS
+        .iter()
+        .find(|(id, _)| query.get("tab").map(String::as_str) == Some(*id))
+        .map_or("tasks", |(id, _)| *id);
+    let tasks = ListState::parse(query, TASKS.clone()).map_err(|_| Error::Internal)?;
+    let mut runs = ListState::parse(query, RUNS.clone()).map_err(|_| Error::Internal)?;
+    normalize_dates(&mut runs);
+    Ok((tab, tasks, runs))
+}
+/// A date the browser cannot have produced is dropped, as Bilimbi's `date_param`.
+fn normalize_dates(runs: &mut ListState) {
+    for key in ["start_date", "end_date"] {
+        if let Some(value) = runs.filters.get_mut(key) {
+            if date(value).is_none() {
+                value.clear();
+            }
+        }
+    }
+}
+fn date(value: &str) -> Option<Date> {
+    (value.len() == 10).then(|| value.parse().ok()).flatten()
+}
+
+impl Board {
+    fn query(&self) -> HashMap<String, String> {
+        let mut query = self.tasks.to_params();
+        query.remove("task_page");
+        query.remove("task_page_size");
+        query.extend(self.runs.to_params());
+        query.insert("tab".into(), self.tab.into());
+        query
+    }
+    fn flash(&mut self, kind: StatusKind, message: impl Into<String>) {
+        self.flash = Some((kind, message.into()));
+    }
+
+    /// One command's outcome. A refusal is a flash, never a page-clearing error.
+    fn outcome(&mut self, result: Result<()>, success: &str) -> Result<()> {
+        match result {
+            Ok(()) => self.flash(StatusKind::Success, success),
+            Err(Error::Forbidden) => self.flash(StatusKind::Error, DENIED),
+            Err(Error::NotFound) => self.flash(
+                StatusKind::Error,
+                "That schedule definition is no longer installed.",
+            ),
+            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+            Err(_) => self.flash(
+                StatusKind::Error,
+                "Schedule state is unavailable; no action was confirmed.",
+            ),
+        }
+        Ok(())
+    }
+    async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
+        let client = self.core.db.get().await?;
+        match authorize_operator(&**client, scope, capability).await {
+            Ok(_) => Ok(true),
+            Err(Error::Forbidden) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn event(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+        let get = |key: &str| value.get(key).and_then(Value::as_str);
+        let key = get("key").unwrap_or_default().to_owned();
+        let schedule = self.core.schedule.clone();
+        match get("type").ok_or(Error::Invalid)? {
+            "tab" => {
+                self.tab = TABS
+                    .iter()
+                    .find(|(id, _)| Some(*id) == get("tab"))
+                    .map(|(id, _)| *id)
+                    .ok_or(Error::Invalid)?
+            }
+            "filter_tasks" => {
+                let posted = params::form_values(value, "task");
+                let mut mapped = HashMap::new();
+                if let Some(search) = posted.get("search") {
+                    mapped.insert("search".to_owned(), search.clone());
+                }
+                if let Some(status) = posted.get("status") {
+                    mapped.insert("task_status".to_owned(), status.clone());
+                }
+                self.tasks.apply_filters(&mapped);
+            }
+            "sort_tasks" => {
+                self.tasks.next_sort(get("sort").unwrap_or_default());
+            }
+            "filter_runs" => {
+                self.runs
+                    .apply_filters(&params::form_values(value, FILTERS_FORM));
+                normalize_dates(&mut self.runs);
+            }
+            "sort_runs" => {
+                self.runs.next_sort(get("sort").unwrap_or_default());
+            }
+            "page" => self.runs.put_page(get("page")),
+            "clear-flash" => {
+                if self
+                    .flash
+                    .as_ref()
+                    .is_some_and(|(kind, _)| Some(kind.name()) == get("key"))
+                {
+                    self.flash = None;
+                }
+            }
+            "run_now" => {
+                if !self.allowed(scope, EXECUTE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let mut client = self.core.db.get().await?;
+                let result = schedule
+                    .run_now(&mut client, scope, &key, Timestamp::now())
+                    .await;
+                match result {
+                    Ok(Ok(Claimed { .. })) => self.flash(StatusKind::Success, "Run queued."),
+                    Ok(Err(refusal)) => self.flash(StatusKind::Error, refusal_message(refusal)),
+                    Err(error) => self.outcome(Err(error), "")?,
+                }
+            }
+            "resume" => {
+                if !self.allowed(scope, MANAGE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let mut client = self.core.db.get().await?;
+                let result = schedule.resume(&mut client, scope, &key).await.map(drop);
+                self.outcome(result, "Task resumed.")?;
+            }
+            "cancel_command" => self.pending = None,
+            event @ ("request_enable" | "request_pause" | "request_disable") => {
+                let command = Command::parse(event).ok_or(Error::Invalid)?;
+                if !self.allowed(scope, MANAGE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let client = self.core.db.get().await?;
+                match schedule.tasks(&**client, scope, Timestamp::now()).await {
+                    Ok(tasks) => match tasks.into_iter().find(|task| task.key == key) {
+                        Some(task) => {
+                            self.flash = None;
+                            self.pending = Some((command, task));
+                        }
+                        None => self.outcome(Err(Error::NotFound), "")?,
+                    },
+                    Err(error) => self.outcome(Err(error), "")?,
+                }
+            }
+            event @ ("enable" | "pause" | "disable") => {
+                let command = Command::parse(event).ok_or(Error::Invalid)?;
+                // The refusal comes first, so a revoked operator hears it even
+                // from a forged event.
+                if !self.allowed(scope, MANAGE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let Some((held, task)) = self.pending.take() else {
+                    return Ok(());
+                };
+                if held != command {
+                    self.pending = Some((held, task));
+                    return Ok(());
+                }
+                let mut client = self.core.db.get().await?;
+                let (result, success) = match command {
+                    Command::Enable => (
+                        schedule.review(&mut client, scope, task.key, true).await,
+                        "Task enabled.",
+                    ),
+                    Command::Disable => (
+                        schedule.review(&mut client, scope, task.key, false).await,
+                        "Task disabled.",
+                    ),
+                    Command::Pause => (
+                        schedule
+                            .suppress(&mut client, scope, task.key)
+                            .await
+                            .map(drop),
+                        "Task paused.",
+                    ),
+                };
+                self.outcome(result, success)?;
+            }
+            "save_retention" => {
+                if !self.allowed(scope, MANAGE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let days = params::form_values(value, "retention")
+                    .get("days")
+                    .and_then(|days| days.trim().parse::<i64>().ok())
+                    .filter(|days| (board::KEEP_DAYS_MIN..=board::KEEP_DAYS_MAX).contains(days));
+                let Some(days) = days else {
+                    self.flash(StatusKind::Error, retention_bounds());
+                    return Ok(());
+                };
+                let mut client = self.core.db.get().await?;
+                let result =
+                    board::set_keep_days(&schedule, &self.core.settings, &mut client, scope, days)
+                        .await;
+                self.outcome(result, "Retention saved.")?;
+            }
+            _ => return Err(Error::Invalid),
+        }
+        Ok(())
+    }
+
+    async fn render(&mut self, scope: &Scope) -> Result<String> {
+        let core = self.core.clone();
+        let client = core.db.get().await?;
+        let now = Timestamp::now();
+        let locale = core.locales.resolve(&**client, scope, None).await?.locale;
+        let display = core.display.display(&**client, scope, None, locale).await?;
+        let capabilities = effective_capabilities(&**client, scope).await?;
+        let can_execute = capabilities.contains(EXECUTE);
+        let can_manage = capabilities.contains(MANAGE);
+        let all_tasks = match core.schedule.tasks(&**client, scope, now).await {
+            Ok(tasks) => Some(tasks),
+            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+            Err(Error::Forbidden) => return Err(Error::Forbidden),
+            Err(_) => None,
+        };
+        let diagnostics = core
+            .schedule
+            .diagnostics(&**client, all_tasks.as_deref(), now)
+            .await;
+        let zone_name = match display.mode {
+            Mode::Company => display.timezone.clone(),
+            Mode::Local | Mode::Utc => "UTC".to_owned(),
+        };
+        let mut body = Html::default();
+        match self.tab {
+            "tasks" => body.push(&self.tasks_panel(
+                all_tasks.as_deref(),
+                &display,
+                can_execute,
+                can_manage,
+            )?),
+            "history" => {
+                let zone = TimeZone::get(&zone_name).unwrap_or(TimeZone::UTC);
+                body.push(
+                    &self
+                        .history_panel(&core, &client, scope, &display, &zone_name, zone)
+                        .await?,
+                )
+            }
+            _ => {
+                let days = board::keep_days(&core.settings, &**client).await.ok();
+                body.push(&retention_panel(days, can_manage)?);
+            }
+        }
+        let mut flash = NO_FLASH;
+        if let Some((kind, message)) = &self.flash {
+            match kind {
+                StatusKind::Success => flash.success = message,
+                StatusKind::Error => flash.error = message,
+                StatusKind::Warning => flash.warning = message,
+                StatusKind::Info => flash.info = message,
+            }
+        }
+        let tab_paths: Vec<(String, &str, &str)> = TABS
+            .iter()
+            .map(|(id, label)| (format!("schedule-tab-{id}"), *id, *label))
+            .collect();
+        let tabs = render(Tabs {
+            id: "schedule-tabs",
+            label: "Schedule views",
+            class: "mt-5",
+            tabs: tab_paths
+                .iter()
+                .map(|(dom, id, label)| Tab {
+                    id: dom,
+                    ..Tab::button("tab", id, label, self.tab == *id)
+                })
+                .collect(),
+        })?;
+        let dialog = match &self.pending {
+            Some((command, task)) => {
+                let (consequence, detail) = (command.consequence(task), command.detail(task));
+                render(ConfirmDialog {
+                    id: "schedule-command-confirm",
+                    consequence: &consequence,
+                    detail: &detail,
+                    confirm: command.verb(),
+                    working: command.working(),
+                    confirm_event: command.event(),
+                    cancel_event: "cancel_command",
+                })?
+            }
+            None => Html::default(),
+        };
+        BoardView {
+            flash,
+            diagnostics: diagnostic_cards(&diagnostics),
+            tabs,
+            body,
+            dialog,
+        }
+        .render()
+        .map_err(|_| Error::Internal)
+    }
+
+    fn tasks_panel(
+        &mut self,
+        tasks: Option<&[Task]>,
+        display: &DisplayContext,
+        can_execute: bool,
+        can_manage: bool,
+    ) -> Result<Html> {
+        let status = self.tasks.filters["task_status"].clone();
+        let sort = match self.tasks.sort_by.as_deref() {
+            Some("name") => TaskSort::Name,
+            Some("last_run") => TaskSort::LastRun,
+            _ => TaskSort::NextDue,
+        };
+        let shown = tasks.map(|tasks| {
+            board::filter_tasks(
+                tasks.to_vec(),
+                &self.tasks.search,
+                (!status.is_empty()).then_some(status.as_str()),
+                sort,
+                self.tasks.sort_dir == Some(SortDir::Desc),
+            )
+        });
+        let search = Field::in_form("task", "search")
+            .id("schedule-task-search")
+            .kind(InputKind::Search)
+            .label("Search task name")
+            .label_class("sr-only")
+            .wrapper_class("mb-0")
+            .placeholder("Search task name…")
+            .attr("maxlength", "255")
+            .attr("data-debounce", "300")
+            .autocomplete("off")
+            .value(self.tasks.search.clone())
+            .class("w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none focus:ring-2 focus:ring-brand-strong/30");
+        let select = Field::in_form("task", "status")
+            .id("schedule-task-status")
+            .kind(InputKind::Select)
+            .label("Filter task status")
+            .label_class("sr-only")
+            .wrapper_class("mb-0")
+            .value(status.clone())
+            .options(choices(&[
+                ("All task statuses", ""),
+                ("Never run", "never"),
+                ("Running", "running"),
+                ("Succeeded", "succeeded"),
+                ("Failed", "failed"),
+                ("Skipped", "skipped"),
+                ("Paused", "paused"),
+                ("Unreviewed", "unreviewed"),
+                ("Disabled", "disabled"),
+            ]))
+            .class("rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none");
+        let mut table = Table::new(
+            "schedule-tasks",
+            vec![
+                Column::new("Name")
+                    .sort("name")
+                    .sort_id("schedule-tasks-sort-name"),
+                Column::new("Source"),
+                Column::new("Cron schedule"),
+                Column::new("Next run")
+                    .sort("next_due")
+                    .sort_id("schedule-tasks-sort-next_due"),
+                Column::new("Status"),
+                Column::new("Last run")
+                    .sort("last_run")
+                    .sort_id("schedule-tasks-sort-last_run"),
+                Column::new("Result"),
+            ],
+        )
+        .sorted(self.tasks.sort_by.as_deref(), self.tasks.sort_dir);
+        table.caption = "Scheduled tasks";
+        table.framed = false;
+        table.actions = true;
+        table.sort.event = "sort_tasks";
+        for task in shown.iter().flatten() {
+            let dom = format!("schedule-task-{}", dom_key(task.key));
+            let next = instant(display, format!("{dom}-next-due"), task.next_due_at);
+            let last = instant(display, format!("{dom}-last-started"), task.last_started_at);
+            let label = task_status_label(task);
+            let result = status_label(task.last_status.as_deref().unwrap_or("never"));
+            let overlap = format!(
+                "{} overlap · {} misfires",
+                task.overlap.as_str(),
+                task.misfire.as_str()
+            );
+            let duration = duration(task.last_runtime_ms);
+            let cells = [
+                Cell::TaskName {
+                    name: task.name,
+                    key: task.key,
+                },
+                Cell::Source {
+                    owner: task.owner,
+                    route: task.owner_route,
+                },
+                Cell::Cron {
+                    expression: task.expression,
+                    zone: task.timezone,
+                },
+                Cell::Instant(&next),
+                Cell::Status {
+                    kind: task_status_kind(task),
+                    label: &label,
+                    detail: &overlap,
+                },
+                Cell::Instant(&last),
+                Cell::Result {
+                    label: &result,
+                    detail: &duration,
+                },
+            ];
+            table.rows.push(Row {
+                id: dom.clone(),
+                cells: cells.into_iter().map(cell).collect::<Result<_>>()?,
+                actions: actions(task, &dom, can_execute, can_manage)?,
+            });
+        }
+        if shown.as_ref().is_some_and(Vec::is_empty) {
+            let text = if self.tasks.search.is_empty() && status.is_empty() {
+                "Nothing is scheduled."
+            } else {
+                "No tasks match the current filters."
+            };
+            table.empty = Some(TableEmpty::Content(Html::text(text)));
+        }
+        let unavailable = if tasks.is_none() {
+            render(Alert {
+                kind: StatusKind::Error,
+                id: "schedule-tasks-unavailable",
+                class: "mt-4",
+                body: Html::text("Task definitions or their database state are unavailable. No status has been inferred."),
+            })?
+        } else {
+            Html::default()
+        };
+        let card = render(Card {
+            id: "schedule-tasks-card",
+            class: "mt-4",
+            inner_class: "p-0",
+            body: render(table)?,
+            ..Card::default()
+        })?;
+        render(TasksPanel {
+            search,
+            status: select,
+            unavailable,
+            card,
+        })
+    }
+
+    async fn history_panel(
+        &mut self,
+        core: &Core,
+        client: &tokio_postgres::Client,
+        scope: &Scope,
+        display: &DisplayContext,
+        zone_name: &str,
+        zone: TimeZone,
+    ) -> Result<Html> {
+        let filters = self.runs.filters.clone();
+        let start = date(&filters["start_date"]);
+        let end = date(&filters["end_date"]);
+        let sort = match self.runs.sort_by.as_deref() {
+            Some("name") => RunSort::Name,
+            Some("source") => RunSort::Source,
+            Some("status") => RunSort::Status,
+            _ => RunSort::StartedAt,
+        };
+        let status = filters["run_status"].clone();
+        let mut query = RunQuery {
+            search: self.runs.search.clone(),
+            status: (!status.is_empty()).then(|| status.clone()),
+            start,
+            end,
+            zone,
+            sort,
+            descending: self.runs.sort_dir == Some(SortDir::Desc),
+            page: self.runs.page,
+            page_size: self.runs.page_size,
+        };
+        let mut loaded = Loaded::Available;
+        let mut page = match core.schedule.run_page(client, scope, &query).await {
+            Ok(page) => Some(page),
+            Err(Error::Invalid) => {
+                loaded = Loaded::InvalidFilters;
+                None
+            }
+            Err(Error::Forbidden) => return Err(Error::Forbidden),
+            Err(_) => {
+                loaded = Loaded::Unavailable;
+                None
+            }
+        };
+        // A page past the end (rows were pruned, or a stale URL) shows the last one.
+        if let Some(found) = &page {
+            let pages = found.total.div_ceil(self.runs.page_size);
+            if self.runs.clamp_to_last_page(pages, false) {
+                query.page = self.runs.page;
+                page = core.schedule.run_page(client, scope, &query).await.ok();
+                if page.is_none() {
+                    loaded = Loaded::Unavailable;
+                }
+            }
+        }
+        let form = self.runs.filters_form();
+        let toolbar = render(FilterToolbar {
+            event: "filter_runs",
+            class: "mt-4",
+            ..FilterToolbar::new(
+                "schedule-history-filters",
+                vec![
+                    ToolbarControl::search(
+                        "schedule-run-search",
+                        "search",
+                        "Search run name",
+                        &form["search"],
+                        "Search run name…",
+                    ),
+                    ToolbarControl::select(
+                        "schedule-run-status",
+                        "run_status",
+                        "Filter run status",
+                        &form["run_status"],
+                        choices(&[
+                            ("All run statuses", ""),
+                            ("Running", "running"),
+                            ("Succeeded", "succeeded"),
+                            ("Failed", "failed"),
+                            ("Skipped", "skipped"),
+                        ]),
+                    ),
+                    ToolbarControl::date(
+                        "schedule-run-start-date",
+                        "start_date",
+                        "Start date",
+                        &form["start_date"],
+                    )
+                    .hint(zone_name),
+                    ToolbarControl::date(
+                        "schedule-run-end-date",
+                        "end_date",
+                        "End date",
+                        &form["end_date"],
+                    )
+                    .hint(zone_name),
+                ],
+            )
+        })?;
+        let mut table = Table::new(
+            "schedule-runs",
+            vec![
+                Column::new("Started")
+                    .sort("started_at")
+                    .sort_id("schedule-runs-sort-started_at"),
+                Column::new("Name")
+                    .sort("name")
+                    .sort_id("schedule-runs-sort-name"),
+                Column::new("Source")
+                    .sort("source")
+                    .sort_id("schedule-runs-sort-source"),
+                Column::new("Status")
+                    .sort("status")
+                    .sort_id("schedule-runs-sort-status"),
+                Column::new("Detail"),
+            ],
+        )
+        .sorted(self.runs.sort_by.as_deref(), self.runs.sort_dir);
+        table.caption = "Schedule run history";
+        table.framed = false;
+        table.sort.event = "sort_runs";
+        let total = page.as_ref().map_or(0, |page| page.total);
+        for run in page.iter().flat_map(|page| &page.entries) {
+            let dom = format!("schedule-run-{}", run.id);
+            let started = instant(display, format!("{dom}-started-at"), Some(run.started_at));
+            let runtime = duration(run.runtime_ms);
+            let status = status_label(&run.status);
+            let trigger = trigger_label(run);
+            let cells = [
+                Cell::Started {
+                    at: &started,
+                    detail: &runtime,
+                },
+                Cell::TaskName {
+                    name: &run.name,
+                    key: &run.key,
+                },
+                Cell::RunSource { detail: &trigger },
+                Cell::Badge {
+                    kind: status_kind(&run.status),
+                    label: &status,
+                },
+                Cell::Detail(&status),
+            ];
+            table.rows.push(Row {
+                id: dom,
+                cells: cells.into_iter().map(cell).collect::<Result<_>>()?,
+                actions: Html::default(),
+            });
+        }
+        if loaded == Loaded::Available && total == 0 {
+            let unfiltered = self.runs.search.is_empty()
+                && status.is_empty()
+                && start.is_none()
+                && end.is_none();
+            table.empty = Some(TableEmpty::Content(Html::text(if unfiltered {
+                "No runs recorded yet."
+            } else {
+                "No runs match the current filters."
+            })));
+        }
+        let alert = match loaded {
+            Loaded::Available => Html::default(),
+            Loaded::InvalidFilters => render(Alert {
+                kind: StatusKind::Warning,
+                id: "schedule-history-invalid",
+                class: "mt-4",
+                body: Html::text("The start date must not be after the end date."),
+            })?,
+            Loaded::Unavailable => render(Alert {
+                kind: StatusKind::Error,
+                id: "schedule-history-unavailable",
+                class: "mt-4",
+                body: Html::text(
+                    "Run history is unavailable. No empty-history conclusion has been inferred.",
+                ),
+            })?,
+        };
+        let card = render(Card {
+            id: "schedule-runs-card",
+            class: "mt-4",
+            inner_class: "p-0",
+            body: render(table)?,
+            ..Card::default()
+        })?;
+        let pagination = if loaded == Loaded::Available {
+            render(Pagination {
+                filters_event: "filter_runs",
+                ..Pagination::new(
+                    "schedule-history-pagination",
+                    PageCounts::new(self.runs.page, self.runs.page_size, total),
+                    &PAGE_SIZES,
+                )
+            })?
+        } else {
+            Html::default()
+        };
+        render(HistoryPanel {
+            toolbar,
+            alert,
+            card,
+            pagination,
+        })
+    }
+}
+
+fn retention_bounds() -> String {
+    format!(
+        "Retention must be a whole number from {} to {}.",
+        board::KEEP_DAYS_MIN,
+        board::KEEP_DAYS_MAX
+    )
+}
+fn retention_panel(days: Option<i64>, can_manage: bool) -> Result<Html> {
+    let current = match days {
+        Some(0) => "Keep all recorded runs".to_owned(),
+        Some(1) => "1 day".to_owned(),
+        Some(days) => format!("{days} days"),
+        None => "Unavailable".to_owned(),
+    };
+    let field = Field::in_form("retention", "days")
+        .id("schedule-retention-days")
+        .kind(InputKind::Number)
+        .label("Days")
+        .wrapper_class("mb-0")
+        .attr("min", &board::KEEP_DAYS_MIN.to_string())
+        .attr("max", &board::KEEP_DAYS_MAX.to_string())
+        .required()
+        .value(days.map(|d| d.to_string()).unwrap_or_default())
+        .class("mt-1 w-40 rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none");
+    let save = render(Button {
+        variant: ButtonVariant::Primary,
+        id: "schedule-retention-save",
+        button_type: "submit",
+        working: "Saving…",
+        body: Html::text("Save retention"),
+        ..Button::default()
+    })?;
+    let body = render(RetentionBody {
+        current,
+        can_manage,
+        field,
+        save,
+    })?;
+    render(Card {
+        id: "schedule-retention",
+        title: "Schedule history retention",
+        inner_class: "p-4",
+        body,
+        ..Card::default()
+    })
+    .and_then(|card| render(SettingsPanel { card }))
+}
+
+fn actions(task: &Task, dom: &str, can_execute: bool, can_manage: bool) -> Result<Html> {
+    let enabled = task.review == ReviewState::Enabled;
+    let mut buttons = Html::default();
+    let mut add = |shown: bool, suffix: &str, event: &str, label: &str| -> Result<()> {
+        if shown {
+            let id = format!("{dom}-{suffix}");
+            buttons.push(&render(Button {
+                id: &id,
+                button_type: "button",
+                event,
+                name: "key",
+                value: task.key,
+                class: "px-2 py-1 text-xs",
+                body: Html::text(label),
+                ..Button::default()
+            })?);
+        }
+        Ok(())
+    };
+    add(
+        can_execute && enabled && !task.suppressed,
+        "run",
+        "run_now",
+        "Run now",
+    )?;
+    add(can_manage && !enabled, "enable", "request_enable", "Enable")?;
+    add(
+        can_manage && enabled && !task.suppressed,
+        "pause",
+        "request_pause",
+        "Pause",
+    )?;
+    add(
+        can_manage && enabled && task.suppressed,
+        "resume",
+        "resume",
+        "Resume",
+    )?;
+    add(
+        can_manage && enabled,
+        "disable",
+        "request_disable",
+        "Disable",
+    )?;
+    render(Actions { buttons })
+}
+
+fn refusal_message(refusal: Refusal) -> &'static str {
+    match refusal {
+        Refusal::Disabled => "Enable this definition before queuing it.",
+        Refusal::Suppressed => "Resume this task before queuing it.",
+        Refusal::Unreviewed => "Review and enable this definition before queuing it.",
+        Refusal::Overlap => "This task already has an active occurrence.",
+        Refusal::AlreadyClaimed => "Schedule state is unavailable; no action was confirmed.",
+    }
+}
+fn status_label(status: &str) -> String {
+    let mut chars = status.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+fn task_status_label(task: &Task) -> String {
+    if task.suppressed {
+        "Paused".into()
+    } else {
+        match task.review {
+            ReviewState::Unreviewed => "Unreviewed".into(),
+            ReviewState::Disabled => "Disabled".into(),
+            ReviewState::Enabled => status_label(task.last_status.as_deref().unwrap_or("never")),
+        }
+    }
+}
+fn status_kind(status: &str) -> BadgeKind {
+    match status {
+        "succeeded" | "available" => BadgeKind::Success,
+        "failed" | "unavailable" => BadgeKind::Danger,
+        "running" | "unreviewed" | "unknown" => BadgeKind::Warning,
+        _ => BadgeKind::Neutral,
+    }
+}
+fn task_status_kind(task: &Task) -> BadgeKind {
+    match (task.suppressed, task.review) {
+        (true, _) | (_, ReviewState::Unreviewed) => BadgeKind::Warning,
+        (_, ReviewState::Disabled) => BadgeKind::Neutral,
+        _ => status_kind(task.last_status.as_deref().unwrap_or("never")),
+    }
+}
+fn duration(milliseconds: Option<i32>) -> String {
+    match milliseconds {
+        None => "—".into(),
+        Some(ms) if ms < 1_000 => format!("{ms} ms"),
+        Some(ms) => format!("{:.1} s", f64::from(ms) / 1_000.0),
+    }
+}
+fn trigger_label(run: &Run) -> String {
+    match (
+        run.trigger,
+        &run.triggered_by_name,
+        run.triggered_by_user_id,
+    ) {
+        (Trigger::Manual, Some(name), _) => format!("Run now by {name}"),
+        (Trigger::Manual, None, Some(id)) => format!("Run now by user {id}"),
+        (Trigger::Manual, None, None) => "Run now".into(),
+        (Trigger::Scheduled, ..) => "Scheduled".into(),
+    }
+}
+fn dom_key(key: &str) -> String {
+    key.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+struct DiagnosticCard {
+    id: &'static str,
+    label: &'static str,
+    kind: BadgeKind,
+    text: &'static str,
+}
+fn diagnostic_cards(d: &Diagnostics) -> Vec<DiagnosticCard> {
+    let available = |a: Availability| match a {
+        Availability::Available => (BadgeKind::Success, "Available"),
+        Availability::Unavailable => (BadgeKind::Danger, "Unavailable"),
+    };
+    let due = match d.due_work {
+        DueWork::NoneDue => (BadgeKind::Success, "No work currently due"),
+        DueWork::Due => (BadgeKind::Danger, "Work is due"),
+        DueWork::Unknown => (BadgeKind::Warning, "Unknown"),
+    };
+    [
+        (
+            "schedule-diagnostic-scheduler",
+            "Scheduler",
+            available(d.scheduler),
+        ),
+        ("schedule-diagnostic-queue", "Queue", available(d.queue)),
+        (
+            "schedule-diagnostic-recorder",
+            "Run recorder",
+            available(d.recorder),
+        ),
+        ("schedule-diagnostic-due-work", "Due work", due),
+    ]
+    .into_iter()
+    .map(|(id, label, (kind, text))| DiagnosticCard {
+        id,
+        label,
+        kind,
+        text,
+    })
+    .collect()
+}
+
+/// One rendered instant, the Bilimbi `<.datetime>` contract: both
+/// server-decidable texts travel with the element for the shell's mode control.
+pub(crate) struct Instant {
+    id: String,
+    value: Option<(String, String, String, String, &'static str)>,
+}
+fn instant(display: &DisplayContext, id: String, at: Option<Timestamp>) -> Instant {
+    Instant {
+        id,
+        value: at.map(|at| {
+            let r = display.render(at, Format::DateTime, Precision::Minute);
+            (r.iso, r.text, r.company, r.utc, r.mode.as_str())
+        }),
+    }
+}
+
+pub(crate) enum Cell<'a> {
+    TaskName {
+        name: &'a str,
+        key: &'a str,
+    },
+    Source {
+        owner: &'a str,
+        route: Option<&'a str>,
+    },
+    Cron {
+        expression: &'a str,
+        zone: &'a str,
+    },
+    Instant(&'a Instant),
+    Status {
+        kind: BadgeKind,
+        label: &'a str,
+        detail: &'a str,
+    },
+    Result {
+        label: &'a str,
+        detail: &'a str,
+    },
+    Started {
+        at: &'a Instant,
+        detail: &'a str,
+    },
+    RunSource {
+        detail: &'a str,
+    },
+    Badge {
+        kind: BadgeKind,
+        label: &'a str,
+    },
+    Detail(&'a str),
+}
+#[derive(Template)]
+#[template(path = "schedule_cell.html")]
+struct CellView<'a> {
+    cell: Cell<'a>,
+    source: &'a str,
+}
+fn cell(cell: Cell<'_>) -> Result<Html> {
+    render(CellView {
+        cell,
+        source: board::SOURCE,
+    })
+}
+#[derive(Template)]
+#[template(path = "schedule_actions.html")]
+struct Actions {
+    buttons: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule_tasks.html")]
+struct TasksPanel {
+    search: Field,
+    status: Field,
+    unavailable: Html,
+    card: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule_history.html")]
+struct HistoryPanel {
+    toolbar: Html,
+    alert: Html,
+    card: Html,
+    pagination: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule_retention.html")]
+struct RetentionBody {
+    current: String,
+    can_manage: bool,
+    field: Field,
+    save: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule_settings.html")]
+struct SettingsPanel {
+    card: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule.html")]
+struct BoardView<'a> {
+    flash: FlashMap<'a>,
+    diagnostics: Vec<DiagnosticCard>,
+    tabs: Html,
+    body: Html,
+    dialog: Html,
+}
+fn render(fragment: impl Template) -> Result<Html> {
+    Html::render(&fragment).map_err(|_| Error::Internal)
+}
+
+impl Page<Scope, Error> for Pages {
+    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
+        Box::pin(async move {
+            if request.operation != "board" {
+                return Err(Error::NotFound);
+            }
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            let (tab, tasks, runs) = parse(request.query)?;
+            let mut board = Board {
+                core: self.0.clone(),
+                tab,
+                tasks,
+                runs,
+                pending: None,
+                flash: None,
+            };
+            Ok(PageBody {
+                html: board.render(scope).await?,
+                live: true,
+            })
+        })
+    }
+    fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
+        Box::pin(async move {
+            if request.operation != "board" {
+                return Err(Error::NotFound);
+            }
+            let (tab, tasks, runs) = parse(request.query)?;
+            let state: Box<dyn LiveState<Scope, Error>> = Box::new(Board {
+                core: self.0.clone(),
+                tab,
+                tasks,
+                runs,
+                pending: None,
+                flash: None,
+            });
+            Ok(Some(state))
+        })
+    }
+}
+
+impl LiveState<Scope, Error> for Board {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            let before = self.flash.clone();
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(values) => {
+                    let (tab, tasks, runs) = parse(values)?;
+                    (self.tab, self.tasks, self.runs) = (tab, tasks, runs);
+                }
+                LiveInput::Event(value) => self.event(request.scope, value).await?,
+            }
+            let html = self.render(request.scope).await?;
+            let notice = match &self.flash {
+                Some((StatusKind::Success, message)) if self.flash != before => message.clone(),
+                _ => String::new(),
+            };
+            Ok(LiveBody {
+                html,
+                query: self.query(),
+                notice,
+                ..LiveBody::default()
+            })
+        })
+    }
+}
