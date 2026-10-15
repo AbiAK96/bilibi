@@ -1,0 +1,314 @@
+//! Module-owned operator page and dashboard embed. The host checks the route;
+//! the adapters also reauthorize before reading or returning cached history.
+mod panel;
+mod view;
+
+use crate::{Filter, Kind, Outcome, Recorder, Windows, VIEW};
+use bilibi_database::{Db, Error, Result};
+use bilibi_datetime::DisplayPolicy;
+use bilibi_locale::Locales;
+use bilibi_module_registry::{
+    contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS, ROUTES},
+    Contribution, Provenance,
+};
+use bilibi_tenancy::Scope;
+use bilibi_ui::{
+    list_state::{ParamNames, FILTERS_FORM},
+    page::{
+        LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
+        PageFuture, PageRequest,
+    },
+    params, BuiltinColumn, ColumnType, ListColumns, ListSpec, ListState,
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, LazyLock},
+    time::{Duration, SystemTime},
+};
+
+const PATH: &str = "/system/performance";
+const SIZES: [u64; 4] = [25, 50, 100, 300];
+static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        page_sizes: SIZES.to_vec(),
+        page_size_aliases: vec!["perPage".into()],
+        param_names: ParamNames {
+            search: "identity".into(),
+            ..ParamNames::default()
+        },
+        filters: BTreeMap::from([
+            (
+                "kind".into(),
+                bilibi_ui::Filter::one_of(&["", "request", "event", "job", "runtime"], ""),
+            ),
+            (
+                "outcome".into(),
+                bilibi_ui::Filter::one_of(&["", "ok", "error", "cancelled", "discarded"], ""),
+            ),
+            (
+                "range".into(),
+                bilibi_ui::Filter::one_of(&["all", "1h", "24h", "7d"], "all"),
+            ),
+        ]),
+        omit_blank: vec!["search".into(), "kind".into(), "outcome".into()],
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("performance list spec")
+});
+
+#[derive(Clone)]
+pub(super) struct Pages {
+    pub recorder: Arc<Recorder>,
+    pub db: Db,
+    pub display: Arc<DisplayPolicy>,
+    pub locales: Arc<Locales>,
+}
+impl Pages {
+    async fn authorize(&self, scope: &Scope) -> Result<()> {
+        let client = self.db.get().await?;
+        bilibi_authz::authorize_operator(&**client, scope, VIEW).await?;
+        Ok(())
+    }
+}
+
+struct Index {
+    pages: Pages,
+    list: ListState,
+    regressions: ListColumns,
+    samples: ListColumns,
+    data: Option<view::Data>,
+}
+fn builtin(id: &str, label: &str, kind: ColumnType, right: bool) -> BuiltinColumn {
+    let mut column = BuiltinColumn::new(id, label);
+    column.kind = kind;
+    column.align_right = right;
+    column
+}
+impl Index {
+    fn new(pages: &Pages, query: &HashMap<String, String>) -> Result<Self> {
+        Ok(Self {
+            pages: pages.clone(),
+            list: parse(query)?,
+            regressions: ListColumns::mount(
+                "performance-regression-table",
+                vec![
+                    BuiltinColumn::new("identity", "Route / worker"),
+                    builtin("baseline", "Baseline avg", ColumnType::Float, true),
+                    builtin("current", "Current p95", ColumnType::Float, true),
+                    builtin("change", "Change", ColumnType::Float, true),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
+            samples: ListColumns::mount(
+                "performance-sample-table",
+                vec![
+                    builtin("observed_at", "Observed", ColumnType::Datetime, false),
+                    BuiltinColumn::new("kind", "Kind"),
+                    BuiltinColumn::new("identity", "Route / worker"),
+                    BuiltinColumn::new("outcome", "Outcome"),
+                    builtin("duration", "Duration", ColumnType::Integer, true),
+                    builtin("database", "DB", ColumnType::Integer, true),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
+            data: None,
+        })
+    }
+    fn filter(&self, now: SystemTime) -> Filter {
+        let seconds = match self.list.filters["range"].as_str() {
+            "1h" => Some(3600),
+            "24h" => Some(86400),
+            "7d" => Some(604800),
+            _ => None,
+        };
+        Filter {
+            page: self.list.page as i64,
+            page_size: self.list.page_size as i64,
+            kind: Kind::parse(&self.list.filters["kind"]),
+            outcome: Outcome::parse(&self.list.filters["outcome"]),
+            identity: (!self.list.search.is_empty()).then(|| self.list.search.clone()),
+            from: seconds.map(|s| now - Duration::from_secs(s)),
+            // Include everything retained when no relative range was requested.
+            to: seconds.map(|_| now),
+        }
+    }
+    async fn load(&mut self, scope: &Scope) -> Result<()> {
+        let now = SystemTime::now();
+        let hour = Duration::from_secs(3600);
+        let windows = Windows {
+            baseline_from: now - hour * 2,
+            baseline_to: now - hour,
+            current_from: now - hour,
+            current_to: now,
+            min_samples: 5,
+            limit: 10,
+        };
+        let recorder = &self.pages.recorder;
+        let filter = self.filter(now);
+        let (diagnostics, mut samples, regressions) = tokio::join!(
+            recorder.diagnostics(),
+            recorder.list_samples(&filter),
+            recorder.regressions(&windows),
+        );
+        if let Ok(page) = &samples {
+            if self
+                .list
+                .clamp_to_last_page((page.total as u64).div_ceil(self.list.page_size), true)
+            {
+                samples = recorder.list_samples(&self.filter(now)).await;
+            }
+        }
+        let client = self.pages.db.get().await?;
+        let locale = self
+            .pages
+            .locales
+            .resolve(&**client, scope, None)
+            .await?
+            .locale;
+        let display = self
+            .pages
+            .display
+            .display(&**client, scope, None, locale)
+            .await?;
+        self.data = Some(view::Data {
+            diagnostics,
+            samples,
+            regressions,
+            display,
+        });
+        Ok(())
+    }
+    fn body(&self) -> Result<String> {
+        view::page(
+            &self.list,
+            &self.samples,
+            &self.regressions,
+            self.data.as_ref().ok_or(Error::Internal)?,
+        )
+    }
+}
+fn parse(query: &HashMap<String, String>) -> Result<ListState> {
+    let mut state = ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?;
+    // Storage bounds UTF-8 bytes; truncate at a character boundary too.
+    state.search = state
+        .search
+        .trim()
+        .chars()
+        .scan(0, |bytes, c| {
+            *bytes += c.len_utf8();
+            (*bytes <= 255).then_some(c)
+        })
+        .collect();
+    Ok(state)
+}
+impl Page<Scope, Error> for Pages {
+    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
+        Box::pin(async move {
+            if request.operation != "index" {
+                return Err(Error::NotFound);
+            }
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            self.authorize(scope).await?;
+            let mut index = Index::new(self, request.query)?;
+            index.load(scope).await?;
+            Ok(PageBody {
+                html: index.body()?,
+                live: true,
+            })
+        })
+    }
+    fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
+        Box::pin(async move {
+            self.authorize(request.scope.ok_or(Error::Unauthorized)?)
+                .await?;
+            let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+                "index" => Box::new(Index::new(self, request.query)?),
+                "health" => Box::new(panel::HealthPanel::new(self, &request)?),
+                _ => return Err(Error::NotFound),
+            };
+            Ok(Some(state))
+        })
+    }
+}
+impl LiveState<Scope, Error> for Index {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            self.pages.authorize(request.scope).await?;
+            let mut reload = true;
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(values) => self.list = parse(values)?,
+                LiveInput::Event(value) => match value.get("type").and_then(|v| v.as_str()) {
+                    Some("filters") => {
+                        let mut posted = params::form_values(value, FILTERS_FORM);
+                        if let Some(identity) = posted.remove("identity") {
+                            posted.insert("search".into(), identity);
+                        }
+                        self.list.apply_filters(&posted);
+                        self.list = parse(&self.list.to_params())?;
+                    }
+                    Some("page") => self
+                        .list
+                        .put_page(value.get("page").and_then(|v| v.as_str())),
+                    Some(event @ ("regressions_grid" | "samples_grid")) => {
+                        let values = value
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|(key, v)| {
+                                let text = match v {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    serde_json::Value::Number(n) => n.to_string(),
+                                    _ => return None,
+                                };
+                                Some((key.clone(), text))
+                            })
+                            .collect();
+                        if event == "samples_grid" {
+                            self.samples.handle(&values);
+                        } else {
+                            self.regressions.handle(&values);
+                        }
+                        reload = false;
+                    }
+                    _ => return Err(Error::Invalid),
+                },
+            }
+            if reload || self.data.is_none() {
+                self.load(request.scope).await?;
+            }
+            Ok(LiveBody {
+                html: self.body()?,
+                query: self.list.to_params(),
+                ..LiveBody::default()
+            })
+        })
+    }
+}
+
+bilibi_menu::contribute!(
+    "base/perf",
+    bilibi_menu::MenuItem::page("admin.system.performance", "Performance", PATH)
+        .icon("chart-bar")
+        .under("admin.system.diagnostics")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(20)
+);
+bilibi_dashboard::contribute!(
+    "base/perf",
+    bilibi_dashboard::Widget::new(
+        "base-perf-health",
+        "Performance health",
+        "dashboard.performance"
+    )
+    .order(50)
+    .requires(VIEW)
+    .refresh(60_000)
+);
+inventory::submit! { Contribution::new(ROUTES, "base/perf.index", Provenance {module:"base/perf", source:file!(), line:line!()}, &Route {
+    method:Method::Get, path:PATH, service:"base/perf.pages", operation:"index", access:Access::OperatorCapability(VIEW), framed:true,
+}) }
+inventory::submit! { Contribution::new(EMBEDS, "dashboard.performance", Provenance {module:"base/perf", source:file!(), line:line!()}, &Embed {
+    slot:"dashboard.performance", context:EmbedContext::Dashboard, service:"base/perf.pages", operation:"health", access:Access::SignedIn,
+}) }

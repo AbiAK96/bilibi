@@ -8,6 +8,7 @@ mod recorder;
 mod retention;
 mod runtime;
 mod sample;
+mod web;
 
 pub use bilibi_database::timing;
 pub use observe::Finish;
@@ -111,7 +112,7 @@ setting!(
 
 inventory::submit! {
     Module { id: "base/perf", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/queue", "base/schedule", "base/settings"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/queue", "base/schedule", "base/settings", "base/dashboard", "base/tenancy", "base/datetime", "base/locale", "base/menu", "base/ui"],
         migrations: &[("base-perf-001", include_str!("../migrations/001-perf.sql"))],
         services: &[
             Service { id: "base/perf.recorder", factory: |services| {
@@ -121,6 +122,14 @@ inventory::submit! {
                     Config::default(),
                 ).map_err(|error| RegistryError::Service(error.to_string()))?;
                 Ok(Arc::new(recorder))
+            } },
+            Service { id: "base/perf.pages", factory: |services| {
+                Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages {
+                    recorder: services.get("base/perf.recorder")?,
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
             } },
             Service { id: "base/perf.jobs", factory: |services| {
                 Ok(Arc::new(bilibi_queue::execution::ObserverService(Arc::new(jobs::Jobs(services.get("base/perf.recorder")?)))))

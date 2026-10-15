@@ -634,15 +634,23 @@ dependencies = [
 name = "bilibi-perf"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
+ "bilibi-dashboard",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-queue",
  "bilibi-schedule",
  "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
+ "jiff",
  "serde_json",
  "tokio",
  "tokio-postgres",

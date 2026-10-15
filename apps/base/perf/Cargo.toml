@@ -12,6 +12,14 @@ bilibi-module-registry.workspace = true
 bilibi-queue = { path = "../queue" }
 bilibi-schedule = { path = "../schedule" }
 bilibi-settings = { path = "../settings" }
+bilibi-dashboard = { path = "../dashboard" }
+bilibi-tenancy = { path = "../tenancy" }
+bilibi-datetime = { path = "../datetime" }
+bilibi-locale = { path = "../locale" }
+bilibi-menu.workspace = true
+bilibi-ui.workspace = true
+askama.workspace = true
+jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 inventory.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
