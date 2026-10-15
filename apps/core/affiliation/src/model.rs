@@ -56,8 +56,16 @@ impl Affiliation {
         }
         self
     }
-    pub(crate) fn json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("Affiliation serializes")
+    /// Audit masking addresses catalog field names at the top level.
+    /// Keep the public K0-shaped read model, but flatten its work fields here.
+    pub(crate) fn audit_values(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).expect("Affiliation serializes");
+        let fields = value.as_object_mut().expect("Affiliation is an object");
+        if let Some(serde_json::Value::Object(work)) = fields.remove("affiliation") {
+            fields.extend(work);
+        }
+        fields.remove("restricted");
+        value
     }
 }
 

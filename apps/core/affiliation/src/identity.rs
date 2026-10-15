@@ -132,7 +132,7 @@ pub async fn create(
         let to = input.dates.to().map(CalendarDate::as_str);
         let row = sql.query_one(&format!("INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title,work_email,work_phone,effective_from,effective_to) VALUES($1,$2,$3,$4,$5,$6,$7::text::date,$8::text::date) RETURNING {COLUMNS}"), &[&tenant, &input.person_id.get(), &input.organisation_id.get(), &input.title, &input.work_email, &input.work_phone, &from, &to]).await?;
         let affiliation = Affiliation::from_row(&row)?;
-        let change = Change { kind: "affiliation".into(), id: affiliation.id.get(), old: Value::Null, new: affiliation.json() };
+        let change = Change { kind: "affiliation".into(), id: affiliation.id.get(), old: Value::Null, new: affiliation.audit_values() };
         Ok((affiliation, vec![change]))
     })).await?;
     publish(tx, tenant, &affiliation);
@@ -226,7 +226,7 @@ async fn save(
         let to = input.dates.to().map(CalendarDate::as_str);
         let row = sql.query_one(&format!("UPDATE person_affiliations SET title=$3,work_email=$4,work_phone=$5,effective_from=$6::text::date,effective_to=$7::text::date,unlinked_at=CASE WHEN $8 THEN now() ELSE unlinked_at END,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &old.id.get(), &input.title, &input.work_email, &input.work_phone, &from, &to, &unlink]).await?;
         let affiliation = Affiliation::from_row(&row)?;
-        let change = Change { kind: "affiliation".into(), id: old.id.get(), old: old.json(), new: affiliation.json() };
+        let change = Change { kind: "affiliation".into(), id: old.id.get(), old: old.audit_values(), new: affiliation.audit_values() };
         Ok((affiliation, vec![change]))
     })).await?;
     publish(tx, tenant, &affiliation);
