@@ -14,8 +14,8 @@
 //!
 //! The trigger's `aria-expanded` is the single record of open, written by the
 //! shared `DisclosureDismiss` hook on every path (click toggles; Escape, a
-//! click outside and focus leaving close) and kept by the patcher
-//! (`data-live-ignore`); the panel shows while it says so. The server does not
+//! click outside and focus leaving close) and kept by the patcher through the
+//! wrapper's `data-live-expanded`; the panel shows while it says so. The server does not
 //! track open: every click reaches it as `toggle` and every host update as a
 //! refresh, and each re-reads the trail, so what the reader sees on opening is
 //! the record's history as of that moment, and an open panel follows an

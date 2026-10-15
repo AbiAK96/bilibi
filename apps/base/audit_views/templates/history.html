@@ -1,10 +1,10 @@
 {#- The record-history disclosure (Bilimbi `Audit.Web.RecordHistory` render).
     The trigger's aria-expanded is the one record of open, written by the
-    DisclosureDismiss hook and kept across patches by data-live-ignore; the
-    panel derives from it in CSS (peer-aria-expanded). -#}
+    DisclosureDismiss hook and kept across patches by the wrapper's
+    data-live-expanded; the panel derives from it in CSS (peer-aria-expanded). -#}
 {%- import "components.html" as ui -%}
-<div id="{{ id }}" data-hook="DisclosureDismiss" class="relative inline-block text-left">
-<button type="button" id="{{ id }}-toggle" title="History" data-event="toggle" data-target="{{ id }}" data-live-ignore aria-expanded="false" aria-controls="{{ id }}-panel" class="peer {{ trigger_class }} cursor-pointer">{% call ui::icon(name="history", class="size-4") %}{% endcall %} History</button>
+<div id="{{ id }}" data-hook="DisclosureDismiss" data-live-expanded class="relative inline-block text-left">
+<button type="button" id="{{ id }}-toggle" title="History" data-event="toggle" data-target="{{ id }}" aria-expanded="false" aria-controls="{{ id }}-panel" class="peer {{ trigger_class }} cursor-pointer">{% call ui::icon(name="history", class="size-4") %}{% endcall %} History</button>
 <div id="{{ id }}-panel" tabindex="-1" aria-labelledby="{{ id }}-heading" class="hidden peer-aria-expanded:block absolute right-0 z-40 mt-2 w-[min(34rem,calc(100vw-2rem))] rounded-xl border border-line bg-surface p-3 text-left shadow-xl shadow-ink/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">
 <div class="flex items-start justify-between gap-3 border-b border-line pb-2"><div><h2 id="{{ id }}-heading" class="text-sm font-semibold text-ink">{{ title }}</h2><p class="text-xs text-ink-muted">{{ count }}</p></div></div>
 {% if !entries.is_empty() %}<ol class="mt-2 max-h-96 space-y-2 overflow-y-auto">

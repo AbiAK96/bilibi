@@ -76,11 +76,13 @@ PanelSpec { id: "company-record-history".into(), embed: "audit.record-history".i
 `kinds` is the comma-separated list of audit kinds the record is written under
 (its current one and a legacy one), `panel` the spec's own element id, and an
 optional `title` query renames the heading. The page renders an empty element
-with that id where the control goes; a reader without `admin.audit.log.list`
-keeps the empty anchor. The trigger's `aria-expanded` is the one record of
+with that id where the control goes, inside a `data-live-ignore` slot
+(`<div data-live-ignore><div id="company-record-history"></div></div>`, as the
+dashboard hosts its panels) so the page's own patches leave the mounted panel
+alone; a reader without `admin.audit.log.list` keeps the empty anchor. The trigger's `aria-expanded` is the one record of
 open, written by the shared `DisclosureDismiss` hook (click toggles; Escape, a
-click outside and focus leaving close) and kept across patches by
-`data-live-ignore`; the server re-reads the trail on every click and every host
+click outside and focus leaving close) and kept across patches by the
+wrapper's `data-live-expanded`; the server re-reads the trail on every click and every host
 update, so an open panel follows an in-page edit. The Company detail page
 hosts it (`apps/core/company/src/web.rs`).
 

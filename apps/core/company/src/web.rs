@@ -287,8 +287,9 @@ impl bilibi_ui::page::LiveState<bilibi_security::Scope, bilibi_database::Error> 
     /// The detail page carries the Audit record-history disclosure
     /// (`base/audit_views`, embed `audit.record-history`) in its header, as
     /// Bilimbi's company page does; `kinds` are the audit kinds a company is
-    /// recorded under. A reader without the audit capability gets an empty
-    /// anchor.
+    /// recorded under. The template keeps the anchor in a `data-live-ignore`
+    /// slot so this page's patches leave the mounted panel alone. A reader
+    /// without the audit capability gets an empty anchor.
     fn panels(&self) -> Vec<bilibi_ui::page::PanelSpec> {
         let Some(id) = self.id else {
             return Vec::new();
