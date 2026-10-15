@@ -109,8 +109,14 @@ The socket processes events sequentially with a 16 KiB message/frame limit.
 
 Forms raise intent with `data-event`: `params` sends the form values as a
 params update, `save` the Company edit shape, and any other name an event of
-that type carrying the form values; `data-target` picks a mounted panel. A
-`bilibi:event` may carry `{target, payload}` or the controller shape
+that type carrying the form values; `data-target` picks a mounted panel. A form
+also marked `data-change` (Bilimbi's `phx-change`) raises the same intent as
+its values change: at once for a select, after a control's `data-debounce`
+milliseconds of typing, and at once on commit or Enter; identical values raised
+twice within 500ms are sent once, and the form is not reset afterwards. Buttons
+send their `data-*` values (`data-page="3"` becomes `page: "3"`); only Company's
+relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
+their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape
 `{event, ...values}`, which becomes `{type: event, ...values}` aimed at the
 nearest `data-target` ancestor.
 

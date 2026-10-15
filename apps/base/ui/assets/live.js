@@ -442,6 +442,7 @@
     const form = event.target;
     if (!form.dataset.event) return;
     event.preventDefault();
+    if (form.hasAttribute('data-change')) return sendChange(form);
     const values = Object.fromEntries(new FormData(form));
     const target = form.dataset.target || 'page';
     const source = event.submitter || form;
@@ -455,12 +456,50 @@
     }
   });
 
+  // A form also marked data-change raises its event as its values change (the
+  // counterpart of Bilimbi's phx-change): at once for a select or checkbox,
+  // after the control's data-debounce milliseconds of typing, and at once when
+  // a debounced control commits (blur, Enter). Values are sent without the
+  // accepted-submission reset, so typing that continues is never overwritten.
+  // Enter both commits the control and submits, so the same values raised
+  // twice within 500ms are sent once.
+  const changeTimers = new WeakMap();
+  const changeSent = new WeakMap();
+  function sendChange(form) {
+    clearTimeout(changeTimers.get(form));
+    const type = form.dataset.event;
+    const values = Object.fromEntries(new FormData(form));
+    const key = JSON.stringify(values);
+    const last = changeSent.get(form);
+    if (last && last.key === key && performance.now() - last.at < 500) return;
+    changeSent.set(form, {key, at: performance.now()});
+    if (type === 'params') enqueue({type: 'params', params: values}, {source: form, loading: true});
+    else enqueue({type: 'event', target: form.dataset.target || 'page', payload: {type, ...values}}, {source: form});
+  }
+  for (const kind of ['input', 'change']) {
+    document.addEventListener(kind, (event) => {
+      const control = event.target;
+      const form = control.form;
+      if (!form || !form.dataset.event || !form.hasAttribute('data-change')) return;
+      const debounce = Number(control.dataset.debounce || 0);
+      if (kind === 'input' && !debounce) return;
+      if (kind === 'input') {
+        clearTimeout(changeTimers.get(form));
+        changeTimers.set(form, setTimeout(() => sendChange(form), debounce));
+      }
+      else sendChange(form);
+    });
+  }
+
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-event]');
     if (!button || button.disabled) return;
     const {event: type, target, field, delta} = button.dataset;
-    const payload = type === 'sort' ? {type, field} : type === 'page' ? {type, delta: Number(delta)} : {type};
-    if (!['sort', 'page', 'read'].includes(type)) {
+    // `page` with data-delta is the relative pager; with data-page it carries
+    // the absolute page as an ordinary value.
+    const relative = type === 'page' && delta !== undefined;
+    const payload = type === 'sort' && field !== undefined ? {type, field} : relative ? {type, delta: Number(delta)} : {type};
+    if (!(type === 'read' || relative || (type === 'sort' && field !== undefined))) {
       // Preserve module values (the counterpart of Bilimbi's phx-value-*).
       for (const [key, value] of Object.entries(button.dataset)) {
         if (['event', 'target', 'working', 'workingFrom', 'hook', 'liveBusy'].includes(key)) continue;
