@@ -111,8 +111,8 @@ controls. Human/agent is identity kind; current/retired is identity availability
 Retirement preserves history and is independent of HR employment.
 
 The directory composes shared `ListState` and Grid `PageColumns`, with bounded
-25/50/100 row pages, search through visible contacts, kind and retired filters,
-name/kind/creation-date sorting and stable ID ties. Search, filters, sort,
+25/50/100/300 row pages, search through visible contacts, kind and retired filters,
+name/kind/identity/creation-date sorting and stable ID ties. Search, filters, sort,
 pagination and Grid `cols/lens/z/since` state survive reload and Back; column
 arrangements use shared per-account Grid persistence. Add personal email/phone
 through the notch; fresh restrictions prune walked columns and suggestions.
@@ -151,3 +151,13 @@ Sign in, open the reference route with a Person ID created through `/persons/new
 edit a personal contact, and verify it in the ordinary Person page. The reference
 host resolves the Person through its public API on every update; a production
 company host additionally resolves its owned affiliation before supplying that ID.
+
+The directory follows Bilimbi Employee Index's FlexTable configuration, including
+its 300-row page size and identity/status heading sort, while omitting the HR
+columns under the approved Person model. Large pages load walked columns in
+batches bounded by Grid's `query::MAX_ROWS`; they retain every visible row.
+The customization notch offers show/hide, drag reorder, row-height steps,
+Compact/Normal presets and Reset. The account's column order, lenses and row
+height are saved automatically by shared `PageViews`; an explicit column URL
+wins on load. Bilimbi documents no named/shared Grid views, so the persisted
+account arrangement and shareable URL are the saved-view contract here too.

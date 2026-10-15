@@ -152,11 +152,11 @@ impl Default for Search {
 }
 impl Search {
     pub(crate) fn check(&self) -> Result<()> {
-        if !["name", "kind", "created_at"].contains(&self.sort.as_str())
+        if !["name", "kind", "state", "created_at"].contains(&self.sort.as_str())
             || self.search.chars().count() > 200
             || self.search.contains('\0')
             || !(1..=1_000_000).contains(&self.page)
-            || !(1..=100).contains(&self.page_size)
+            || !(1..=300).contains(&self.page_size)
         {
             return Err(Error::Invalid);
         }

@@ -71,6 +71,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     // through a hidden field, and ties retain stable IDs across pages.
     let sort = match query.sort.as_str() {
         "kind" => "kind",
+        "state" => "(retired_at IS NOT NULL)",
         "created_at" => "created_at",
         _ => "lower(name)",
     };

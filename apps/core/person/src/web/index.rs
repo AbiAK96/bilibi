@@ -11,12 +11,13 @@ use bilibi_ui::{
 use serde_json::json;
 use std::{collections::BTreeMap, sync::LazyLock};
 
-const SIZES: [u64; 3] = [25, 50, 100];
+const SIZES: [u64; 4] = [25, 50, 100, 300];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
             ("kind".into(), SortDir::Asc),
+            ("state".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
         ]),
         default_sort: Some("name".into()),
@@ -65,7 +66,7 @@ impl Index {
             vec![
                 BuiltinColumn::new("name", "Name").sortable("name"),
                 BuiltinColumn::new("kind", "Kind").sortable("kind"),
-                BuiltinColumn::new("state", "Identity"),
+                BuiltinColumn::new("state", "Identity").sortable("state"),
             ],
         )
         .map_err(|_| Error::Internal)?;
@@ -105,17 +106,21 @@ impl Index {
                 .search(scope, &search(&self.list))
                 .await?;
         }
-        self.columns
-            .load(
-                scope,
-                &page
-                    .entries
-                    .iter()
-                    .map(|p| json!(p.id.get()))
-                    .collect::<Vec<_>>(),
-                &self.pages.display(scope).await?,
-            )
-            .await?;
+        let keys: Vec<_> = page.entries.iter().map(|p| json!(p.id.get())).collect();
+        let display = self.pages.display(scope).await?;
+        // Bilimbi offers 300-row pages; Grid bounds each projection to 100
+        // IDs. Compose the page from bounded batches without weakening that
+        // shared query limit or dropping its walked columns on a large page.
+        if keys.is_empty() {
+            self.columns.load(scope, &[], &display).await?;
+        } else {
+            let mut rows = Vec::with_capacity(keys.len());
+            for batch in keys.chunks(bilibi_grid::query::MAX_ROWS) {
+                self.columns.load(scope, batch, &display).await?;
+                rows.append(&mut self.columns.rows);
+            }
+            self.columns.rows = rows;
+        }
         let mut actions = Html::EMPTY;
         if self.pages.allowed(scope, CREATE).await? {
             actions.push(&render(CreateButton {
