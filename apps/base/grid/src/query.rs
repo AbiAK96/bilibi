@@ -191,9 +191,8 @@ pub async fn project_lenses<S: AsRef<str>>(
     }
     let today = today();
     let months = trend_months(today);
-    let wanted = |specs: &[String], column: &Column| {
-        lens::trends(column) && specs.iter().any(|spec| *spec == column.spec)
-    };
+    let wanted =
+        |specs: &[String], column: &Column| lens::trends(column) && specs.contains(&column.spec);
     let trend: Vec<&Column> = columns
         .iter()
         .filter(|c| wanted(&lenses.trend, c))
