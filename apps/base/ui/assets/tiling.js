@@ -46,8 +46,7 @@
 //     and the server answers with `tile_navigate` for each following tile,
 //     whose path is checked to be this origin's before the frame goes there.
 //
-// Focus follows a click, never the pointer. Saved layouts (`1` to `9`) join
-// the mode with the module that serves them.
+// Focus follows a click, never the pointer.
 (() => {
   const LEADER_KEY = '.';
   const DIRECTIONS = {
@@ -446,6 +445,12 @@
           }
           return true;
         default:
+          // `1` to `9`: the n-th saved layout, opened at its own address.
+          if (/^[1-9]$/.test(event.key)) {
+            this.expectFocus();
+            this.emit('open_layout', {n: Number(event.key)});
+            return true;
+          }
           return false;
       }
     },

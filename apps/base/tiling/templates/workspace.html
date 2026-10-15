@@ -13,12 +13,14 @@
 {%- import "tabs.html" as tabstrip -%}
 {%- import "dialog.html" as dialog -%}
 {%- import "tiling.html" as tiling -%}
+{%- import "forms.html" as form -%}
 <div data-shared-ui class="flex h-full min-h-0 flex-col">
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {#- Bilimbi puts these in the shell's top bar (`topbar_actions`); Bilibi's
     shell has no such slot yet, so they head the workspace instead. -#}
 <div id="workspace-actions" class="flex shrink-0 items-center justify-end gap-1">
 {% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
+{% call ui::icon_button(icon="retain", label="Saved layouts", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
 </div>
 <div id="workspace" data-hook="Tiling" data-history="params" data-focused="{{ focused }}" data-follows="{{ follows }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
 {%- if !tiles.is_empty() %}
@@ -57,5 +59,13 @@
 {%- if pages.is_empty() %}{% call lists::empty_state(e=picker_empty) %}{% endcall %}{% endif %}
 </div>
 {% endcall %}
+{%- endif %}
+{#- The saved layouts dialog; its body is `workspace_layouts.html`, rendered
+    by the page so the two FlexTables inside it keep their typed models. -#}
+{%- if let Some(layouts) = layouts %}
+{% call dialog::modal(id="workspace-layouts", title="Saved layouts", cancel_event="close_layouts", width=bilibi_ui::ModalWidth::Wide, description="Layouts are saved for your account. In tiling mode, the keys 1 to 9 open the first nine.", owns_flash=true, messages=flash) %}{{ layouts|safe }}{% endcall %}
+{%- endif %}
+{%- if let Some(consequence) = delete_consequence %}
+{% call dialog::confirm_dialog(id="workspace-delete-layout", consequence=consequence, detail="Its address stops working. The pages it showed are unaffected. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm_delete_layout", cancel_event="cancel_delete_layout") %}{% endcall %}
 {%- endif %}
 </div>

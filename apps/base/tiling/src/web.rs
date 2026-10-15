@@ -3,12 +3,18 @@
 //!
 //! The tree is always in the URL: `?t=` carries the layout after every change,
 //! so a reload or a copied address reproduces the screen, and Back and Forward
-//! work at the workspace level. `?open=` is how a page is tiled in place: the
-//! sidebar's tile control links to `/workspace?t=<that page>&inplace=1&open=<the
-//! clicked page>`, the page in `open` takes half of the largest tile, and the
-//! address is replaced by the resulting tree, so `open` is never replayed by a
-//! reload. `inplace=1` marks a workspace entered from a page: closed down to
-//! one tile, it leaves for that page's own address.
+//! work at the workspace level. `/workspace/{slug}` opens a saved layout,
+//! `/workspace/shared/{shared}` a layout the company published, and
+//! `/workspace` alone the account's default layout, else an empty workspace.
+//! The page moves between these three routes without remounting (it returns
+//! `LiveBody.path`), so saving, opening or deleting a layout keeps the frames
+//! on screen. `?open=` is how a page is tiled in place: the sidebar's tile
+//! control links to `/workspace?t=<that page>&inplace=1&open=<the clicked
+//! page>`, the page in `open` takes half of the largest tile, and the address
+//! is replaced by the resulting tree, so `open` is never replayed by a reload.
+//! `inplace=1` marks a workspace entered from a page: closed down to one tile,
+//! it leaves for that page's own address. A saved layout's address never
+//! carries it.
 //!
 //! Each tile shows its page in a same-origin frame at the page's own URL; the
 //! tile is judged by that route's access before the frame is drawn, so a tile
@@ -19,8 +25,8 @@
 //! its page is called; the tree records the path and replaces the address,
 //! so Back steps through the workspace's own changes and then leaves it.
 //! Back and Forward within the workspace arrive as params (`data-history`),
-//! and the tree read back is reconciled with the one on screen, so the frames
-//! that stay keep their documents.
+//! route parameters included, and the tree read back is reconciled with the
+//! one on screen, so the frames that stay keep their documents.
 //!
 //! Tiles talk through the follow channel (base/ui `src/workspace.rs`). A tile
 //! showing one record's page can follow selections: the tree keeps that page's
@@ -30,7 +36,15 @@
 //! (`tile_navigate`). The kinds the tiles follow are rendered as
 //! `data-follows`, which the hook passes to every frame, so a list whose kind
 //! is followed selects instead of navigating.
+//!
+//! The saved layouts dialog is the one place layouts are managed: save the
+//! current tiles under a name, update, rename, switch a saved layout between
+//! dwindle and master, make one the default, delete, open one shared with
+//! the account or copy it to the account's own. Every write is a self-service
+//! write to the account's own settings (`layouts::Layouts`); publishing is
+//! the shared-layouts screen's.
 use crate::layout::{At, Direction, Layout, Leaf, Node, Rect, Side, DEFAULT_VIEWPORT};
+use crate::layouts::{Entry, LayoutError, Layouts, Mode, Refusal, Saved, PUBLISH};
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_menu::Menu;
@@ -42,7 +56,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    Button, ButtonVariant, FlashMap, Html, StatusKind, Tab, NO_FLASH,
+    BuiltinColumn, Button, ButtonVariant, CommitStates, CommitStatus, Field, FlashMap, FlexRow,
+    FlexTable, Html, IconButton, IconKind, InlineEdit, InlineField, ListColumns, StatusKind, Tab,
+    TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use std::{
@@ -50,18 +66,30 @@ use std::{
     sync::Arc,
 };
 
-const WORKSPACE: &str = "/workspace";
+pub(crate) const WORKSPACE: &str = "/workspace";
+pub(crate) const SHARED_LAYOUTS: &str = "/workspace/shared-layouts";
 
-struct Core {
-    db: Db,
+pub(crate) struct Core {
+    pub(crate) db: Db,
     menu: Arc<Menu>,
     /// Every discovered route with the module that contributes it.
     routes: Vec<(&'static str, &'static Route)>,
+    pub(crate) layouts: Arc<Layouts>,
 }
 pub struct Pages(Arc<Core>);
 impl Pages {
-    pub fn new(db: Db, menu: Arc<Menu>, routes: Vec<(&'static str, &'static Route)>) -> Self {
-        Self(Arc::new(Core { db, menu, routes }))
+    pub fn new(
+        db: Db,
+        menu: Arc<Menu>,
+        routes: Vec<(&'static str, &'static Route)>,
+        layouts: Arc<Layouts>,
+    ) -> Self {
+        Self(Arc::new(Core {
+            db,
+            menu,
+            routes,
+            layouts,
+        }))
     }
 }
 
@@ -83,14 +111,17 @@ struct PickerPage {
 }
 
 /// The actor's standing, read once per render: the tiles and the picker are
-/// judged from it.
-struct Standing {
+/// judged from it, and the layouts the account can open are listed from it.
+pub(crate) struct Standing {
     capabilities: BTreeSet<&'static str>,
     operator: bool,
+    saved: Saved,
+    /// The company's shared layouts this account may see.
+    shared: Vec<Entry>,
 }
 
 impl Core {
-    async fn standing(&self, scope: &Scope) -> Result<Standing> {
+    pub(crate) async fn standing(&self, scope: &Scope) -> Result<Standing> {
         let client = self.db.get().await?;
         let capabilities = bilibi_authz::effective_capabilities(&**client, scope).await?;
         let operator = match bilibi_tenancy::prove_operator(&**client, scope).await {
@@ -98,9 +129,13 @@ impl Core {
             Err(Error::Forbidden) => false,
             Err(error) => return Err(error),
         };
+        let saved = self.layouts.saved(&**client, scope).await?;
+        let shared = self.layouts.shared_visible(&**client, scope).await?;
         Ok(Standing {
             capabilities,
             operator,
+            saved,
+            shared,
         })
     }
 
@@ -295,10 +330,59 @@ enum Event {
     AddTile {
         path: String,
     },
+    /// The tiling mode's `1` to `9`: the n-th saved layout.
+    OpenLayout {
+        n: u64,
+    },
+    OpenLayouts,
+    CloseLayouts,
+    SaveLayout {
+        #[serde(rename = "layout[label]")]
+        label: String,
+    },
+    UpdateLayout,
+    CopyLayout {
+        id: String,
+    },
+    /// The inline editor's save: the slug in `id`, the new label in `value`.
+    RenameLayout {
+        id: String,
+        value: String,
+    },
+    SetLayoutMode {
+        id: String,
+        mode: String,
+    },
+    DeleteLayout {
+        id: String,
+    },
+    CancelDeleteLayout,
+    ConfirmDeleteLayout,
+    SetDefaultLayout {
+        id: String,
+    },
+    ClearDefaultLayout,
+    SavedGrid {
+        #[serde(flatten)]
+        params: HashMap<String, String>,
+    },
+    SharedGrid {
+        #[serde(flatten)]
+        params: HashMap<String, String>,
+    },
     #[serde(rename = "clear-flash")]
     ClearFlash {
         key: String,
     },
+}
+
+/// Which address the workspace is at: an ad-hoc tree, a saved layout or a
+/// shared one. The address decides the route path the page answers at.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Address {
+    Adhoc,
+    Saved(String),
+    Shared(String),
 }
 
 /// The workspace one browser tab holds. Everything else is derived on render.
@@ -309,6 +393,7 @@ struct Workspace {
     /// Master mode keeps the first tile as master; a saved layout chooses it.
     master: bool,
     viewport: (f64, f64),
+    address: Address,
     in_place: bool,
     framed: bool,
     picker_open: bool,
@@ -321,24 +406,63 @@ struct Workspace {
     /// The names the frames report, by tile id; a tile is named by its path
     /// until its page reports.
     titles: HashMap<String, String>,
+    saved: Saved,
+    shared: Vec<Entry>,
+    can_publish: bool,
+    layouts_open: bool,
+    /// The saved layout a Delete asked about; the confirmation renders while
+    /// it is set.
+    pending_delete: Option<String>,
+    save_label: String,
+    save_error: Option<String>,
+    /// The outcome of each layout's last rename, by slug, shown on its field.
+    renames: CommitStates,
+    saved_columns: ListColumns,
+    shared_columns: ListColumns,
+}
+
+const SAVED_COLUMNS: &[(&str, &str)] = &[
+    ("label", "Name"),
+    ("default", "Opens with the workspace"),
+    ("layout_mode", "Tiling layout"),
+];
+const SHARED_COLUMNS: &[(&str, &str)] = &[("label", "Name"), ("audience", "Audience")];
+
+pub(crate) fn columns(id: &str, builtins: &[(&str, &str)]) -> Result<ListColumns> {
+    ListColumns::mount(
+        id,
+        builtins
+            .iter()
+            .map(|(id, label)| BuiltinColumn::new(id, label))
+            .collect(),
+    )
+    .map_err(|_| Error::Internal)
 }
 
 impl Workspace {
-    /// The workspace an address describes. `open` halves the largest tile of
-    /// the tree in `t`; every other parameter is ignored.
+    /// The workspace an address describes: `slug` and `shared` are the route's
+    /// parameters, `t` the tree, `open` a page to halve the largest tile with.
+    /// Every other parameter is ignored. `params` merges the route's path
+    /// parameters into the query, the path winning, which is how both a mount
+    /// and a Back step hand them over.
     fn load(
         core: &Core,
         standing: &Standing,
-        query: &HashMap<String, String>,
+        params: &HashMap<String, String>,
         framed: bool,
-    ) -> Self {
+    ) -> Result<Self> {
+        let address = match (params.get("shared"), params.get("slug")) {
+            (Some(shared), _) => Address::Shared(shared.clone()),
+            (None, Some(slug)) => Address::Saved(slug.clone()),
+            (None, None) => Address::Adhoc,
+        };
         let mut workspace = Self {
             layout: Layout::empty(),
             focused: None,
             monocle: false,
             master: false,
             viewport: DEFAULT_VIEWPORT,
-            in_place: query.get("inplace").is_some_and(|v| v == "1"),
+            in_place: address == Address::Adhoc && params.get("inplace").is_some_and(|v| v == "1"),
             framed,
             picker_open: false,
             picker_for: None,
@@ -346,25 +470,97 @@ impl Workspace {
             leave: None,
             pushes: Vec::new(),
             titles: HashMap::new(),
+            saved: standing.saved.clone(),
+            shared: standing.shared.clone(),
+            can_publish: standing.capabilities.contains(PUBLISH),
+            layouts_open: false,
+            pending_delete: None,
+            save_label: String::new(),
+            save_error: None,
+            renames: CommitStates::default(),
+            saved_columns: columns("workspace-saved-layouts", SAVED_COLUMNS)?,
+            shared_columns: columns("workspace-shared-table", SHARED_COLUMNS)?,
+            address,
         };
         if framed {
-            return workspace;
+            return Ok(workspace);
         }
-        match Layout::decode(query.get("t").map_or("", String::as_str)) {
-            Some(layout) => workspace.layout = layout,
+        let encoded = params.get("t").map(String::as_str);
+        match workspace.address.clone() {
+            Address::Shared(slug) => match workspace.shared.iter().find(|e| e.slug == slug) {
+                Some(entry) => {
+                    let tree = entry.tree.clone();
+                    workspace.apply(Mode::Dwindle, encoded.unwrap_or(&tree));
+                }
+                None => {
+                    workspace.address = Address::Adhoc;
+                    workspace.flash = Some((
+                        StatusKind::Error,
+                        "This shared workspace is not available.".into(),
+                    ));
+                }
+            },
+            Address::Saved(slug) => match workspace.saved.fetch(&slug) {
+                Some(entry) => {
+                    let (mode, tree) = (entry.layout, entry.tree.clone());
+                    workspace.apply(mode, encoded.unwrap_or(&tree));
+                }
+                None => {
+                    workspace.address = Address::Adhoc;
+                    workspace.flash = Some((
+                        StatusKind::Error,
+                        format!("There is no saved layout called “{slug}”."),
+                    ));
+                }
+            },
+            Address::Adhoc => match encoded {
+                Some(encoded) => workspace.apply(Mode::Dwindle, encoded),
+                // `/workspace` alone opens the account's default layout, at
+                // that layout's own address.
+                None => {
+                    if let Some(entry) = workspace
+                        .saved
+                        .default
+                        .clone()
+                        .and_then(|slug| workspace.saved.fetch(&slug).cloned())
+                    {
+                        workspace.address = Address::Saved(entry.slug.clone());
+                        workspace.apply(entry.layout, &entry.tree);
+                    }
+                }
+            },
+        }
+        if let Some(path) = params.get("open") {
+            workspace.open_page(core, standing, path);
+        }
+        Ok(workspace)
+    }
+
+    /// Reads an encoded tree into the workspace in `mode`. A tree that is not
+    /// yet master-shaped is rearranged for master mode, so a stack divider
+    /// the person moved keeps its ratio.
+    fn apply(&mut self, mode: Mode, encoded: &str) {
+        match Layout::decode(encoded) {
+            Some(incoming) => {
+                self.layout = self.layout.reconcile(incoming);
+                self.master = mode == Mode::Master;
+                if self.master && !self.layout.is_master() {
+                    self.layout.master();
+                }
+            }
             None => {
-                workspace.flash = Some((
+                self.flash = Some((
                     StatusKind::Error,
                     "The layout in the address could not be read, so the workspace opened empty."
                         .into(),
-                ))
+                ));
+                self.layout = Layout::empty();
+                self.master = false;
             }
         }
-        workspace.keep_focus();
-        if let Some(path) = query.get("open") {
-            workspace.open_page(core, standing, path);
-        }
-        workspace
+        self.titles
+            .retain(|id, _| self.layout.fetch_leaf(id).is_some());
+        self.keep_focus();
     }
 
     /// Tiles `path` in place: it takes half of the largest tile. It accepts
@@ -421,8 +617,71 @@ impl Workspace {
         }
     }
 
-    fn event(&mut self, core: &Core, standing: &Standing, event: Event) {
+    fn mode(&self) -> Mode {
+        if self.master {
+            Mode::Master
+        } else {
+            Mode::Dwindle
+        }
+    }
+
+    fn flash(&mut self, kind: StatusKind, message: impl Into<String>) {
+        self.flash = Some((kind, message.into()));
+    }
+
+    /// The saved and shared layouts, read again after a write.
+    async fn reload_layouts(&mut self, core: &Core, scope: &Scope) -> Result<()> {
+        let client = core.db.get().await?;
+        self.saved = core.layouts.saved(&**client, scope).await?;
+        self.shared = core.layouts.shared_visible(&**client, scope).await?;
+        Ok(())
+    }
+
+    /// Opens a saved layout at its own address, keeping the frames its tree
+    /// shares with the screen.
+    fn open_saved(&mut self, entry: &Entry) {
+        self.address = Address::Saved(entry.slug.clone());
+        self.in_place = false;
+        self.apply(entry.layout, &entry.tree);
+    }
+
+    /// A refused or failed layout write is the person's to read; only a lost
+    /// session ends the page.
+    fn refused(&mut self, error: LayoutError, failure: &str) -> Result<()> {
+        match error {
+            LayoutError::Storage(Error::Unauthorized) => Err(Error::Unauthorized),
+            LayoutError::Refused(Refusal::Label) => {
+                self.flash(StatusKind::Error, "A layout name is one to 60 characters.");
+                Ok(())
+            }
+            LayoutError::Refused(Refusal::Tree) => {
+                self.flash(
+                    StatusKind::Error,
+                    "Open at least one page before saving a layout.",
+                );
+                Ok(())
+            }
+            LayoutError::Refused(Refusal::Forbidden) => {
+                self.flash(StatusKind::Error, "You cannot manage shared workspaces.");
+                Ok(())
+            }
+            LayoutError::Refused(_) | LayoutError::Storage(_) => {
+                self.flash(StatusKind::Error, failure);
+                Ok(())
+            }
+        }
+    }
+
+    async fn event(
+        &mut self,
+        core: &Core,
+        standing: &Standing,
+        scope: &Scope,
+        event: Event,
+    ) -> Result<()> {
         let side = |side: &str| Side::parse(side);
+        // Only the most recent commit may say Saved.
+        self.renames.clear_saved();
         match event {
             Event::Viewport { w, h } => {
                 if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
@@ -479,11 +738,10 @@ impl Workspace {
                     self.layout.promote_master(&id);
                     self.focus(&id);
                 } else {
-                    self.flash = Some((
+                    self.flash(
                         StatusKind::Info,
-                        "This layout has no master tile. The saved layouts dialog switches a saved layout to master."
-                            .into(),
-                    ));
+                        "This layout has no master tile. The saved layouts dialog switches a saved layout to master.",
+                    );
                 }
             }
             // Closing down to one tile leaves a workspace entered by tiling in
@@ -538,7 +796,7 @@ impl Workspace {
             // record goes to that record's page, unless it is there already.
             Event::RecordSelected { kind, id } => {
                 if !bilibi_ui::workspace::fact(&kind, &id) {
-                    return;
+                    return Ok(());
                 }
                 let moves: Vec<(String, String)> = self
                     .layout
@@ -606,6 +864,204 @@ impl Workspace {
                     }
                 }
             }
+            Event::OpenLayout { n } => {
+                let entry = usize::try_from(n)
+                    .ok()
+                    .filter(|n| (1..=9).contains(n))
+                    .and_then(|n| self.saved.entries.get(n - 1).cloned());
+                if let Some(entry) = entry {
+                    self.open_saved(&entry);
+                }
+            }
+            Event::OpenLayouts => {
+                self.flash = None;
+                self.layouts_open = true;
+            }
+            Event::CloseLayouts => {
+                self.layouts_open = false;
+                self.pending_delete = None;
+            }
+            Event::SaveLayout { label } => {
+                self.save_label = label.clone();
+                self.save_error = None;
+                match core
+                    .layouts
+                    .save(scope, &label, &self.layout.encode(), Some(self.mode()))
+                    .await
+                {
+                    Ok(entry) => {
+                        self.reload_layouts(core, scope).await?;
+                        self.flash(
+                            StatusKind::Success,
+                            format!("Saved the layout “{}”.", entry.label),
+                        );
+                        self.layouts_open = false;
+                        self.save_label.clear();
+                        self.address = Address::Saved(entry.slug);
+                        self.in_place = false;
+                    }
+                    Err(LayoutError::Refused(Refusal::Label)) => {
+                        self.save_error =
+                            Some("Give the layout a name of up to 60 characters.".into());
+                    }
+                    Err(error) => self.refused(error, "The layout could not be saved.")?,
+                }
+            }
+            Event::UpdateLayout => {
+                if let Address::Saved(slug) = self.address.clone() {
+                    if let Some(entry) = self.saved.fetch(&slug).cloned() {
+                        match core
+                            .layouts
+                            .save(
+                                scope,
+                                &entry.label,
+                                &self.layout.encode(),
+                                Some(self.mode()),
+                            )
+                            .await
+                        {
+                            Ok(entry) => {
+                                self.reload_layouts(core, scope).await?;
+                                self.flash(
+                                    StatusKind::Success,
+                                    format!("Updated the layout “{}”.", entry.label),
+                                );
+                            }
+                            Err(error) => {
+                                self.refused(error, "The layout could not be updated.")?
+                            }
+                        }
+                    }
+                }
+            }
+            // A copy of a shared layout, named after it; the one on screen is
+            // copied as it is now.
+            Event::CopyLayout { id } => {
+                if let Some(entry) = self.shared.iter().find(|e| e.slug == id).cloned() {
+                    let tree = if self.address == Address::Shared(id.clone()) {
+                        self.layout.encode()
+                    } else {
+                        entry.tree.clone()
+                    };
+                    let label = copy_label(&self.saved, &entry.label);
+                    match core.layouts.save(scope, &label, &tree, None).await {
+                        Ok(copy) => {
+                            self.reload_layouts(core, scope).await?;
+                            self.flash(
+                                StatusKind::Success,
+                                "Copied the shared workspace to your layouts.",
+                            );
+                            if let Some(copy) = self.saved.fetch(&copy.slug).cloned() {
+                                self.open_saved(&copy);
+                            }
+                        }
+                        Err(error) => {
+                            self.refused(error, "The shared workspace could not be copied.")?
+                        }
+                    }
+                } else {
+                    self.flash(
+                        StatusKind::Error,
+                        "The shared workspace could not be copied.",
+                    );
+                }
+            }
+            // The outcome lands on the field itself, as every inline edit's does.
+            Event::RenameLayout { id, value } => {
+                match core.layouts.rename(scope, &id, &value).await {
+                    Ok(_) => {
+                        self.reload_layouts(core, scope).await?;
+                        self.renames.put(id, CommitStatus::Saved);
+                    }
+                    Err(LayoutError::Refused(Refusal::Label)) => self.renames.put(
+                        id,
+                        CommitStatus::refusal("the name", &value, &["is one to 60 characters"]),
+                    ),
+                    Err(LayoutError::Refused(Refusal::NotFound)) => {
+                        self.reload_layouts(core, scope).await?;
+                    }
+                    Err(LayoutError::Storage(Error::Unauthorized)) => {
+                        return Err(Error::Unauthorized)
+                    }
+                    Err(_) => self.renames.put(id, CommitStatus::failure()),
+                }
+            }
+            Event::SetLayoutMode { id, mode } => {
+                let Some(mode) = Mode::parse(&mode) else {
+                    return Ok(());
+                };
+                let Some(entry) = self.saved.fetch(&id).cloned() else {
+                    return Ok(());
+                };
+                let Some(mut stored) = Layout::decode(&entry.tree) else {
+                    return Ok(());
+                };
+                if mode == Mode::Master && entry.layout != Mode::Master {
+                    stored.master();
+                }
+                match core
+                    .layouts
+                    .set_layout(scope, &id, mode, &stored.encode())
+                    .await
+                {
+                    Ok(_) => {
+                        self.reload_layouts(core, scope).await?;
+                        if self.address == Address::Saved(id) {
+                            if mode == Mode::Master && !self.master {
+                                self.layout.master();
+                            }
+                            self.master = mode == Mode::Master;
+                        }
+                    }
+                    Err(error) => self.refused(error, "The layout could not be changed.")?,
+                }
+            }
+            Event::DeleteLayout { id } => {
+                if self.saved.fetch(&id).is_some() {
+                    self.flash = None;
+                    self.pending_delete = Some(id);
+                }
+            }
+            Event::CancelDeleteLayout => self.pending_delete = None,
+            Event::ConfirmDeleteLayout => {
+                if let Some(slug) = self.pending_delete.take() {
+                    match core.layouts.delete(scope, &slug).await {
+                        Ok(()) => {
+                            self.reload_layouts(core, scope).await?;
+                            self.flash(StatusKind::Success, "Deleted the layout.");
+                            if self.address == Address::Saved(slug) {
+                                self.address = Address::Adhoc;
+                            }
+                        }
+                        Err(error) => self.refused(error, "The layout could not be deleted.")?,
+                    }
+                }
+            }
+            Event::SetDefaultLayout { id } => {
+                match core.layouts.set_default(scope, Some(&id)).await {
+                    Ok(()) => {
+                        self.reload_layouts(core, scope).await?;
+                        self.flash(
+                            StatusKind::Success,
+                            "The workspace now opens with this layout.",
+                        );
+                    }
+                    Err(error) => self.refused(error, "The default layout could not be set.")?,
+                }
+            }
+            Event::ClearDefaultLayout => match core.layouts.set_default(scope, None).await {
+                Ok(()) => {
+                    self.reload_layouts(core, scope).await?;
+                    self.flash(StatusKind::Success, "The workspace now opens empty.");
+                }
+                Err(error) => self.refused(error, "The default layout could not be cleared.")?,
+            },
+            Event::SavedGrid { params } => {
+                let _ = self.saved_columns.handle(&params);
+            }
+            Event::SharedGrid { params } => {
+                let _ = self.shared_columns.handle(&params);
+            }
             Event::ClearFlash { key } => {
                 if self
                     .flash
@@ -616,15 +1072,25 @@ impl Workspace {
                 }
             }
         }
+        Ok(())
     }
 
-    /// The address that reproduces this workspace.
+    /// The route path this workspace answers at.
+    fn path(&self) -> String {
+        match &self.address {
+            Address::Adhoc => WORKSPACE.to_owned(),
+            Address::Saved(slug) => format!("{WORKSPACE}/{slug}"),
+            Address::Shared(slug) => format!("{WORKSPACE}/shared/{slug}"),
+        }
+    }
+
+    /// The query that, with the path, reproduces this workspace.
     fn query(&self) -> HashMap<String, String> {
         let mut query = HashMap::new();
         let encoded = self.layout.encode();
         if !encoded.is_empty() {
             query.insert("t".to_owned(), encoded);
-            if self.in_place {
+            if self.in_place && self.address == Address::Adhoc {
                 query.insert("inplace".to_owned(), "1".to_owned());
             }
         }
@@ -773,12 +1239,21 @@ impl Workspace {
             state.id = "workspace-picker-empty".into();
             state
         };
+        let layouts = if self.layouts_open {
+            Some(self.layouts_dialog(!tiles.is_empty())?)
+        } else {
+            None
+        };
+        let delete_consequence = self
+            .pending_delete
+            .as_deref()
+            .map(|slug| format!("The layout “{}” will be deleted.", self.saved.label(slug)));
         WorkspaceView {
             flash,
             follows: core.follow_kinds(&self.layout).join(" "),
             focused: self.focused.clone().unwrap_or_default(),
             monocle: self.monocle,
-            mode: if self.master { "master" } else { "dwindle" },
+            mode: self.mode().as_str(),
             tiles: &tiles,
             handles,
             tabs,
@@ -791,10 +1266,234 @@ impl Workspace {
             },
             pages,
             picker_empty,
+            layouts,
+            delete_consequence,
         }
         .render()
         .map_err(internal)
     }
+
+    /// The saved layouts dialog's body: the save form, the account's layouts
+    /// and the ones shared with it.
+    fn layouts_dialog(&self, has_tiles: bool) -> Result<Html> {
+        let internal = |_| Error::Internal;
+        let mut label = Field::in_form("layout", "label")
+            .label("Save the current layout as")
+            .placeholder("Orders desk")
+            .value(self.save_label.clone())
+            .wrapper_class("mb-0 flex-1");
+        if let Some(error) = &self.save_error {
+            label = label.error(error.clone());
+        }
+        let current = match &self.address {
+            Address::Saved(slug) => Some(self.saved.label(slug).to_owned()),
+            _ => None,
+        };
+        let mut saved_rows = Vec::new();
+        for entry in &self.saved.entries {
+            let slug = &entry.slug;
+            let is_default = self.saved.default.as_deref() == Some(slug.as_str());
+            let mut row = FlexRow::new(slug.clone());
+            row.dom_id = Some(format!("workspace-layout-{slug}"));
+            row.slots.insert(
+                "label".into(),
+                Html::render(&InlineEdit {
+                    field: {
+                        let mut field = InlineField::new(
+                            format!("workspace-layout-name-{slug}"),
+                            "label",
+                            "Rename layout",
+                            entry.label.clone(),
+                        );
+                        field.id_value = slug.clone();
+                        field.save_event = "rename_layout".into();
+                        field.status(self.renames.get(slug))
+                    },
+                })
+                .map_err(internal)?,
+            );
+            row.slots.insert(
+                "default".into(),
+                if is_default {
+                    Html::raw(format!(
+                        r#"<span id="workspace-layout-default-{}">Default</span>"#,
+                        Html::text(slug)
+                    ))
+                } else {
+                    Html::EMPTY
+                },
+            );
+            row.slots.insert(
+                "layout_mode".into(),
+                Html::render(&ModeButton {
+                    slug,
+                    label: &entry.label,
+                    master: entry.layout == Mode::Master,
+                })
+                .map_err(internal)?,
+            );
+            let open_href = format!("{WORKSPACE}/{slug}");
+            let open_label = format!("Open {}", entry.label);
+            let mut actions = Html::render(&IconButton {
+                id: &format!("workspace-layout-open-{slug}"),
+                href: &open_href,
+                ..IconButton::new("view", &open_label)
+            })
+            .map_err(internal)?;
+            let default_label = if is_default {
+                format!("Stop opening the workspace with {}", entry.label)
+            } else {
+                format!("Open the workspace with {}", entry.label)
+            };
+            let default_id = if is_default {
+                format!("workspace-layout-clear-default-{slug}")
+            } else {
+                format!("workspace-layout-set-default-{slug}")
+            };
+            let default_button = if is_default {
+                IconButton {
+                    id: &default_id,
+                    event: "clear_default_layout",
+                    ..IconButton::new("retained", &default_label)
+                }
+            } else {
+                IconButton {
+                    id: &default_id,
+                    event: "set_default_layout",
+                    name: "id",
+                    value: slug,
+                    ..IconButton::new("retain", &default_label)
+                }
+            };
+            actions.push(&Html::render(&default_button).map_err(internal)?);
+            let delete_label = format!("Delete {}", entry.label);
+            actions.push(
+                &Html::render(&IconButton {
+                    id: &format!("workspace-layout-delete-{slug}"),
+                    kind: IconKind::Danger,
+                    event: "delete_layout",
+                    name: "id",
+                    value: slug,
+                    ..IconButton::new("delete", &delete_label)
+                })
+                .map_err(internal)?,
+            );
+            row.actions = actions;
+            saved_rows.push(row);
+        }
+        let mut saved = FlexTable::new(
+            "workspace-saved-layouts",
+            self.saved_columns.flex_columns(),
+            saved_rows,
+        );
+        saved.zoom = self.saved_columns.zoom;
+        saved.suggestions = self.saved_columns.flex_suggestions();
+        saved.add_query = &self.saved_columns.add_query;
+        saved.event = "saved_grid";
+        saved.caption = "Saved layouts";
+        saved.actions = true;
+        if self.saved.entries.is_empty() {
+            saved.empty = Some(TableEmpty::State(EmptyState::missing(
+                "No saved layouts",
+                "Save the current tiles under a name to open them again from the sidebar or by address.",
+            )));
+        }
+        let saved = Html::render(&saved).map_err(internal)?;
+
+        let mut shared_rows = Vec::new();
+        for entry in &self.shared {
+            let slug = &entry.slug;
+            let mut row = FlexRow::new(slug.clone());
+            row.dom_id = Some(format!("workspace-shared-{slug}"));
+            row.slots.insert("label".into(), Html::text(&entry.label));
+            row.slots
+                .insert("audience".into(), Html::text(&audience(entry)));
+            row.actions = Html::render(&SharedActions {
+                open_id: &format!("workspace-shared-open-{slug}"),
+                open_href: &format!("{WORKSPACE}/shared/{slug}"),
+                action: Html::render(&Button {
+                    id: &format!("workspace-shared-copy-{slug}"),
+                    event: "copy_layout",
+                    name: "id",
+                    value: slug,
+                    body: Html::text("Copy"),
+                    ..Button::default()
+                })
+                .map_err(internal)?,
+            })
+            .map_err(internal)?;
+            shared_rows.push(row);
+        }
+        let mut shared = FlexTable::new(
+            "workspace-shared-table",
+            self.shared_columns.flex_columns(),
+            shared_rows,
+        );
+        shared.zoom = self.shared_columns.zoom;
+        shared.suggestions = self.shared_columns.flex_suggestions();
+        shared.add_query = &self.shared_columns.add_query;
+        shared.event = "shared_grid";
+        shared.caption = "Shared with you";
+        shared.actions = true;
+        if self.shared.is_empty() {
+            shared.empty = Some(TableEmpty::State(EmptyState::missing(
+                "No shared workspaces",
+                "Workspaces shared with your company or roles appear here.",
+            )));
+        }
+        let shared = Html::render(&shared).map_err(internal)?;
+        let publish_href = format!("{SHARED_LAYOUTS}?t={}", query_value(&self.layout.encode()));
+        Html::render(&LayoutsDialog {
+            label,
+            current,
+            saved,
+            shared,
+            can_publish: self.can_publish,
+            publish_href: if self.can_publish && has_tiles {
+                Some(publish_href)
+            } else {
+                None
+            },
+        })
+        .map_err(internal)
+    }
+}
+
+/// How a shared layout's audience reads: the whole company, or its role codes.
+pub(crate) fn audience(entry: &Entry) -> String {
+    if entry.roles.is_empty() {
+        "Company".to_owned()
+    } else {
+        entry.roles.join(", ")
+    }
+}
+
+/// `label`, else `label 2`, `label 3`, ... the first the account has not saved.
+fn copy_label(saved: &Saved, label: &str) -> String {
+    let taken = |candidate: &str| saved.entries.iter().any(|entry| entry.label == candidate);
+    if !taken(label) {
+        return label.to_owned();
+    }
+    let stem: String = label.chars().take(50).collect();
+    (2..)
+        .map(|n| format!("{stem} {n}"))
+        .find(|candidate| !taken(candidate))
+        .expect("an unused numbered label")
+}
+
+/// A query value as the host writes one: only unreserved bytes stay bare, so
+/// a tree whose pages carry their own query survives the browser's parse.
+fn query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 /// A route path in the tree's pattern form: `/companies/{id}` is
@@ -880,6 +1579,14 @@ fn first_title<'a>(node: &'a Node, titles: &HashMap<&str, &'a str>) -> &'a str {
     }
 }
 
+/// Merges a request's route parameters into its query, the path winning,
+/// which is the one map `Workspace::load` reads and a Back step hands over.
+pub(crate) fn merged(request: &PageRequest<'_, Scope>) -> HashMap<String, String> {
+    let mut params = request.query.clone();
+    params.extend(request.path.iter().map(|(k, v)| (k.clone(), v.clone())));
+    params
+}
+
 struct TileView {
     id: String,
     path: String,
@@ -928,6 +1635,10 @@ struct WorkspaceView<'a> {
     picker_description: &'static str,
     pages: Vec<PickerPage>,
     picker_empty: EmptyState,
+    /// The saved layouts dialog's body, while it is open.
+    layouts: Option<Html>,
+    /// The delete confirmation's title, while a Delete is pending.
+    delete_consequence: Option<String>,
 }
 
 #[derive(Template)]
@@ -935,6 +1646,42 @@ struct WorkspaceView<'a> {
 struct FramedView<'a> {
     flash: FlashMap<'a>,
     state: EmptyState,
+}
+
+#[derive(Template)]
+#[template(path = "workspace_layouts.html")]
+struct LayoutsDialog {
+    label: Field,
+    /// The saved layout on screen, which "Update" rewrites.
+    current: Option<String>,
+    saved: Html,
+    shared: Html,
+    can_publish: bool,
+    publish_href: Option<String>,
+}
+
+/// The one-click switch between dwindle and master for a saved layout.
+#[derive(Template)]
+#[template(
+    source = r#"<button type="button" id="workspace-layout-mode-{{ slug }}" data-event="set_layout_mode" data-value-id="{{ slug }}" data-value-mode="{% if master %}dwindle{% else %}master{% endif %}" class="rounded-md px-2 py-1 text-xs text-link hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40" aria-label="{% if master %}Use dwindle layout for {{ label }}{% else %}Use master layout for {{ label }}{% endif %}">{% if master %}Master{% else %}Dwindle{% endif %}</button>"#,
+    ext = "html"
+)]
+struct ModeButton<'a> {
+    slug: &'a str,
+    label: &'a str,
+    master: bool,
+}
+
+/// A shared layout's row actions: open it, or copy it to the account's own.
+#[derive(Template)]
+#[template(
+    source = r#"<a id="{{ open_id }}" href="{{ open_href }}" class="text-sm text-link underline">Open</a>{{ action|safe }}"#,
+    ext = "html"
+)]
+pub(crate) struct SharedActions<'a> {
+    pub(crate) open_id: &'a str,
+    pub(crate) open_href: &'a str,
+    pub(crate) action: Html,
 }
 
 struct Mounted {
@@ -945,29 +1692,51 @@ struct Mounted {
 impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
-            if request.operation != "index" {
-                return Err(Error::NotFound);
-            }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let standing = self.0.standing(scope).await?;
-            let workspace = Workspace::load(&self.0, &standing, request.query, request.framed);
-            Ok(PageBody {
-                html: workspace.render(&self.0, &standing)?,
-                live: true,
-            })
+            match request.operation {
+                "index" => {
+                    let standing = self.0.standing(scope).await?;
+                    let workspace =
+                        Workspace::load(&self.0, &standing, &merged(&request), request.framed)?;
+                    Ok(PageBody {
+                        html: workspace.render(&self.0, &standing)?,
+                        live: true,
+                    })
+                }
+                "shared_layouts" => {
+                    let page =
+                        crate::shared_web::SharedPage::load(&self.0, scope, request.query).await?;
+                    Ok(PageBody {
+                        html: page.render()?,
+                        live: true,
+                    })
+                }
+                _ => Err(Error::NotFound),
+            }
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if request.operation != "index" {
-                return Err(Error::NotFound);
-            }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let standing = self.0.standing(scope).await?;
-            let state: Box<dyn LiveState<Scope, Error>> = Box::new(Mounted {
-                core: self.0.clone(),
-                workspace: Workspace::load(&self.0, &standing, request.query, request.framed),
-            });
+            let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+                "index" => {
+                    let standing = self.0.standing(scope).await?;
+                    Box::new(Mounted {
+                        core: self.0.clone(),
+                        workspace: Workspace::load(
+                            &self.0,
+                            &standing,
+                            &merged(&request),
+                            request.framed,
+                        )?,
+                    })
+                }
+                "shared_layouts" => Box::new(crate::shared_web::Mounted::new(
+                    self.0.clone(),
+                    crate::shared_web::SharedPage::load(&self.0, scope, request.query).await?,
+                )),
+                _ => return Err(Error::NotFound),
+            };
             Ok(Some(state))
         })
     }
@@ -979,7 +1748,12 @@ impl LiveState<Scope, Error> for Mounted {
             let standing = self.core.standing(request.scope).await?;
             let before = self.workspace.flash.clone();
             match request.input {
-                LiveInput::Refresh => {}
+                LiveInput::Refresh => {
+                    // Another tab may have saved, renamed or published since.
+                    self.workspace.saved = standing.saved.clone();
+                    self.workspace.shared = standing.shared.clone();
+                    self.workspace.can_publish = standing.capabilities.contains(PUBLISH);
+                }
                 LiveInput::Params(values) => {
                     // `open` arrives from the sidebar's tile control as a patch
                     // of this address; it is applied to the reconciled tree, so
@@ -989,11 +1763,14 @@ impl LiveState<Scope, Error> for Mounted {
                     let framed = self.workspace.framed;
                     let previous = std::mem::replace(
                         &mut self.workspace,
-                        Workspace::load(&self.core, &standing, &values, framed),
+                        Workspace::load(&self.core, &standing, &values, framed)?,
                     );
                     // A tree read back from the address keeps the frames on screen.
                     self.workspace.layout =
                         previous.layout.reconcile(self.workspace.layout.clone());
+                    if self.workspace.master && !self.workspace.layout.is_master() {
+                        self.workspace.layout.master();
+                    }
                     self.workspace.viewport = previous.viewport;
                     self.workspace.focused = previous.focused.clone();
                     self.workspace.titles = previous.titles;
@@ -1007,11 +1784,16 @@ impl LiveState<Scope, Error> for Mounted {
                     if let Some(path) = open.filter(|_| !framed) {
                         self.workspace.open_page(&self.core, &standing, &path);
                     }
+                    self.workspace.saved_columns = previous.saved_columns;
+                    self.workspace.shared_columns = previous.shared_columns;
+                    self.workspace.renames = previous.renames;
                 }
                 LiveInput::Event(value) => {
                     let event: Event =
                         serde_json::from_value(value.clone()).map_err(|_| Error::Invalid)?;
-                    self.workspace.event(&self.core, &standing, event);
+                    self.workspace
+                        .event(&self.core, &standing, request.scope, event)
+                        .await?;
                 }
             }
             let redirect = self.workspace.leave.take();
@@ -1023,6 +1805,7 @@ impl LiveState<Scope, Error> for Mounted {
             Ok(LiveBody {
                 html: self.workspace.render(&self.core, &standing)?,
                 query: self.workspace.query(),
+                path: Some(self.workspace.path()),
                 notice,
                 rows: self.workspace.layout.count(),
                 redirect,
