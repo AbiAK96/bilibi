@@ -327,7 +327,7 @@ async fn options(
 ) -> Result<Options> {
     let tenant_wide = allowed(client, scope, crate::TENANT_WIDE).await?;
     let own = scope.actor().organisation().map(|id| id.get());
-    let parents=client.query("SELECT id,name FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=$4) ORDER BY name,id",&[&scope.tenant(),&except,&tenant_wide,&own]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
+    let parents=client.query("SELECT id,COALESCE(NULLIF(legal_name,''),name) AS label FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=$4 OR id IN (SELECT parent_id FROM companies WHERE tenant_id=$1 AND id=$2)) ORDER BY label,id",&[&scope.tenant(),&except,&tenant_wide,&own]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
     let types = crate::reference_types::list_legal_entity_types(
         client,
         crate::reference_types::TypeSort::Name,
