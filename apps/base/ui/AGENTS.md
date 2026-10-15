@@ -32,7 +32,11 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - Raise intent with `data-event` (or a `bilibi:event`) and let the transport queue it: never keep a "pending" flag or drop input while a round trip is in flight. Every intent is sent in order with a `request_id` the server echoes; `docs/live-pages.md` is the contract. Use `data-working` for a busy label; the transport adds and lifts `aria-busy` itself.
 - Give a stable `id` to any repeated fragment that holds a draft, a hook or an `<iframe>` (Company's inline forms are `company-field-<key>`): a reply is patched by element id, and unkeyed siblings match by position, so a removed earlier sibling would otherwise hand a draft to the wrong form. Never rebuild `#app` or a panel with `innerHTML` from a page or hook; an iframe reloads whenever it is moved or replaced.
-- Mark a subtree the browser owns (a hook-filled status, a frame host's own text) `data-live-ignore`, the counterpart of Bilimbi's `phx-update="ignore"`: only its `data-*` attributes then follow the server. Do not fight the patcher from `updated()`; on an existing element it leaves `<details>`/`<dialog>` `open` and an iframe's `src` alone, and the browser's own dirty flags keep typed values.
+- Mark a subtree the browser owns (a hook-filled status, a frame host's own text) `data-live-ignore`, the counterpart of Bilimbi's `phx-update="ignore"`: only its `data-*` attributes then follow the server. Do not fight the patcher from `updated()`; on an existing element it leaves `<details>`/`<dialog>` `open` and an iframe's `src` alone, and the browser's own dirty flags keep typed values, except in a `data-change` form, whose controls follow the server unless focused.
+
+## Operational lists
+
+- Build a list page from `ListState` (`src/list_state.rs`: one validated `ListSpec`, `parse` on load/mount/params, `apply_filters`/`next_sort`/`put_page` on events, `to_params()` as `LiveBody.query`) and the macros in `templates/lists.html` through their models in `src/lists.rs` (`FilterToolbar`, `Table`, `Pagination`, `EmptyState`), not hand-parsed query strings or table markup: the spec bounds every untrusted value and the URL it returns is what Back and reload restore. Keep a module's existing query names and page sizes in its spec. `apps/web/examples/list-reference.rs` is the running specimen.
 
 ## Maintaining this file
 
