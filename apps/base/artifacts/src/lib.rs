@@ -1,6 +1,7 @@
 //! Private business documents. Call outside an owner's transaction: durable
 //! reservations/tombstones must commit independently of filesystem work.
 mod contributions;
+pub mod pdf;
 mod storage;
 
 use bilibi_database::{Change, MutationBoundary, MutationTransaction};
@@ -10,7 +11,7 @@ use bilibi_settings::Settings;
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{any::type_name, sync::Arc};
+use std::{any::type_name, future::Future, pin::Pin, sync::Arc};
 use tokio_postgres::{Client, GenericClient, Row};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -28,6 +29,12 @@ pub enum Error {
     Policy,
     #[error("Invalid artifact input")]
     Invalid,
+    #[error("Invalid PDF document structure")]
+    InvalidDocument,
+    #[error("Text contains characters the built-in PDF font cannot show")]
+    UnsupportedText,
+    #[error("Not a structurally valid PDF")]
+    InvalidPdf,
     #[error("Artifact not found")]
     NotFound,
     #[error("Artifact integrity failure")]
@@ -62,6 +69,20 @@ pub trait Owner: Send + Sync + 'static {
         operation: Operation,
         reference: Option<&'a Reference>,
     ) -> ProofFuture<'a, ()>;
+}
+pub type RenderFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
+/// Implement on an owner that generates PDFs. Base authorizes `Create` before
+/// calling `render_pdf`, which selects only the data the scope's actor may see
+/// from the caller's `data` and its own records, and returns complete PDF bytes
+/// (use `pdf::render` for text and tables). Never log document contents.
+pub trait PdfOwner: Owner {
+    fn render_pdf<'a>(
+        &'a self,
+        scope: &'a Scope,
+        company: OrganisationId,
+        reference: &'a Reference,
+        data: &'a Value,
+    ) -> RenderFuture<'a>;
 }
 /// No storage location or raw database row escapes the facade.
 #[derive(Clone, Debug)]
@@ -149,6 +170,39 @@ pub struct Owned<'a, O: Owner> {
     scope: &'a Scope,
     company: OrganisationId,
     owner: &'a O,
+}
+const PDF: &str = "application/pdf";
+impl<O: PdfOwner> Owned<'_, O> {
+    /// Authorize, render through the owner, validate the output and store it as
+    /// a private `application/pdf` artifact. Same call rules as `put`.
+    pub async fn generate_pdf(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        data: &Value,
+    ) -> Result<Metadata> {
+        if !data.is_object() {
+            return Err(Error::Invalid);
+        }
+        self.authorize(&*client, Operation::Create, Some(&reference))
+            .await?;
+        let bytes = self
+            .owner
+            .render_pdf(self.scope, self.company, &reference, data)
+            .await?;
+        self.store_pdf(client, reference, &bytes).await
+    }
+    /// Store PDF bytes made elsewhere (for example by a later HTML engine)
+    /// after the same structural validation; `put` rechecks authority.
+    pub async fn store_pdf(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        bytes: &[u8],
+    ) -> Result<Metadata> {
+        pdf::validate(bytes)?;
+        self.put(client, reference, bytes, PDF).await
+    }
 }
 #[derive(Debug, Default)]
 pub struct Recovery {

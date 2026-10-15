@@ -70,6 +70,60 @@ a dedicated worker/runtime thread when using a single-thread runtime. Recovery r
 rows eligible; callers own retry pacing and operational alerts. A2 will add
 records-grade retention, expiry purge, hold/retry evidence and scheduling policy.
 
+## Simple PDFs (A3)
+
+Use `artifacts::pdf::render` for text and table documents rather than a
+module-local PDF serializer, and store through `Owned::generate_pdf` or
+`Owned::store_pdf` rather than calling `put` with unchecked bytes. HTML
+printing, signed render URLs, passwords and queued rendering are later slices.
+
+Implement `PdfOwner` (an `Owner` extension) on the same trusted adapter. `generate_pdf`
+authorizes `Create` first, then calls `render_pdf(scope, company, reference,
+data)`. The owner selects what the document contains from its own records and
+the request `data`, formats dates and exact numbers into strings, and returns
+complete PDF bytes. `generate_pdf` validates them, then `put` stores them as
+`application/pdf` (reserve, publish, reauthorize, audit). Nothing is rendered
+for an unauthorized actor, and refused output stores nothing.
+
+```rust,ignore
+impl PdfOwner for DocumentOwner {
+    fn render_pdf<'a>(&'a self, scope: &'a Scope, company: OrganisationId,
+        reference: &'a Reference, data: &'a Value) -> RenderFuture<'a> {
+        Box::pin(async move {
+            pdf::render(&Document {
+                title: "Record summary".into(),
+                metadata: Metadata { author: Some("Document owner".into()), ..Default::default() },
+                blocks: vec![
+                    Block::Text("Facts selected by the owning module.".into()),
+                    Block::Table { headers: vec!["Record".into(), "Value".into()],
+                        rows: vec![vec!["A".into(), "12.50".into()]] },
+                    Block::PageBreak,
+                ],
+            })
+        })
+    }
+}
+let metadata = documents.generate_pdf(&mut client, reference, &json!({})).await?;
+```
+
+Layout is fixed and matches Bilimbi byte for byte: A4, built-in Courier 10 pt, 85
+characters per line, 48 lines per page, equal-width columns (1–20) that wrap
+without truncation, repeating table headers, rows that fit a page kept together
+(larger rows continue across pages), blank lines preserved, tabs as spaces, CR/CRLF
+as newlines. Explicit breaks never leave an empty trailing page. At most 2000
+pages per document; split larger reports. Body text is printable ASCII plus Latin-1
+U+00A0–U+00FF; anything else is `Error::UnsupportedText`, never substituted.
+Metadata (title, `author`, `subject`, `keywords`) supports Unicode. Invalid shapes
+return `Error::InvalidDocument`; errors never echo contents. Output is
+deterministic: no timestamps, IDs or environment data, and content operands are
+escaped so text cannot inject PDF syntax.
+
+`pdf::validate` runs on every PDF before storage, whoever made it: `%PDF-` header,
+`%%EOF` trailer and a `startxref` offset landing on an xref table or indirect
+object. It is not a complete validator; the producing renderer owns content. Size
+and retention policy are the existing `artifacts.max_bytes` and
+`artifacts.retention_days` settings.
+
 No unit tests. `examples/artifacts-walkthrough.rs` is an explicit disposable-DB
 walkthrough of real facade calls and injected DB/filesystem outages, with output
 for manual inspection. It does not run assertions or use a test harness.
@@ -89,3 +143,10 @@ control document. The second starts a fresh process, reconciles the failures
 (including a successful unlink whose audit commit failed), and preserves the
 control. Repeat `recover` to see an empty successful batch. Fixture clock and
 failure triggers are confined to the explicitly opted-in disposable database.
+
+`examples/pdf-walkthrough.rs` does the same for PDFs. With only
+`BILIBI_PDF_DEMO_OUT=/absolute/dir` it writes the deterministic fixture PDFs and
+prints the renderer refusals (`-- fixtures`); with the disposable-DB variables
+above it also generates, stores and reads back an owner-selected PDF and shows
+unauthorized, cross-tenant, non-PDF and truncated-output refusals leaving no
+artifact behind.
