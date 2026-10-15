@@ -67,7 +67,15 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
         &limit as &(dyn tokio_postgres::types::ToSql + Sync),
         &offset,
     ]);
-    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY lower(name),id LIMIT $7 OFFSET $8"), &paged).await?;
+    // Only owner-declared sort expressions reach SQL; contacts never sort
+    // through a hidden field, and ties retain stable IDs across pages.
+    let sort = match query.sort.as_str() {
+        "kind" => "kind",
+        "created_at" => "created_at",
+        _ => "lower(name)",
+    };
+    let direction = if query.descending { "DESC" } else { "ASC" };
+    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY {sort} {direction},id {direction} LIMIT $7 OFFSET $8"), &paged).await?;
     Ok(Page {
         entries: rows
             .iter()

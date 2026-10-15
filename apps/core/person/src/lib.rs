@@ -4,6 +4,7 @@ pub mod contributions;
 mod directory;
 pub mod identity;
 pub mod model;
+mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
@@ -156,7 +157,7 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "core/party"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "core/party"],
         migrations: &[("001-core-person", include_str!("../migrations/001-person.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?.bind_persons(Arc::new(identity::Provider))?;
@@ -167,6 +168,13 @@ inventory::submit! {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             agent_operations::bind(db.clone())?;
             Ok(Arc::new(PersonService { db, mutations: services.get("base/database.mutations")?, authentication: services.get("base/tenancy.authentication")? }))
+        }}, bilibi_module_registry::Service { id: web::SERVICE, factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                person_panels: web::person_panels(services)?,
+                persons: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
+                display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+            }))))
         }}],
     }
 }

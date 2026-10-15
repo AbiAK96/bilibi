@@ -132,6 +132,8 @@ pub struct Search {
     pub search: String,
     pub kind: Option<PersonKind>,
     pub include_retired: bool,
+    pub sort: String,
+    pub descending: bool,
     pub page: i64,
     pub page_size: i64,
 }
@@ -141,6 +143,8 @@ impl Default for Search {
             search: String::new(),
             kind: None,
             include_retired: false,
+            sort: "name".into(),
+            descending: false,
             page: 1,
             page_size: 25,
         }
@@ -148,7 +152,8 @@ impl Default for Search {
 }
 impl Search {
     pub(crate) fn check(&self) -> Result<()> {
-        if self.search.chars().count() > 200
+        if !["name", "kind", "created_at"].contains(&self.sort.as_str())
+            || self.search.chars().count() > 200
             || self.search.contains('\0')
             || !(1..=1_000_000).contains(&self.page)
             || !(1..=100).contains(&self.page_size)

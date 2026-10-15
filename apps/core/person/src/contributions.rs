@@ -48,3 +48,41 @@ static GRID: GridContribution = GridContribution {
     links: &[],
 };
 bilibi_grid::contribute!("core/person", "person.grid", &GRID);
+
+// Core has a contact directory, with no employee-type or employment controls.
+macro_rules! page {
+    ($id:literal, $path:literal, $operation:literal, $cap:expr) => {
+        inventory::submit! { Contribution::new(
+        bilibi_module_registry::contributions::ROUTES, $id,
+        Provenance { module: "core/person", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Route {
+            method: bilibi_module_registry::contributions::Method::Get,
+            path: $path, service: crate::web::SERVICE, operation: $operation,
+            access: bilibi_module_registry::contributions::Access::Capability($cap), framed: true,
+        }) }
+    };
+}
+page!("person.list", "/persons", "list", LIST);
+page!("person.create", "/persons/new", "create", CREATE);
+page!("person.detail", "/persons/{id}", "detail", VIEW);
+bilibi_menu::contribute!(
+    "core/person",
+    bilibi_menu::MenuItem::page("admin.person", "People", "/persons")
+        .under("admin")
+        .icon("users")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(20)
+);
+
+// Company, affiliation and account owners may mount a proven Person's personal
+// contacts without copying contact markup or reading Person's table. `id` is a
+// Person ID; a company ID must never be passed as one. Affiliation owns the
+// company-to-person selection and its own company panel in K19.
+inventory::submit! { Contribution::new(
+bilibi_module_registry::contributions::EMBEDS, "person.contacts",
+Provenance { module: "core/person", source: file!(), line: line!() },
+&bilibi_module_registry::contributions::Embed {
+    slot: "person.contacts", context: bilibi_module_registry::contributions::EmbedContext::Record { kind: "core/person" },
+    service: crate::web::SERVICE, operation: "contact",
+    access: bilibi_module_registry::contributions::Access::Capability(VIEW),
+}) }
