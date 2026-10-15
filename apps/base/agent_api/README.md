@@ -32,9 +32,8 @@ key tie breaker. Describe and guide reads also check fresh reach.
 Read dispatch validates the declared input, caps `page_size` at 100, asks normal
 logged Authz authorization, then calls the owner handler. Owners continue to
 call their scoped facade and enforce field restrictions. All direct writes are
-refused. Unsupported writes remain discoverable; the `WriteHandler` contract
-provides preview and a commit on the shared audited `MutationTransaction` for
-E2's future plan service. E1 exposes no write execution or approval bypass.
+refused. Unsupported writes remain discoverable. Supported `WriteHandler`
+operations use the plan service below, sharing its audited transaction.
 
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
@@ -65,3 +64,68 @@ restricted results, malformed input, unavailable entries, direct-write refusal,
 live grant/revocation, cross-tenant denial, deny precedence and decision logs.
 Temporary grants and sessions are removed on successful completion. This is a
 manual runtime specimen, with no unit tests or assertions.
+
+## Reviewed safe writes
+
+Use `base/agent_api.plans` ([src/plans.rs](src/plans.rs)) for `preview` and
+`commit`. Supply a trusted `PlanAuthority` adapter owned by the credential
+service. It must authenticate on the supplied transaction, reprove account and
+party eligibility, and lock the credential/eligibility records so revocation
+cannot race execution. `PlanIdentity.credential_binding` identifies the OAuth
+connection, or the browser session for a session adapter; include impersonation
+identity and session when supported. Never populate it from operation inputs or
+cache an authenticated Scope across requests. E5 supplies the production OAuth
+adapter; the walkthrough supplies a real session adapter. The credential is
+rechecked before owner execution and again before consuming the code.
+
+`PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
+objects by default, at most 1 MiB encoded. Global settings
+`agent_api.plan_max_operations` (1–100) and `agent_api.plan_expiry_seconds`
+(60–3600, default 600) control bounds. Preview validates every schema and normal
+Authz capability and calls owner previews. Invalid reviews return `valid:false`
+with indexed errors and no code. Valid reviews return ordered operations,
+restricted review results, expiry and a random code. Clients obtain the person's
+consent before commit; the code proves the reviewed contract, not consent.
+Never log the code or credential binding.
+
+Storage retains only SHA-256 hashes of the code, actor/party/credential binding,
+canonical ordered inputs, and review/definition facts. Canonicalization sorts
+object keys recursively, preserving array order and JSON types. No inputs,
+secrets or review values are stored in the plan table or action payload. Two
+UUIDv4 values supply 244 unpredictable bits for the 64-character code. Native
+PostgreSQL `sha256(bytea)` provides hashing without extensions or new crypto
+dependencies. Preview prunes that tenant's plans expired more than a day ago.
+
+Commit locks the tenant-scoped code row, refuses identity/input mismatch, replay
+and wall-clock expiry, then rechecks schemas, capabilities and owner previews.
+Changed review facts or definition/schema metadata require a new plan. It calls
+each owner on the same `MutationTransaction`, rechecking capability before each
+write. Every owner error, capture error, expiry or final identity failure rolls
+back all writes, audit rows and code consumption. A competing submission waits
+for the row lock then sees the consumed code. Failed commits leave the code
+usable until expiry, subject to a fresh successful revalidation.
+
+Owners implement deterministic `WriteHandler::preview` without business writes,
+including defaults, versions, reference facts and restricted fields in the
+review. `commit` must lock and revalidate its owner facts (including concurrent
+first inserts), enforce field policy, and use `tx.mutate`/`tx.record` for all
+writes. The plan's preview comparison cannot replace owner concurrency checks.
+Never open a separate owner transaction or publish before the outer commit.
+The non-business reference write demonstrates version fencing and audited
+mutation. There are no product UI or HTTP endpoints in E2; E5 owns adapters.
+
+Run the real safe-write walkthrough after migrating and seeding an isolated DB:
+
+```sh
+BILIBI_AGENT_DEMO=disposable cargo run -p bilibi-agent-api --example plan-walkthrough --locked
+```
+
+It prints code-free reviews and outcomes for input/order/identity mismatch,
+canonical object ordering, direct write refusal, single-use replay, concurrent
+submissions, a second-operation failure, capability revocation, expiry, stale
+owner facts/review digest, audit failure and recovery, and session revocation.
+Bounded SQL output shows reference state, audit counts, consumption and hash
+lengths. Clock/review drift and audit refusal fixtures alter only the explicitly
+disposable database. This is a manual app-service specimen with no test runner,
+mocked identities or assertions. Sessions and temporary grants are removed on
+successful completion; reference/audit evidence remains for inspection.

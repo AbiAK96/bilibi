@@ -71,8 +71,10 @@ impl Plans {
                 vec!["must be a bounded non-empty list of key/input objects".into()],
             )])));
         }
-        let encoded =
-            serde_json::to_string(operations).map_err(|_| bilibi_database::Error::Invalid)?;
+        let encoded = canonical(
+            &serde_json::to_value(operations).map_err(|_| bilibi_database::Error::Invalid)?,
+        )
+        .to_string();
         if encoded.len() > 1_048_576 {
             return Err(Error::InvalidInput(std::collections::BTreeMap::from([(
                 "operations".into(),
@@ -136,7 +138,8 @@ impl Plans {
             }
         }
         let results = json!(results);
-        let digest = json!(["bilibi-agent-review-v1", definitions, results]).to_string();
+        let digest =
+            canonical(&json!(["bilibi-agent-review-v1", definitions, results])).to_string();
         Ok((results, digest, valid))
     }
     async fn preview_one(
@@ -267,7 +270,12 @@ impl Plans {
             let result = owner.commit(&mut tx, scope, &op.input).await?;
             committed.push(json!({"index":index,"key":op.key,"result":result.envelope(&op.key)}));
         }
-        // Slow handlers cannot extend the reviewed code lifetime.
+        // Reprove expiry/eligibility after owner execution, including changes made
+        // by operations in this plan. Slow handlers cannot extend code lifetime.
+        let final_identity = authority.verify(tx.sql()).await?;
+        if binding != self::binding(&final_identity)? {
+            return Err(Error::PlanMismatch);
+        }
         self.unexpired(tx.sql(), scope, code).await?;
         tx.sql().execute("UPDATE base_agent_api_plans SET used_at=clock_timestamp() WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8'))",&[&scope.tenant(),&code]).await.map_err(bilibi_database::Error::from)?;
         tx.commit().await?;
@@ -315,3 +323,19 @@ macro_rules! plan_setting {
 }
 plan_setting!("agent_api.plan_expiry_seconds", 600, 60.0, 3600.0);
 plan_setting!("agent_api.plan_max_operations", 20, 1.0, 100.0);
+
+// Explicitly sort at every depth, even if another crate enables preserve_order.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(key, value)| (key.clone(), canonical(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(canonical).collect()),
+        scalar => scalar.clone(),
+    }
+}
