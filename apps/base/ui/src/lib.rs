@@ -27,6 +27,7 @@ pub mod params;
 mod section;
 mod shell;
 mod specimen;
+pub mod workspace;
 pub use shell::{
     navigation, navigation_unpinned, AppShell, DisplayPreferences, Framed, NavNode, ShellContext,
 };
