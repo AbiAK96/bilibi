@@ -17,7 +17,6 @@ use axum::{
 };
 use bilibi_database::{Db, Error, Result};
 use bilibi_ui::Document;
-use bilibi_user::Notifications;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
@@ -25,7 +24,6 @@ use std::{collections::HashMap, sync::Arc};
 pub struct App {
     routes: Arc<Vec<routes::BoundRoute>>,
     pub db: Db,
-    pub notifications: Notifications,
     pub origin: Arc<str>,
     pub services: Arc<bilibi_module_registry::Services>,
     pub company: Arc<bilibi_company::CompanyService>,
@@ -44,10 +42,6 @@ impl App {
         services.provide("bootstrap.database", Arc::new(db))?;
         services.install(&modules)?;
         let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
-        let notifications = services
-            .get::<bilibi_user::UserService>("core/user.accounts")?
-            .notifications
-            .clone();
         let company = services.get("core/company.companies")?;
         let user = services.get("core/user.accounts")?;
         let security = services.get("base/security.guard")?;
@@ -63,7 +57,6 @@ impl App {
         Ok(Self {
             routes,
             db,
-            notifications,
             origin: origin.into(),
             company,
             user,

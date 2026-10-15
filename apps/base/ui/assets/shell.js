@@ -75,7 +75,9 @@
       document.removeEventListener('keydown', this.onKey);
     }
 
-    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel]')]; }
+    // The bell's dropdown is Core's `shell.notifications` embed; its contents
+    // follow the server while open/closed stays here, like the other panels.
+    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel]')]; }
     openPanel() { return this.panels().find((panel) => panel.id === this.openPanelId) || null; }
     trigger(panel) { return this.root.querySelector(`[aria-controls="${panel.id}"]`); }
     close(panel, restore = false) {
@@ -98,8 +100,14 @@
     click(event) {
       const button = event.target.closest('button');
       if (button && this.root.contains(button)) {
-        if (button.matches('[data-account-toggle], [data-timezone-toggle]')) {
+        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle]')) {
           this.toggle(button);
+          return;
+        }
+        // Opening a notification closes the bell (Bilimbi's `visit`); the
+        // transport still sends the intent from its own listener.
+        if (button.matches('[data-notifications-panel] [data-event="visit"]')) {
+          this.closeAll(true);
           return;
         }
         if (button.matches('[data-preference-kind]')) {

@@ -1,5 +1,40 @@
-{#- The top-bar bell (Bilimbi `NotificationBellComponent` button). Until C6
-    ports the dropdown, pressing it marks every notification read. -#}
+{#- The top-bar bell and its dropdown (Bilimbi `NotificationBellComponent`
+    at the pinned source), the `shell.notifications` embed. Web mounts it as
+    a shell panel keyed by this root's id, so its buttons target that id and a
+    notification for this account re-renders only this fragment.
+
+    The dropdown is always rendered and starts hidden: the shell's
+    disclosure controller (assets/shell.js) owns open/closed, focus to the
+    first control on open, Escape back to the bell and click-away, and keeps
+    it open across patches, as it does for the account and time panels. Below
+    `sm` the bell sits mid-bar, so the panel spans the viewport under the bar. -#}
+{%- import "components.html" as ui -%}
 <div id="app-notifications" class="relative">
-<button type="button" id="app-notifications-bell" data-event="read" class="relative inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-action transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong cursor-pointer" aria-label="{% if unread == 0 %}Notifications, none unread{% else %}Mark {{ unread }} unread notifications read{% endif %}" title="Notifications">{{ icon }}{% if unread > 0 %}<span id="app-notifications-unread-badge" class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 inline-flex items-center justify-center rounded-full bg-brand-strong text-white text-[9px] font-semibold leading-none tabular-nums">{% if unread > 99 %}99+{% else %}{{ unread }}{% endif %}</span>{% endif %}</button>
+<button type="button" id="app-notifications-bell" data-notifications-toggle class="relative inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-action transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong cursor-pointer" aria-haspopup="true" aria-expanded="false" aria-controls="app-notifications-dropdown" aria-label="{{ aria_label }}" title="Notifications">{% call ui::icon(name="notify", class="size-4") %}{% endcall %}{% if unread > 0 %}<span id="app-notifications-unread-badge" class="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 inline-flex items-center justify-center rounded-full bg-brand-strong text-white text-[9px] font-semibold leading-none tabular-nums">{{ badge }}</span>{% endif %}</button>
+<div id="app-notifications-dropdown" data-notifications-panel hidden class="fixed inset-x-2 top-8 z-50 overflow-hidden rounded-lg border border-line bg-surface shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-1 sm:w-80">
+<div class="flex items-center justify-between border-b border-line px-3 py-2 bg-surface-muted/50">
+<span class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Notifications</span>
+<div class="flex items-center gap-2">
+{% if unread > 0 %}<button id="bell-mark-all-read" type="button" data-event="mark_all_read" data-target="app-notifications" class="text-xs text-brand font-medium hover:underline cursor-pointer">Mark all read</button>{% endif %}
+<a href="/notifications" class="text-xs text-ink-muted hover:text-ink hover:underline">View all</a>
+</div>
+</div>
+<ul class="max-h-80 overflow-y-auto divide-y divide-line py-0.5" aria-label="Recent notifications">
+{%- for item in items %}
+<li id="bell-item-{{ item.id }}" class="group">
+<button type="button" data-event="visit" data-target="app-notifications" name="id" value="{{ item.id }}" class="w-full flex items-start gap-2.5 px-3 py-2 text-left transition hover:bg-surface-sunken cursor-pointer {% if item.read %}bg-surface-muted/30{% else %}bg-surface{% endif %}">
+<span class="mt-1.5 size-1.5 shrink-0 rounded-full {% if item.read %}bg-transparent{% else %}bg-brand{% endif %}" aria-hidden="true"></span>
+<div class="min-w-0 flex-1">
+<span class="block text-xs truncate {% if item.read %}font-normal text-ink-muted{% else %}font-semibold text-ink{% endif %}">{{ item.title }}</span>
+{% if !item.body.is_empty() %}<span class="block text-[11px] text-ink-subtle line-clamp-2">{{ item.body }}</span>{% endif %}
+</div>
+</button>
+</li>
+{%- endfor %}
+{% if items.is_empty() %}<li class="px-3 py-6 text-center text-xs text-ink-subtle">You're all caught up.</li>{% endif %}
+</ul>
+<div class="border-t border-line bg-surface-muted/30 px-3 py-1.5 text-center">
+<a href="/notifications" class="text-xs font-medium text-brand hover:underline">Open notifications page →</a>
+</div>
+</div>
 </div>

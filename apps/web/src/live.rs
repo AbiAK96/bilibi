@@ -131,6 +131,9 @@ struct Session {
     route: String,
     page: Option<Mounted>,
     panels: HashMap<String, Panel>,
+    /// `EmbedContext::Shell` panels (the bell), keyed by their element id.
+    /// They outlive navigation and are never mounted in a framed page.
+    shell: HashMap<String, Panel>,
     generation: u64,
     sender: mpsc::Sender<Wake>,
 }
@@ -180,7 +183,58 @@ impl Session {
         ));
         self.path = path;
         self.route = bound.route.path.to_owned();
+        self.sync_shell(app, token, &scope).await?;
         self.update(app, token, "page", LiveInput::Refresh).await
+    }
+    /// Mounts each shell embed the actor may see, once per socket, and drops
+    /// one whose access is gone. A refused embed renders nothing in the shell.
+    async fn sync_shell(&mut self, app: &App, token: &str, scope: &Scope) -> Result<()> {
+        if self.framed {
+            return Ok(());
+        }
+        for slot in crate::shell::embeds(app)? {
+            match routes::check_access(app, slot.embed.access, Some(token)).await {
+                Ok(_) => {}
+                Err(Error::Forbidden) => {
+                    self.shell.remove(&slot.id);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            if self.shell.contains_key(&slot.id) {
+                continue;
+            }
+            let service: Arc<Service> = app.services.get(slot.embed.service)?;
+            let empty = HashMap::new();
+            let state = service
+                .0
+                .mount(PageRequest {
+                    operation: slot.embed.operation,
+                    scope: Some(scope),
+                    path: &empty,
+                    query: &empty,
+                    body: &[],
+                    framed: false,
+                })
+                .await?
+                .ok_or(Error::Invalid)?;
+            self.generation += 1;
+            let mounted = Mounted::new(
+                state,
+                slot.embed.access,
+                self.generation,
+                &slot.id,
+                &self.sender,
+            );
+            let spec = PanelSpec {
+                id: slot.id.clone(),
+                embed: slot.embed_id.to_owned(),
+                path: HashMap::new(),
+                query: HashMap::new(),
+            };
+            self.shell.insert(slot.id, Panel { spec, mounted });
+        }
+        Ok(())
     }
     async fn update(
         &mut self,
@@ -190,34 +244,6 @@ impl Session {
         input: LiveInput<'_>,
     ) -> Result<Vec<Value>> {
         let scope = self.scope(app, token).await?;
-        if target == "shell" {
-            if self.framed {
-                return Err(Error::Invalid);
-            }
-            let LiveInput::Event(payload) = input else {
-                return Err(Error::Invalid);
-            };
-            if payload != &json!({"type":"read"}) {
-                return Err(Error::Invalid);
-            }
-            app.user.mark_read(token).await?;
-            let body = self
-                .page
-                .as_mut()
-                .ok_or(Error::Invalid)?
-                .state
-                .update(LiveRequest {
-                    scope: &scope,
-                    credential: token,
-                    input: LiveInput::Refresh,
-                })
-                .await?;
-            let mut message = self.page_message(app, &scope, body).await?;
-            message["notice"] = json!("Notifications marked read");
-            let mut messages = vec![message];
-            messages.extend(self.sync_panels(app, token, &scope).await?);
-            return Ok(messages);
-        }
         if target == "page" {
             let body = self
                 .page
@@ -234,7 +260,10 @@ impl Session {
             messages.extend(self.sync_panels(app, token, &scope).await?);
             return Ok(messages);
         }
-        let panel = self.panels.get_mut(target).ok_or(Error::Invalid)?;
+        let panel = match self.shell.get_mut(target) {
+            Some(panel) => panel,
+            None => self.panels.get_mut(target).ok_or(Error::Invalid)?,
+        };
         routes::check_access(app, panel.mounted.access, Some(token)).await?;
         let body = panel
             .mounted
@@ -278,6 +307,7 @@ impl Session {
             if spec.id.is_empty()
                 || spec.id.len() > 128
                 || ["page", "shell", "app"].contains(&spec.id.as_str())
+                || self.shell.contains_key(&spec.id)
                 || !spec
                     .id
                     .bytes()
@@ -376,7 +406,7 @@ impl Session {
     }
 }
 fn fragment(id: &str, body: LiveBody) -> Value {
-    json!({"type":"fragment", "target":id, "html":body.html, "notice":body.notice, "rows":body.rows})
+    json!({"type":"fragment", "target":id, "html":body.html, "notice":body.notice, "rows":body.rows, "redirect":body.redirect})
 }
 fn encode(value: &str) -> String {
     value
@@ -410,10 +440,10 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
         route: String::new(),
         page: None,
         panels: HashMap::new(),
+        shell: HashMap::new(),
         generation: 0,
         sender,
     };
-    let mut notifications = app.notifications.subscribe();
     let mut refresh = tokio::time::interval(Duration::from_secs(15));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     refresh.tick().await;
@@ -444,27 +474,13 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
             },
             wake = wakes.recv() => {
                 let Some(wake) = wake else {break;};
-                let mounted = if wake.target == "page" { session.page.as_ref() } else { session.panels.get(&wake.target).map(|p| &p.mounted) };
+                let mounted = if wake.target == "page" { session.page.as_ref() } else { session.shell.get(&wake.target).or_else(|| session.panels.get(&wake.target)).map(|p| &p.mounted) };
                 if !mounted.is_some_and(|m| m.generation == wake.generation) {continue;}
                 target = wake.target;
                 match session.scope(&app, &token).await {
                     Ok(scope) => {
                         if wake.change.as_ref().is_some_and(|c| c.tenant != scope.tenant() || c.user.is_some_and(|user| user != scope.user())) {continue;}
                         session.update(&app, &token, &target, LiveInput::Refresh).await
-                    },
-                    Err(error) => Err(error),
-                }
-            },
-            notification = notifications.recv() => {
-                if session.page.is_none() {continue;}
-                match session.scope(&app, &token).await {
-                    Ok(scope) => {
-                        match notification {
-                            Ok(event) if event.tenant != scope.tenant() || event.user != scope.user() => continue,
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                            _ => {},
-                        }
-                        session.update(&app, &token, "page", LiveInput::Refresh).await
                     },
                     Err(error) => Err(error),
                 }
@@ -485,6 +501,7 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
                     clear && (!panel || parent_denied || matches!(error, Error::Unauthorized));
                 if panel && clear {
                     session.panels.remove(&target);
+                    session.shell.remove(&target);
                 }
                 (
                     vec![

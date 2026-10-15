@@ -25,6 +25,7 @@ bilibi-settings = { path = "../../base/settings" }
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-locale = { path = "../../base/locale" }
 serde_urlencoded = "0.7.1"
+jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 thiserror.workspace = true
 hmac = "0.13.0"
 sha2 = "0.11.1"

@@ -14,12 +14,14 @@ use axum::{
 };
 use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
-use bilibi_module_registry::contributions::Method;
+use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, EMBEDS};
 use bilibi_security::Scope;
+use bilibi_ui::page::{PageRequest, PageService};
 use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, ShellContext};
 use bilibi_user::{PreferenceError, Presentation};
 use serde::Deserialize;
 use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
 
 /// A rendered page body and the explicit theme to stamp on `<html>`.
 pub struct Rendered {
@@ -101,13 +103,16 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
-    // Core User contributes the bell; an account that may not view
-    // notifications has none.
-    let notifications = match bilibi_user::unread(&**client, scope).await {
-        Ok(unread) => bilibi_user::web::bell(unread).map_err(|_| Error::Internal)?,
-        Err(Error::Forbidden) => Html::default(),
-        Err(error) => return Err(error),
-    };
+    // A module contributes the bell through the `shell.notifications` embed;
+    // an account the embed refuses has none.
+    let mut notifications = Html::default();
+    for slot in embeds(app)? {
+        if slot.embed.slot == "shell.notifications"
+            && permits(app, scope, slot.embed.access).await?
+        {
+            notifications = render_embed(app, scope, &slot.embed).await?;
+        }
+    }
     let served = served_routes(app);
     let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
         .await?
@@ -138,6 +143,69 @@ async fn context<'a>(
         development: cfg!(debug_assertions),
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+/// One `EmbedContext::Shell` contribution and the id of the element it
+/// renders: slot `shell.notifications` is `#app-notifications`. The live
+/// socket mounts it as a panel under that id, outside framed pages.
+pub struct ShellEmbed {
+    pub id: String,
+    pub embed_id: &'static str,
+    pub embed: Embed,
+}
+
+pub fn embeds(app: &App) -> Result<Vec<ShellEmbed>> {
+    let mut found = Vec::new();
+    for entry in app.services.catalog()?.entries::<Embed>(EMBEDS)? {
+        let embed = *entry.get::<Embed>()?;
+        if !matches!(embed.context, EmbedContext::Shell) {
+            continue;
+        }
+        let name = embed.slot.strip_prefix("shell.").ok_or(Error::Internal)?;
+        found.push(ShellEmbed {
+            id: format!("app-{}", name.replace('.', "-")),
+            embed_id: entry.id,
+            embed,
+        });
+    }
+    Ok(found)
+}
+
+/// The embed's access for an already proven scope: a refusal is `false`.
+async fn permits(app: &App, scope: &Scope, access: Access) -> Result<bool> {
+    let client = app.db.get().await?;
+    let client = &**client;
+    let result = match access {
+        Access::Public | Access::SignedIn => Ok(()),
+        Access::Capability(key) => authz::authorize_key(client, scope, key).await,
+        Access::Operator => tenancy::prove_operator(client, scope).await.map(|_| ()),
+        Access::OperatorCapability(key) => authz::authorize_operator(client, scope, key)
+            .await
+            .map(|_| ()),
+    };
+    match result {
+        Ok(()) => Ok(true),
+        Err(Error::Forbidden) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+async fn render_embed(app: &App, scope: &Scope, embed: &Embed) -> Result<Html> {
+    let service: Arc<PageService<Scope, Error>> = app.services.get(embed.service)?;
+    let empty = HashMap::new();
+    let body = service
+        .0
+        .render(PageRequest {
+            operation: embed.operation,
+            scope: Some(scope),
+            path: &empty,
+            query: &empty,
+            body: &[],
+            framed: false,
+        })
+        .await?;
+    // The owner rendered and escaped it, as for a page body.
+    Ok(Html::raw(body.html))
 }
 
 /// The page's own menu row: an exact route, else the deepest route this path

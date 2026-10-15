@@ -136,47 +136,52 @@ impl PasswordView {
 }
 
 /// HTTP page ownership stays with User; the host knows only `PageService`.
+/// `notifications` is the `/notifications` page and `bell` the shell's
+/// `shell.notifications` embed, both in `crate::inbox`.
 pub struct Pages {
     pub users: Arc<UserService>,
+    pub display: Arc<bilibi_datetime::DisplayPolicy>,
+    pub locales: Arc<bilibi_locale::Locales>,
 }
 
 impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            if !request.query.is_empty() {
-                return Err(Error::NotFound);
-            }
-            let html = match request.operation {
-                "password" => {
-                    PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?
-                }
-                "appearance" => {
+            match request.operation {
+                "password" if request.query.is_empty() => Ok(PageBody {
+                    html: PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?,
+                    live: true,
+                }),
+                "appearance" if request.query.is_empty() => {
                     let stored = Stored::load(&self.users, scope).await?;
-                    appearance::render(&stored, FlashMap::default())?
+                    Ok(PageBody {
+                        html: appearance::render(&stored, FlashMap::default())?,
+                        live: true,
+                    })
                 }
-                _ => return Err(Error::NotFound),
-            };
-            Ok(PageBody { html, live: true })
+                "notifications" => crate::inbox::render_page(self, scope, request.query).await,
+                "bell" => crate::inbox::render_bell(self, scope).await,
+                _ => Err(Error::NotFound),
+            }
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if !request.query.is_empty() {
-                return Err(Error::NotFound);
-            }
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
-                "password" => Box::new(PasswordPage {
+                "password" if request.query.is_empty() => Box::new(PasswordPage {
                     users: self.users.clone(),
                     form: PasswordForm::default(),
                     success: false,
                     failure: false,
                 }),
-                "appearance" => {
+                "appearance" if request.query.is_empty() => {
                     let scope = request.scope.ok_or(Error::Unauthorized)?;
                     let stored = Stored::load(&self.users, scope).await?;
                     Box::new(AppearancePage::new(self.users.clone(), stored))
                 }
+                "notifications" => crate::inbox::mount_page(self, request.query)?,
+                "bell" => crate::inbox::mount_bell(self),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
@@ -307,20 +312,4 @@ impl LiveState<Scope, Error> for PasswordPage {
             })
         })
     }
-}
-
-#[derive(Template)]
-#[template(path = "bell.html")]
-struct Bell {
-    unread: i64,
-    icon: Html,
-}
-
-/// The shell's `shell.notifications` slot for an account that may view
-/// notifications; the host renders nothing when `unread` refuses.
-pub fn bell(unread: i64) -> askama::Result<Html> {
-    Html::render(&Bell {
-        unread,
-        icon: Html::render(&bilibi_ui::Icon::new("notify"))?,
-    })
 }

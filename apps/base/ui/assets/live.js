@@ -205,6 +205,8 @@
       }
       if (message.notice) feedback.textContent = message.notice;
     } else if (message.type === 'fragment') {
+      // A panel's action can open a local page (a notification's link).
+      if (message.redirect) { location.assign(message.redirect); return; }
       const target = document.getElementById(message.target);
       if (target) patch(target, message.html, options);
       if (message.notice) feedback.textContent = message.notice;
@@ -518,7 +520,7 @@
     // the absolute page as an ordinary value.
     const relative = type === 'page' && delta !== undefined;
     const payload = type === 'sort' && field !== undefined ? {type, field} : relative ? {type, delta: Number(delta)} : {type};
-    if (!(type === 'read' || relative || (type === 'sort' && field !== undefined))) {
+    if (!(relative || (type === 'sort' && field !== undefined))) {
       // Preserve module values (the counterpart of Bilimbi's phx-value-*).
       for (const [key, value] of Object.entries(button.dataset)) {
         if (['event', 'target', 'working', 'workingFrom', 'hook', 'liveBusy'].includes(key)) continue;
@@ -526,7 +528,7 @@
       }
       if (button.name) payload[button.name] = button.value;
     }
-    enqueue({type: 'event', target: type === 'read' ? 'shell' : target || 'page', payload}, {source: button});
+    enqueue({type: 'event', target: target || 'page', payload}, {source: button});
   });
 
   window.addEventListener('popstate', () => {
