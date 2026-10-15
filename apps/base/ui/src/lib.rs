@@ -79,7 +79,9 @@ pub const HOOKS_JS: &str = concat!(
     include_str!("../assets/hooks.js"),
     // Both files are semicolon-free IIFEs; without this the second calls the first.
     "\n;\n",
-    include_str!("../assets/inline.js")
+    include_str!("../assets/inline.js"),
+    "\n;\n",
+    include_str!("../assets/tiling.js")
 );
 /// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
