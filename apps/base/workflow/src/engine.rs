@@ -77,6 +77,9 @@ impl Engine {
             registry: Arc::new(registry),
         }
     }
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
     /// Explicit insert-only initialization. Existing disabled/configured rows
     /// win; startup does not call this. Run from a trusted seed/admin adapter.
     pub async fn initialize(&self, scope: &Scope) -> Result<()> {
@@ -242,7 +245,12 @@ impl Engine {
         })
         .await
     }
-    fn writer(&self, context: &bilibi_database::Context, scope: &Scope, id: i64) -> Result<()> {
+    pub(crate) fn writer(
+        &self,
+        context: &bilibi_database::Context,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<()> {
         if context.tenant != scope.tenant()
             || context.actor.kind != "user"
             || context.actor.id != scope.user().to_string()

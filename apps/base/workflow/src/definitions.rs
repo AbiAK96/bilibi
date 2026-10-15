@@ -1,6 +1,9 @@
 //! Immutable compiled adapter catalog. Status configuration is explicitly
 //! inserted, never overwritten at boot or on an owner definition change.
-use crate::{OwnerFuture, Request, Subject, SubjectAdapter};
+use crate::{
+    process::{self, Process, ProcessDefinition},
+    OwnerFuture, Request, Subject, SubjectAdapter,
+};
 use bilibi_database::{Change, Error, Result};
 use bilibi_module_registry::{Entry, RegistryError};
 use bilibi_tenancy::Scope;
@@ -89,6 +92,8 @@ pub enum Contribution {
         adapter: &'static dyn Action,
     },
     Flow(Flow),
+    /// Versioned process graph; see `crate::process`.
+    Process(Process),
 }
 #[derive(Clone, Copy)]
 pub struct OwnedSubject {
@@ -100,6 +105,7 @@ pub struct OwnedSubject {
 pub struct Registry {
     pub(crate) subjects: BTreeMap<&'static str, OwnedSubject>,
     pub(crate) flows: BTreeMap<&'static str, (&'static str, Flow)>,
+    pub(crate) processes: BTreeMap<(&'static str, i32), ProcessDefinition>,
     guards: BTreeMap<&'static str, (&'static str, &'static dyn Guard)>,
     actions: BTreeMap<&'static str, (&'static str, &'static dyn Action)>,
     aliases: BTreeMap<(&'static str, &'static str), &'static str>,
@@ -146,6 +152,20 @@ impl Registry {
                     .any(|m| m.id == owner && m.dependencies.contains(&"base/workflow"))
             {
                 return Err(invalid(format!("{owner} must depend on base/workflow")));
+            }
+            if let Contribution::Process(process) = entry {
+                let compiled = process::compile(owner, process)?;
+                if registry
+                    .processes
+                    .insert((process.key, process.version), compiled)
+                    .is_some()
+                {
+                    return Err(invalid(format!(
+                        "duplicate process {} version {}",
+                        process.key, process.version
+                    )));
+                }
+                continue;
             }
             let (kind, k, aliases, duplicate) = match entry {
                 Contribution::Subject {
@@ -194,6 +214,7 @@ impl Registry {
                     &[][..],
                     registry.flows.insert(flow.code, (owner, *flow)).is_some(),
                 ),
+                Contribution::Process(_) => unreachable!("handled above"),
             };
             if !key(k) || duplicate {
                 return Err(invalid(format!("invalid/duplicate {kind} {k}")));
@@ -205,6 +226,27 @@ impl Registry {
                 {
                     return Err(invalid(format!("duplicate/invalid {kind} alias {alias}")));
                 }
+            }
+        }
+        // Every version of a key keeps one owner and one subject, owned by
+        // the contributor; a version's fingerprint is fixed here.
+        for definition in registry.processes.values() {
+            let same_key = registry
+                .processes
+                .values()
+                .filter(|d| d.key == definition.key);
+            if !registry
+                .subjects
+                .get(definition.subject)
+                .is_some_and(|s| s.owner == definition.owner)
+                || same_key
+                    .into_iter()
+                    .any(|d| d.owner != definition.owner || d.subject != definition.subject)
+            {
+                return Err(invalid(format!(
+                    "process {} crosses ownership or subject boundaries",
+                    definition.key
+                )));
             }
         }
         let mut bound = BTreeSet::new();
@@ -254,18 +296,31 @@ impl Registry {
         Ok(registry)
     }
     pub fn subject(&self, alias: &str) -> Result<(OwnedSubject, Flow)> {
+        let subject = self.owned_subject(alias)?;
+        let flow = self
+            .flows
+            .values()
+            .find(|(_, f)| f.subject == subject.key)
+            .map(|(_, f)| *f)
+            .ok_or(Error::Invalid)?;
+        Ok((subject, flow))
+    }
+    /// A process subject needs no status flow.
+    pub fn owned_subject(&self, alias: &str) -> Result<OwnedSubject> {
         let key = self
             .aliases
             .get(&("subject", alias))
             .ok_or(Error::Invalid)?;
-        let subject = *self.subjects.get(key).ok_or(Error::Invalid)?;
-        let flow = self
-            .flows
-            .values()
-            .find(|(_, f)| f.subject == *key)
-            .map(|(_, f)| *f)
-            .ok_or(Error::Invalid)?;
-        Ok((subject, flow))
+        self.subjects.get(key).copied().ok_or(Error::Invalid)
+    }
+    /// `None` selects the highest installed version of `key`.
+    pub fn process(&self, key: &str, version: Option<i32>) -> Result<&ProcessDefinition> {
+        self.processes
+            .iter()
+            .filter(|((k, v), _)| *k == key && version.is_none_or(|wanted| wanted == *v))
+            .max_by_key(|((_, v), _)| *v)
+            .map(|(_, d)| d)
+            .ok_or(Error::Invalid)
     }
     pub(crate) fn guard(
         &self,

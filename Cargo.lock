@@ -702,6 +702,7 @@ dependencies = [
  "inventory",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-postgres",
 ]

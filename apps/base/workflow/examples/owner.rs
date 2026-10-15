@@ -4,8 +4,9 @@ use bilibi_database::{pool, Change, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution as Registration, Provenance, Services};
 use bilibi_tenancy::{Authentication, Scope};
 use bilibi_workflow::{
-    Action, Contribution, Edge, Engine, Flow, Guard, Load, Operation, OwnerFuture, Request, Status,
-    Subject, SubjectAdapter, Transition, CONTRIBUTIONS,
+    Action, Contribution, Dependency, Edge, Engine, Flow, Guard, Load, Operation, OwnerFuture,
+    Process, ProcessAdapter, Registry, Request, RunFacts, StartOptions, Status, Step, Subject,
+    SubjectAdapter, Transition, CONTRIBUTIONS,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -45,7 +46,7 @@ impl SubjectAdapter for Owner {
             bilibi_authz::authorize_key(
                 tx,
                 scope,
-                if matches!(operation, Operation::Read) {
+                if matches!(operation, Operation::Read | Operation::ReadRun) {
                     "companies.view"
                 } else {
                     "companies.update"
@@ -122,7 +123,69 @@ impl Action for Owner {
         })
     }
 }
+impl ProcessAdapter for Owner {
+    fn authorize<'a>(
+        &'a self,
+        _: &'a Transaction<'_>,
+        _: &'a Scope,
+        subject: &'a Subject,
+        run: &'a RunFacts,
+        _: Operation,
+    ) -> OwnerFuture<'a, ()> {
+        Box::pin(async move {
+            // Owner policy: a run belongs to the locked subject; an archived
+            // reference record would be refused here.
+            if run.subject_id != subject.id || run.input.get("deny") == Some(&json!(true)) {
+                return Err(Error::Forbidden);
+            }
+            Ok(())
+        })
+    }
+}
 static OWNER: Owner = Owner;
+const REVIEW_V1: [Step; 3] = [
+    Step::new("first", "First review"),
+    Step::new("second", "Second review"),
+    Step {
+        dependencies: &[
+            Dependency {
+                step: "first",
+                acceptable_outcomes: &[],
+            },
+            Dependency {
+                step: "second",
+                acceptable_outcomes: &["completed", "waived"],
+            },
+        ],
+        ..Step::new("finish", "Finish")
+    },
+];
+const REVIEW_V2: [Step; 4] = [
+    REVIEW_V1[0],
+    REVIEW_V1[1],
+    REVIEW_V1[2],
+    Step {
+        dependencies: &[Dependency {
+            step: "finish",
+            acceptable_outcomes: &[],
+        }],
+        delay_seconds: 3600,
+        ..Step::new("archive", "Archive")
+    },
+];
+/// Same key and version as the installed v1 with one changed step contract:
+/// the running proof builds a second registry from it to show the refusal.
+static DRIFTED_V1: Contribution = Contribution::Process(Process {
+    key: "reference.review",
+    version: 1,
+    subject: "reference.record",
+    adapter: &OWNER,
+    steps: &[
+        Step::new("first", "First review (renamed)"),
+        REVIEW_V1[1],
+        REVIEW_V1[2],
+    ],
+});
 inventory::submit! { bilibi_module_registry::Module {
     id:"extensions/workflow-reference",layer:bilibi_module_registry::Layer::Extensions,
     dependencies:&["base/workflow"],services:&[],
@@ -152,6 +215,26 @@ register!(
         aliases: &[],
         adapter: &OWNER
     }
+);
+register!(
+    "reference.process.v1",
+    Contribution::Process(Process {
+        key: "reference.review",
+        version: 1,
+        subject: "reference.record",
+        adapter: &OWNER,
+        steps: &REVIEW_V1,
+    })
+);
+register!(
+    "reference.process.v2",
+    Contribution::Process(Process {
+        key: "reference.review",
+        version: 2,
+        subject: "reference.record",
+        adapter: &OWNER,
+        steps: &REVIEW_V2,
+    })
 );
 register!(
     "reference.flow",
@@ -253,6 +336,129 @@ async fn main() -> Result<()> {
             serde_json::to_string(&engine.available(&scope, "reference.record", id).await?)
                 .map_err(|_| Error::Internal)?
         ),
+        "start" | "start-v1" | "start-changed" | "start-deny" | "drift" => {
+            // Keep the v1 drift proof separate from the default v2 replay key.
+            let attempt = if matches!(command, "start-v1" | "drift") {
+                1
+            } else {
+                2
+            };
+            let mut options = StartOptions::new(format!("record:{id}:attempt:{attempt}"));
+            options.version = (command == "start-v1").then_some(1);
+            options.correlation_key = Some(format!("reference-record:{id}"));
+            if command == "start-changed" {
+                options.input = json!({"carried_fact_ids":[42]});
+            }
+            if command == "start-deny" {
+                options.idempotency_key = format!("record:{id}:denied");
+                options.input = json!({"deny":true});
+            }
+            let engine = if command == "drift" {
+                // Registry::build is the boot validator; the drifted process
+                // replaces the installed v1 under the same key/version.
+                let entries: Vec<(&'static str, &Contribution)> = inventory::iter::<Registration>
+                    .into_iter()
+                    .filter(|entry| entry.consumer == CONTRIBUTIONS)
+                    .map(|entry| {
+                        let payload = if entry.id == "reference.process.v1" {
+                            &DRIFTED_V1
+                        } else {
+                            entry.get::<Contribution>()?
+                        };
+                        Ok((entry.provenance.module, payload))
+                    })
+                    .collect::<bilibi_module_registry::Result<_>>()?;
+                let registry = Registry::build(&entries, Some(bilibi_authz::vocabulary()?))?;
+                options.version = Some(1);
+                Arc::new(Engine::new(
+                    db.clone(),
+                    services.get::<MutationBoundary>("base/database.mutations")?,
+                    services.get::<Authentication>("base/tenancy.authentication")?,
+                    registry,
+                ))
+            } else {
+                engine.clone()
+            };
+            let (key, version, fingerprint) = {
+                let definition = engine
+                    .registry()
+                    .process("reference.review", options.version)?;
+                (
+                    definition.key,
+                    definition.version,
+                    definition.fingerprint.clone(),
+                )
+            };
+            println!("compiled {key} v{version} fingerprint={fingerprint}");
+            match engine
+                .start_run(&scope, "reference.review", "ReferenceRecord", id, options)
+                .await
+            {
+                Ok(run) => {
+                    let view = engine.get_run(&scope, run.id).await?;
+                    println!(
+                        "run={} status={} definition={} v{} fingerprint={} input={}",
+                        run.id,
+                        run.status,
+                        run.definition_key,
+                        run.definition_version,
+                        run.definition_fingerprint,
+                        run.input
+                    );
+                    for item in view.work_items {
+                        println!(
+                            "  work={} step={} status={} available_at={:?} version={}",
+                            item.id, item.step_key, item.status, item.available_at, item.version
+                        );
+                    }
+                }
+                Err(error) => println!("start refused: {error:?}"),
+            }
+        }
+        "run" | "run-drift" => {
+            let engine = if command == "run-drift" {
+                let entries: Vec<(&'static str, &Contribution)> = inventory::iter::<Registration>
+                    .into_iter()
+                    .filter(|entry| entry.consumer == CONTRIBUTIONS)
+                    .map(|entry| {
+                        let payload = if entry.id == "reference.process.v1" {
+                            &DRIFTED_V1
+                        } else {
+                            entry.get::<Contribution>()?
+                        };
+                        Ok((entry.provenance.module, payload))
+                    })
+                    .collect::<bilibi_module_registry::Result<_>>()?;
+                Arc::new(Engine::new(
+                    db.clone(),
+                    services.get::<MutationBoundary>("base/database.mutations")?,
+                    services.get::<Authentication>("base/tenancy.authentication")?,
+                    Registry::build(&entries, Some(bilibi_authz::vocabulary()?))?,
+                ))
+            } else {
+                engine.clone()
+            };
+            match engine.get_run(&scope, id).await {
+                Ok(view) => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&view).map_err(|_| Error::Internal)?
+                ),
+                Err(error) => println!("read refused: {error:?}"),
+            }
+        }
+        "events" => {
+            let page = engine.run_events(&scope, id, None, 50).await?;
+            for event in page.entries {
+                println!(
+                    "seq={} type={} work={:?} payload={}",
+                    event.sequence,
+                    event.kind,
+                    event.work_item_id,
+                    event.payload.unwrap_or(json!(null))
+                );
+            }
+            println!("next_cursor={:?}", page.next_cursor);
+        }
         "initial" | "comment" => {
             let request = Request {
                 comment: if command == "comment" {
