@@ -26,7 +26,7 @@ struct Grid {
 }
 #[derive(Template)]
 #[template(
-    source = r#"<p class="px-2 pb-2 text-xs text-ink-muted">{{ names.len() }} loaded modules</p><ul id="system-info-applications-list" class="flex flex-wrap gap-1 px-2 pb-2">{% for name in names %}<li id="system-info-application-{{ name }}" class="rounded-md border border-line bg-surface-sunken px-1.5 py-0.5 text-xs tabular-nums text-ink-muted">{{ name }} <span class="text-ink-faint">{{ version }}</span></li>{% endfor %}</ul>"#,
+    source = r#"<p class="px-2 pb-2 text-xs text-ink-muted">{{ names.len() }} loaded</p><ul id="system-info-applications-list" class="flex flex-wrap gap-1 px-2 pb-2">{% for name in names %}<li id="system-info-application-{{ name }}" class="rounded-md border border-line bg-surface-sunken px-1.5 py-0.5 text-xs tabular-nums text-ink-muted">{{ name }} <span class="text-ink-faint">{{ version }}</span></li>{% endfor %}</ul>"#,
     ext = "html"
 )]
 struct Modules<'a> {
@@ -173,12 +173,16 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
             "database",
             "Database",
             vec![
-                ("Adapter", text("tokio-postgres / PostgreSQL")),
+                (
+                    "Adapter",
+                    database
+                        .as_ref()
+                        .map(|d| format!("PostgreSQL {} / tokio-postgres", d.2)),
+                ),
                 ("Database", database.as_ref().map(|d| d.0.clone())),
                 ("Host", database.as_ref().map(|d| d.1.clone())),
                 ("Pool Size", text(pages.db.status().max_size)),
                 ("Connection", text(connected)),
-                ("PostgreSQL", database.as_ref().map(|d| d.2.clone())),
             ],
         )?,
         card(

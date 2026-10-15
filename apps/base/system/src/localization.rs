@@ -118,7 +118,7 @@ impl LiveState<Scope, Error> for Editor {
                 .await?;
             let mut notice = String::new();
             if let LiveInput::Event(value) = request.input {
-                if value.get("type").and_then(Value::as_str) != Some("save") {
+                if value.get("type").and_then(Value::as_str) != Some("save_locale") {
                     return Err(Error::Invalid);
                 }
                 let (kind, message) = match self.save(request.scope, value).await {
@@ -143,9 +143,11 @@ impl LiveState<Scope, Error> for Editor {
 }
 #[derive(Template)]
 #[template(
-    source = r#"{% import "forms.html" as form %}<form id="localization-form" data-event="save" class="space-y-4 p-4">{% call form::input(field=field) %}{% endcall %}<div class="flex justify-end">{{ save|safe }}</div></form>"#,
+    source = r#"{% import "forms.html" as form %}<form id="localization-form" data-event="save_locale" class="space-y-4 p-4">{% call form::input(field=field) %}{% endcall %}<div class="flex justify-end">{{ save|safe }}</div></form>"#,
     ext = "html"
 )]
+// `save` is the legacy Company edit envelope in live.js; locale uses the
+// generic event path so form values keep their names at the payload root.
 struct LocaleForm {
     field: Field,
     save: Html,

@@ -311,6 +311,7 @@ fn cell(text: &str, class: &str) -> Result<Html> {
 fn badge(text: &str, kind: BadgeKind) -> Result<Html> {
     render(Badge {
         kind,
+        dot: true,
         body: Html::text(text),
         ..Badge::default()
     })
