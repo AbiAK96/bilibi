@@ -4,8 +4,8 @@ use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_ui::{
-    choices, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns, ListState,
-    PageCounts, Pagination, StatusKind, TableEmpty, ToolbarControl,
+    choices, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton, IconContext,
+    ListColumns, ListState, PageCounts, Pagination, StatusKind, TableEmpty, ToolbarControl,
 };
 
 pub(super) struct Data {
@@ -63,14 +63,6 @@ struct When {
     utc: String,
     mode: &'static str,
 }
-// The pin needs the shell's attributes, beyond the generic IconButton model;
-// geometry and glyph still come from the shared icon-button macros.
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}<button type="button" id="performance-pin" data-nav-pin="nav-admin-system-performance" aria-pressed="false" aria-label="Pin Performance to sidebar" title="Pin Performance to sidebar" class="{% call ui::icon_button_class(context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, class="") %}{% endcall %}">{% call ui::icon(name="bilimbi-pin", class="size-3.5") %}{% endcall %}</button>"#,
-    ext = "html"
-)]
-struct Pin;
 #[derive(Template)]
 #[template(
     source = r#"<p id="performance-regression-window" class="mb-2 text-xs text-ink-muted">Current: last hour. Baseline: the preceding hour. At least 5 samples in each window; current p95 must meet the configured slow threshold.</p>"#,
@@ -212,7 +204,12 @@ pub(super) fn page(
     let mut body = render(Header {
         title: Html::text("Performance"),
         subtitle: "Redacted route and background-job diagnostics",
-        title_actions: render(Pin)?,
+        title_actions: render(IconButton {
+            id: "performance-pin",
+            context: IconContext::Inline,
+            nav_pin: "nav-admin-system-performance",
+            ..IconButton::new("bilimbi-pin", "Pin Performance to sidebar")
+        })?,
         ..Header::default()
     })?;
     body.push(&health(data)?);
