@@ -16,6 +16,8 @@ mod feedback_specimen;
 pub mod forms;
 mod html;
 pub mod icons;
+pub mod inline;
+mod inline_specimen;
 pub mod list_columns;
 pub mod list_state;
 pub mod lists;
@@ -45,6 +47,11 @@ pub use forms::{
     RestrictedField, Reveal, SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
 };
 pub use html::Html;
+pub use inline::{
+    CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField,
+    InlineLongText,
+};
+pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
 pub use list_columns::{BuiltinColumn, ColumnsOutcome, ListColumns};
 pub use list_state::{Filter, ListSpec, ListState, PageCounts, SortDir};
 pub use lists::{
@@ -67,7 +74,12 @@ pub const JS: &str = include_str!("../assets/live.js");
 pub const SHELL_JS: &str = include_str!("../assets/shell.js");
 pub const UI_JS: &str = include_str!("../assets/ui.js");
 /// The `data-hook` browser behaviour of the shared form controls.
-pub const HOOKS_JS: &str = include_str!("../assets/hooks.js");
+pub const HOOKS_JS: &str = concat!(
+    include_str!("../assets/hooks.js"),
+    // Both files are semicolon-free IIFEs; without this the second calls the first.
+    "\n;\n",
+    include_str!("../assets/inline.js")
+);
 /// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
 

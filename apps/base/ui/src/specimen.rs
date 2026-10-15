@@ -3,6 +3,7 @@
 //! baseline for parity with Bilimbi's Design Library specimens, not the Design
 //! Library itself. Secondary slots are built through the typed models, so the
 //! page exercises both the macro and the Rust paths.
+use crate::inline_specimen::InlineSamples;
 use crate::{
     choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, CodeInput, Combobox,
     Field, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect, PageVariant,
@@ -27,6 +28,7 @@ pub struct ComponentsSpecimen {
     /// The help, error and locked fields, rendered through the typed models.
     field_states: Html,
     radio_disabled: Html,
+    inline: InlineSamples,
 }
 
 /// The form controls of the specimen, mirroring Bilimbi's Design Library
@@ -384,6 +386,7 @@ impl ComponentsSpecimen {
             controls: FormControls::new(),
             field_states,
             radio_disabled,
+            inline: InlineSamples::new()?,
         })
     }
 }

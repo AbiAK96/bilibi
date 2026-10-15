@@ -61,6 +61,15 @@
       this.input.value = this.normalize(this.input.value)
       this.input.classList.add("absolute", "opacity-0", "pointer-events-none")
       this.el.querySelector("[data-code-boxes]").hidden = false
+      // An inline choice shell restores a versioned draft without committing.
+      this.onChoiceValue = ({detail}) => {
+        this.selectedValue = detail.value;
+        this.selectedLabel = this.options().find(option => option.dataset.value === detail.value)?.dataset.label || "";
+        this.valueInput.value = detail.value;
+        this.restore();
+        this.applyFilter();
+      }
+      this.el.addEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.addEventListener("input", this.onInput)
       this.input.addEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.addEventListener(event, this.paint)
@@ -74,6 +83,7 @@
       this.paint()
     },
     destroyed() {
+      this.el.removeEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.removeEventListener("input", this.onInput)
       this.input.removeEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.removeEventListener(event, this.paint)
