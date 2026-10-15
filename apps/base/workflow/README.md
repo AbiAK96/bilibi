@@ -1,7 +1,7 @@
 # Workflow status kernel
 
 Workflow owns status configuration, edges, subject bindings, append-only
-history, and immutable versioned process runs. Its facade accepts a sealed
+history, and immutable versioned process runs with their lifecycle. Its facade accepts a sealed
 `bilibi_tenancy::Scope`, a subject kind (public key or alias) and the owner's
 record ID. It never queries an owner's table: the owner proves identity, tenant
 and current status through its `SubjectAdapter`. Worker leases, human-action
@@ -58,6 +58,41 @@ fingerprint and every persisted step and dependency before returning anything.
 Reads take no row locks and graph reads are bounded by the installed definition
 size. A changed contribution under a saved version conflicts; a malformed
 saved graph is refused.
+
+## Run lifecycle
+
+`Engine::update_run(scope, run_id, command)` applies one `RunCommand`;
+`update_run_in(&mut MutationTransaction, ...)` commits it with the owner's
+other business writes, and a refusal poisons that whole transaction. Each
+command re-authenticates the scope, locks the subject, then the run, then its
+work items, and asks both adapters to authorize its own operation
+(`ReconcileRun`, `CompleteWork`, `SignalRun`, `PauseRun`, `ResumeRun`,
+`SupersedeRun`). `ReadRun` never grants any of them.
+
+- `Complete { step_key, completion }` finishes an `available`, due item of a
+  running run. `completion.expected_version` and `executor_key` must match the
+  item, so a stale or misrouted completion conflicts. The outcome, output and
+  `result_ref` are saved once; a completed item never changes again.
+- A dependency accepts the outcomes it lists (default `completed`). An `All`
+  step needs every dependency accepted; an `Any` step needs one. When no
+  acceptable outcome can still arrive, the step is blocked with an event, and
+  that block propagates downstream.
+- `Signal { name, payload, idempotency_key }` marks every unfinished item that
+  requires `name`. Repeating the same key and payload is a no-op; the same key
+  with another signal or payload conflicts. Signals need a running run.
+- A released step starts its timer at the later of the run's `available_at`
+  and now, plus `delay_seconds`, and becomes `available` once due. `Reconcile`
+  releases due timers; no background sweep exists yet.
+- `Pause { reason }` and `Resume` toggle a running run; repeating either is a
+  no-op. A paused run refuses completion and signals, and resuming re-settles
+  the graph from its saved facts.
+- `Supersede { reason }` blocks every unfinished item with cause
+  `process_superseded`, keeps terminal work as recorded, and finishes the run.
+  A live worker lease refuses it; a finished run returns unchanged.
+
+Every write appends to the run's event log with a contiguous per-run
+`sequence`, and the run finishes as `failed`, `blocked` or `completed` (in
+that precedence) once every item is terminal.
 
 `Engine::initialize` is the explicit insert-only seed for flows, statuses and
 edges, run by a trusted admin or seed adapter holding
@@ -155,8 +190,41 @@ the v1 and v2 run IDs `1` and `3` in this sequence because the replay consumes
 an unused database sequence value; use IDs printed by `start` if other runs
 already exist.
 
+To demonstrate the run lifecycle, start the six-step `reference.lifecycle`
+graph and drive it (on a fresh database the run ID is `1`; use the ID `start`
+prints otherwise):
+
+```sh
+cargo run -p bilibi-workflow --example owner -- start-lifecycle 4 1
+cargo run -p bilibi-workflow --example owner -- complete 4 1 first accepted
+cargo run -p bilibi-workflow --example owner -- pause 4 1 "Operator review"
+cargo run -p bilibi-workflow --example owner -- complete 4 1 second
+cargo run -p bilibi-workflow --example owner -- resume 4 1
+cargo run -p bilibi-workflow --example owner -- complete 4 1 second
+cargo run -p bilibi-workflow --example owner -- complete 4 1 any
+cargo run -p bilibi-workflow --example owner -- complete 4 1 all
+cargo run -p bilibi-workflow --example owner -- signal 4 1 review.approved
+cargo run -p bilibi-workflow --example owner -- complete 4 1 signal
+cargo run -p bilibi-workflow --example owner -- reconcile 4 1
+cargo run -p bilibi-workflow --example owner -- events 4 1
+```
+
+Completing `first` releases `any` while `all` waits for `second`. The paused
+run refuses `second`, and after `resume` the completed `first` keeps its
+outcome and output. `signal` releases the approval step; repeating it is a
+no-op and a different payload under the same key (`signal 4 1 review.approved
+'{"approved":false}' approval:1`) conflicts. Completing `signal` starts the
+two-second timer on `delayed`; `reconcile` releases it once due, after which
+`complete 4 1 delayed` finishes the run. `complete-stale` and
+`complete-executor-mismatch` conflict. On a second record, `complete 4 <run>
+first rejected` blocks `all`, `signal` and `delayed`; `complete-outer-fail
+4 <run> second` completes inside an owner transaction that rolls back, leaving
+`second` available; `supersede 4 <run>` blocks the remaining work.
+
 Arguments are `command [user-id] [record-id]`; user 4 is the seeded admin.
-For `run`, `run-drift` and `events`, the final argument is a process run ID.
+For `run`, `run-drift`, `events` and the lifecycle commands, the record-ID
+position takes a process run ID. Lifecycle commands then take a step key,
+signal name or reason; `complete` also takes an optional outcome.
 `init` first marks tenant 1 as the platform operator in that disposable
 database, because `Engine::initialize` requires the platform capability
 `admin.workflow.definition.manage`; production operator bootstrap is K17.
