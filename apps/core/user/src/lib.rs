@@ -2,6 +2,7 @@
 mod contributions;
 mod directory;
 pub mod password;
+mod preferences;
 mod reset;
 mod verification;
 pub mod web;
@@ -9,6 +10,10 @@ pub mod web;
 use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_security::{authorize, guard, Capability, Scope, Sessions};
 pub use password::PolicyViolation;
+pub use preferences::{
+    list_pins, normalize_label, normalize_url, presentation, Pin, PreferenceError, Presentation,
+    MAX_PINS, THEMES, THEME_KEY,
+};
 use serde_json::json;
 use tokio::sync::broadcast;
 use tokio_postgres::GenericClient;
@@ -18,6 +23,10 @@ pub const MIGRATION: (&str, &str) = ("002-user", include_str!("../migrations/002
 pub const CREDENTIALS_MIGRATION: (&str, &str) = (
     "core-user-003-credentials",
     include_str!("../migrations/003-credentials.sql"),
+);
+pub const PINS_MIGRATION: (&str, &str) = (
+    "core-user-004-pins",
+    include_str!("../migrations/004-pins.sql"),
 );
 
 /// Blocking Argon2id hash for seeds and tools; services use `password::hash`.
@@ -198,6 +207,9 @@ pub struct UserService {
     pub notifications: Notifications,
     pub mutations: std::sync::Arc<MutationBoundary>,
     mailer: std::sync::Arc<bilibi_mail::Mailer>,
+    settings: std::sync::Arc<bilibi_settings::Settings>,
+    display: std::sync::Arc<bilibi_datetime::DisplayPolicy>,
+    locales: std::sync::Arc<bilibi_locale::Locales>,
     signer: Signer,
     /// Public origin that emailed links point at (`APP_ORIGIN`).
     origin: String,
@@ -205,13 +217,13 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.accounts",factory:|services| {
             let notifications = Notifications::default();
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
+            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
             Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?}))))
