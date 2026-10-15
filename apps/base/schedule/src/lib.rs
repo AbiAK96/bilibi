@@ -1,18 +1,23 @@
-//! Immutable contributed recurrences, fingerprint review and suppression.
-//! Occurrence claiming, enqueue and history build on this (Q4); the operator
-//! board is Q5. Nothing here runs work.
+//! Immutable contributed recurrences, fingerprint review and suppression, and
+//! the durable occurrence claim that hands exactly one job per occurrence to
+//! the Queue. The operator board is Q5. Work itself runs on the Queue.
 pub mod cron;
 pub mod definition;
+pub mod occurrence;
 pub mod recurrence;
+pub mod scheduler;
+pub mod worker;
 pub use definition::{Definition, Misfire, Overlap, DEFINITIONS, RESERVED_ARGUMENT};
+pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
+pub use scheduler::Scheduler;
 
 use bilibi_authz::{
     authorize_key, authorize_operator, CapabilityDefinition, RoleDefinition,
-    VocabularyContribution, VOCABULARY,
+    SystemPrincipalDefinition, SystemScope, VocabularyContribution, VOCABULARY,
 };
-use bilibi_database::{Change, Error, MutationBoundary, Result};
+use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Catalog, Contribution, Module, Provenance, RegistryError, Service};
-use bilibi_queue::Queue;
+use bilibi_queue::{JobRef, Queue};
 use bilibi_tenancy::Scope;
 use jiff::{tz::TimeZone, Timestamp};
 use serde_json::{json, Value};
@@ -22,6 +27,10 @@ use tokio_postgres::{Client, GenericClient, Transaction};
 pub const VIEW: &str = "admin.system.schedule.view";
 pub const EXECUTE: &str = "admin.system.schedule.execute";
 pub const MANAGE: &str = "admin.system.schedule.manage";
+/// The system principal recurrences are enqueued and executed as. It must be
+/// granted [`EXECUTE`] in the operator tenant (`Grants::set_system`) before
+/// any claimed job can run; declaration alone grants nothing.
+pub const PRINCIPAL: &str = "scheduler";
 
 /// A validated definition with its owner, parsed recurrence and fingerprint.
 pub struct Registered {
@@ -99,17 +108,34 @@ pub struct Task {
     pub next_due_at: Option<Timestamp>,
 }
 
+/// A committed claim: the occurrence row and its provisional-until-commit job.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Claimed {
+    pub occurrence_id: i64,
+    pub job: JobRef,
+    pub intended_at: Timestamp,
+    pub trigger: Trigger,
+}
+enum Enqueuer<'a> {
+    Scheduler(&'a SystemScope),
+    Operator(&'a bilibi_tenancy::Scope),
+}
+
 pub struct Schedule {
     definitions: BTreeMap<&'static str, Registered>,
     boundary: Arc<MutationBoundary>,
+    queue: Arc<Queue>,
+    db: Db,
 }
 impl Schedule {
     /// Validates every contribution against the Queue's worker catalog: the
-    /// worker must exist, belong to the contributing module, and accept the args.
+    /// worker must exist, belong to the contributing module, accept the args,
+    /// and keep the schedule metadata the claim attaches (`worker::validate`).
     pub fn from_catalog(
         catalog: &Catalog,
-        queue: &Queue,
+        queue: Arc<Queue>,
         boundary: Arc<MutationBoundary>,
+        db: Db,
     ) -> bilibi_module_registry::Result<Self> {
         let mut definitions = BTreeMap::new();
         for entry in catalog.entries::<Definition>(DEFINITIONS)? {
@@ -137,6 +163,21 @@ impl Schedule {
                 .map_err(|_| fail("worker refuses the arguments"))?;
             bilibi_queue::arguments::validate(&normalized)
                 .map_err(|_| fail("normalized arguments exceed the transport bounds"))?;
+            let fingerprint =
+                definition::fingerprint(entry.id, entry.provenance.module, definition, &args);
+            // The claim enqueues these arguments plus the reserved metadata; a
+            // validator that strips or rejects it would refuse every claim.
+            let mut probe = normalized.clone();
+            probe[RESERVED_ARGUMENT] = worker::probe(entry.id, definition.task_name, &fingerprint);
+            let expected = probe[RESERVED_ARGUMENT].clone();
+            match (worker.definition.validate)(probe) {
+                Ok(kept) if kept.get(RESERVED_ARGUMENT) == Some(&expected) => {}
+                _ => {
+                    return Err(fail(
+                        "worker does not keep schedule metadata; validate through bilibi_schedule::worker::validate",
+                    ))
+                }
+            }
             definitions.insert(
                 entry.id,
                 Registered {
@@ -145,12 +186,7 @@ impl Schedule {
                     definition,
                     cron,
                     zone,
-                    fingerprint: definition::fingerprint(
-                        entry.id,
-                        entry.provenance.module,
-                        definition,
-                        &args,
-                    ),
+                    fingerprint,
                     args: normalized,
                 },
             );
@@ -158,6 +194,8 @@ impl Schedule {
         Ok(Self {
             definitions,
             boundary,
+            queue,
+            db,
         })
     }
     pub fn definitions(&self) -> impl Iterator<Item = &Registered> {
@@ -380,7 +418,209 @@ impl Schedule {
     }
 }
 
-/// Serialises review, suppression and (Q4) claims for one key until the
+impl Schedule {
+    /// The scheduler's claim for the occurrence at `intended_at`. See [`claim`].
+    pub async fn claim_scheduled(
+        &self,
+        client: &mut Client,
+        scheduler: &SystemScope,
+        key: &str,
+        intended_at: Timestamp,
+    ) -> Result<std::result::Result<Claimed, Refusal>> {
+        self.claim(
+            client,
+            Enqueuer::Scheduler(scheduler),
+            key,
+            intended_at,
+            Trigger::Scheduled,
+            None,
+        )
+        .await
+    }
+    /// Operator run-now: one manual occurrence at `now`, queued as the operator
+    /// (never executed inline) and audited as `schedule.run.queued`. It goes
+    /// through the same review, suppression, overlap and claim path as the
+    /// scheduler; an overlap refusal is recorded as a skipped run naming who asked.
+    pub async fn run_now(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        key: &str,
+        now: Timestamp,
+    ) -> Result<std::result::Result<Claimed, Refusal>> {
+        authorize_operator(&*client, scope, EXECUTE).await?;
+        let item = self.definitions.get(key).ok_or(Error::NotFound)?;
+        let name = scope.user_name.trim();
+        let triggered_by = TriggeredBy {
+            user_id: scope.user(),
+            name: (!name.is_empty()).then(|| name.chars().take(255).collect()),
+        };
+        let claim = self
+            .claim(
+                client,
+                Enqueuer::Operator(scope),
+                key,
+                now,
+                Trigger::Manual,
+                Some(&triggered_by),
+            )
+            .await?;
+        if claim == Err(Refusal::Overlap) {
+            if let Err(error) = occurrence::record_skipped(
+                &*client,
+                item,
+                occurrence::micros(now),
+                Trigger::Manual,
+                Some(&triggered_by),
+            )
+            .await
+            {
+                eprintln!("schedule overlap history recording unavailable: key={key} {error}");
+            }
+        }
+        Ok(claim)
+    }
+    /// Occurrence row, job and audit evidence commit or roll back together
+    /// under the per-key lock, after reconciling this key's unfinished
+    /// occurrences from Queue's terminal state. The same intended instant is
+    /// claimed at most once ever, by whichever process gets there first; a
+    /// forbid-overlap definition is refused while an earlier occurrence is
+    /// unfinished. Refusals write nothing.
+    async fn claim(
+        &self,
+        client: &mut Client,
+        by: Enqueuer<'_>,
+        key: &str,
+        intended_at: Timestamp,
+        trigger: Trigger,
+        triggered_by: Option<&TriggeredBy>,
+    ) -> Result<std::result::Result<Claimed, Refusal>> {
+        let item = self.definitions.get(key).ok_or(Error::NotFound)?;
+        let intended_at = occurrence::micros(intended_at);
+        let (context, tenant) = match by {
+            Enqueuer::Scheduler(scope) => (
+                scope.mutation_context("schedule.occurrence.claimed"),
+                scope.tenant(),
+            ),
+            Enqueuer::Operator(scope) => (
+                scope.mutation_context("schedule.run.queued"),
+                scope.tenant(),
+            ),
+        };
+        let mut tx = self.boundary.begin(client, context).await?;
+        lock(tx.sql(), key).await?;
+        let refusal = match self.eligibility(tx.sql(), key).await? {
+            Eligibility::Eligible => None,
+            Eligibility::Unreviewed => Some(Refusal::Unreviewed),
+            Eligibility::Disabled => Some(Refusal::Disabled),
+            Eligibility::Suppressed => Some(Refusal::Suppressed),
+        };
+        if let Some(refusal) = refusal {
+            tx.rollback().await?;
+            return Ok(Err(refusal));
+        }
+        occurrence::reconcile(tx.sql(), Some(key)).await?;
+        let at = occurrence::to_pg(intended_at);
+        if tx
+            .sql()
+            .query_opt(
+                "SELECT 1 FROM base_schedule_occurrences WHERE key=$1 AND intended_at=$2 AND trigger=$3",
+                &[&key, &at, &trigger.as_str()],
+            )
+            .await?
+            .is_some()
+        {
+            tx.rollback().await?;
+            return Ok(Err(Refusal::AlreadyClaimed));
+        }
+        let overlap_key =
+            (item.definition.overlap == Overlap::Forbid).then(|| format!("scheduler:{key}"));
+        if let Some(overlap_key) = &overlap_key {
+            if tx
+                .sql()
+                .query_opt(
+                    "SELECT 1 FROM base_schedule_occurrences WHERE overlap_key=$1 AND finished_at IS NULL",
+                    &[overlap_key],
+                )
+                .await?
+                .is_some()
+            {
+                tx.rollback().await?;
+                return Ok(Err(Refusal::Overlap));
+            }
+        }
+        let metadata = worker::Metadata {
+            key: key.into(),
+            name: item.definition.task_name.into(),
+            expression: (trigger == Trigger::Scheduled).then(|| item.definition.expression.into()),
+            fingerprint: item.fingerprint.clone(),
+            intended_at,
+            trigger,
+            triggered_by_user_id: triggered_by.map(|t| t.user_id),
+            triggered_by_name: triggered_by.and_then(|t| t.name.clone()),
+        };
+        let mut args = item.args.clone();
+        args[RESERVED_ARGUMENT] = metadata.to_json();
+        let job = match by {
+            Enqueuer::Scheduler(scope) => {
+                self.queue
+                    .enqueue_system(&mut tx, scope, item.definition.worker, args)
+                    .await?
+            }
+            Enqueuer::Operator(scope) => {
+                self.queue
+                    .enqueue_for(&mut tx, scope, item.definition.worker, args)
+                    .await?
+            }
+        };
+        let key = key.to_owned();
+        let occurrence_id = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let id: i64 = sql
+                        .query_one(
+                            "INSERT INTO base_schedule_occurrences(key,intended_at,trigger,overlap_key,state,tenant_id,job_id) VALUES($1,$2,$3,$4,'queued',$5,$6) RETURNING id",
+                            &[&key, &at, &trigger.as_str(), &overlap_key, &tenant, &job.id()],
+                        )
+                        .await?
+                        .get(0);
+                    Ok((
+                        id,
+                        vec![Change {
+                            kind: "base/schedule.occurrence".into(),
+                            id,
+                            old: Value::Null,
+                            new: json!({"key": key, "intended_at": intended_at.to_string(), "trigger": trigger.as_str(), "job_id": job.id(), "overlap_key": overlap_key}),
+                        }],
+                    ))
+                })
+            })
+            .await?;
+        tx.commit().await?;
+        Ok(Ok(Claimed {
+            occurrence_id,
+            job,
+            intended_at,
+            trigger,
+        }))
+    }
+    /// Redacted run history, newest first, bounded to 500 rows. Needs `VIEW`.
+    pub async fn runs(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        key: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<Run>> {
+        authorize_key(client, scope, VIEW).await?;
+        if !(1..=500).contains(&limit) {
+            return Err(Error::Invalid);
+        }
+        occurrence::runs(client, key, limit).await
+    }
+}
+
+/// Serialises review, suppression and claims for one key until the
 /// surrounding transaction ends.
 pub async fn lock(tx: &Transaction<'_>, key: &str) -> Result<()> {
     tx.execute(
@@ -410,17 +650,18 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/schedule", Provenance {
     // Installation-global: the persistent operator identity is required too.
     capabilities: &[CapabilityDefinition::platform(VIEW), CapabilityDefinition::platform(EXECUTE), CapabilityDefinition::platform(MANAGE)],
     roles: &[RoleDefinition { code: "system_viewer", name: "System Viewer", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[VIEW] }],
-    system_principals: &[],
+    system_principals: &[SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[EXECUTE] }],
 }) }
 inventory::submit! {
     Module { id: "base/schedule", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue"],
-        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql"))],
+        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql"))],
         services: &[Service { id: "base/schedule.store", factory: |services| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             let queue = services.get::<Queue>("base/queue.store")?;
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
-            Ok(Arc::new(Schedule::from_catalog(&catalog, &queue, boundary)?))
+            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+            Ok(Arc::new(Schedule::from_catalog(&catalog, queue, boundary, db)?))
         } }],
     }
 }

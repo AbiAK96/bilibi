@@ -16,6 +16,7 @@ inventory.workspace = true
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 serde_json.workspace = true
 sha2 = "0.11.1"
+tokio.workspace = true
 tokio-postgres.workspace = true
 
 [dev-dependencies]

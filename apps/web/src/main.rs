@@ -47,8 +47,13 @@ async fn main() -> Result<()> {
                 &app.services,
                 bilibi_base::queue::execution::Config::default(),
             )?;
+            let scheduler = bilibi_base::schedule::Scheduler::from_services(
+                &app.services,
+                bilibi_base::schedule::scheduler::Config::default(),
+            )?;
             let (stop, stopped) = tokio::sync::watch::channel(false);
-            let worker = tokio::spawn(executor.run(stopped));
+            let worker = tokio::spawn(executor.run(stopped.clone()));
+            let ticker = tokio::spawn(scheduler.run(stopped));
             let shutdown = stop.clone();
             let result = axum::serve(listener, bilibi_web::router(app))
                 .with_graceful_shutdown(async move {
@@ -59,6 +64,7 @@ async fn main() -> Result<()> {
                 .map_err(|_| Error::Internal);
             let _ = stop.send(true);
             worker.await.map_err(|_| Error::Internal)??;
+            ticker.await.map_err(|_| Error::Internal)??;
             result?;
         }
         _ => return Err(Error::Invalid),
