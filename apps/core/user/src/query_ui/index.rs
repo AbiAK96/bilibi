@@ -192,7 +192,7 @@ impl LiveState<Scope, Error> for Index {
                 &self.pages,
                 request.scope,
                 &self.list,
-                &mut self.columns,
+                &self.columns,
                 found,
                 editor,
                 self.pending.as_ref(),

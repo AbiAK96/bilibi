@@ -87,7 +87,7 @@ pub(super) async fn index(
     pages: &Pages,
     scope: &Scope,
     list: &ListState,
-    columns: &mut ListColumns,
+    columns: &ListColumns,
     found: queries::QueryPage,
     editor: bool,
     pending: Option<&queries::SavedQuery>,
@@ -101,9 +101,11 @@ pub(super) async fn index(
         .display(&**client, scope, None, locale)
         .await?;
     let mut rows = Vec::new();
-    for row in columns.load(&found.entries, |query| query.id.to_string()) {
-        let query = row.record;
-        let mut result = FlexRow::new(&row.key)
+    // Rendering a column event must retain the add-column query and offers.
+    // This static catalogue changes only through ListColumns::handle.
+    for query in &found.entries {
+        let key = query.id.to_string();
+        let mut result = FlexRow::new(&key)
             .slot(
                 "name",
                 fragment(&QueryLink {
@@ -156,7 +158,7 @@ pub(super) async fn index(
                     id: &format!("duplicate-query-{}", query.id),
                     event: "duplicate",
                     name: "id",
-                    value: &row.key,
+                    value: &key,
                     ..IconButton::new("duplicate", "Duplicate query")
                 })?,
                 delete: fragment(&IconButton {
@@ -164,7 +166,7 @@ pub(super) async fn index(
                     kind: IconKind::Danger,
                     event: "request_delete",
                     name: "id",
-                    value: &row.key,
+                    value: &key,
                     ..IconButton::new("delete", "Delete query")
                 })?,
             })?;
