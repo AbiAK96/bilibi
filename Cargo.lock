@@ -204,6 +204,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-agent-access"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "deadpool-postgres",
+ "getrandom 0.4.3",
+ "inventory",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
+]
+
+[[package]]
 name = "bilibi-agent-api"
 version = "0.1.0"
 dependencies = [
@@ -331,6 +357,7 @@ dependencies = [
 name = "bilibi-core"
 version = "0.1.0"
 dependencies = [
+ "bilibi-agent-access",
  "bilibi-company",
  "bilibi-party",
  "bilibi-user",
