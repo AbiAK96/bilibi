@@ -1,0 +1,715 @@
+//! The company's public Organisation identity and the writes that create one
+//! (Bilimbi `Bilimbi.Core.Company` `identity/2`, `require_live_company/2`,
+//! `require_writable_company/2`, `create_company/3`, `preview_create_company/2`
+//! and `Schema.creation_changeset/2`). Company is the owner named in
+//! `core/party`'s `OWNERSHIP`: the `OrganisationId` of a company is its row id,
+//! so every existing id and `/companies/{id}` URL is kept.
+use crate::{
+    contributions::{CREATE, TENANT_WIDE},
+    Company, FieldError, WriteError, MASK,
+};
+use bilibi_authz::{authorize_key, restrictions};
+use bilibi_database::{Change, Error, MutationTransaction, Result};
+use bilibi_party_ids::OrganisationId;
+use bilibi_tenancy::{OrganisationProvider, ProofClient, ProofFuture, Scope};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::collections::HashSet;
+use tokio_postgres::{GenericClient, Transaction};
+
+/// The columns of `companies` a read model carries, with restricted ones
+/// masked (`Company::from_row`).
+pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version";
+/// The fields a role may be restricted from (Bilimbi `Summary`); `code` and
+/// `status` are protected, `id` and `name` implicitly.
+pub const RESTRICTABLE: [&str; 7] = [
+    "registration_number",
+    "tax_id",
+    "jurisdiction",
+    "email",
+    "phone",
+    "website",
+    "revenue",
+];
+/// The statuses a company may be created in; the others are reached only
+/// through a lifecycle operation (K2).
+pub const INITIAL_STATUSES: [&str; 2] = ["active", "pending"];
+pub const STATUSES: [&str; 4] = ["active", "suspended", "pending", "archived"];
+const ARCHIVED: &str = "archived";
+
+/// Id, code and the name a header shows: the legal name when there is one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub id: OrganisationId,
+    pub code: String,
+    pub display_name: String,
+}
+
+/// One live company's identity in this tenant, or `None` for a missing,
+/// soft-deleted or other-tenant id.
+pub async fn identity(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: i64,
+) -> Result<Option<Identity>> {
+    if id <= 0 {
+        return Ok(None);
+    }
+    let row = client
+        .query_opt(
+            "SELECT id,code,legal_name,name FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            &[&scope.tenant(), &id],
+        )
+        .await?;
+    row.map(|row| {
+        let legal_name: Option<String> = row.get(2);
+        let name: String = row.get(3);
+        Ok(Identity {
+            id: OrganisationId::new(row.get(0)).map_err(|_| Error::Internal)?,
+            code: row.get(1),
+            display_name: display_name(legal_name.as_deref(), &name),
+        })
+    })
+    .transpose()
+}
+
+pub fn display_name(legal_name: Option<&str>, name: &str) -> String {
+    match legal_name {
+        Some(legal) if !legal.trim().is_empty() => legal.to_owned(),
+        _ => name.to_owned(),
+    }
+}
+
+/// Confirms one company is live in this tenant, for a caller that only needs
+/// it to exist before acting on something attached to it.
+pub async fn require_live(client: &impl GenericClient, scope: &Scope, id: i64) -> Result<i64> {
+    if id <= 0 {
+        return Err(Error::NotFound);
+    }
+    client
+        .query_opt(
+            "SELECT id FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            &[&scope.tenant(), &id],
+        )
+        .await?
+        .map(|_| id)
+        .ok_or(Error::NotFound)
+}
+
+/// The guard every write to a company or into it begins with: a live row
+/// whose status is `archived` is read-only for good (`WriteError::Archived`).
+/// `lock` takes the row `FOR UPDATE`, so the status judged is the one the
+/// caller's transaction will see until it commits.
+pub async fn require_writable(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: i64,
+    lock: bool,
+) -> std::result::Result<i64, WriteError> {
+    if id <= 0 {
+        return Err(WriteError::NotFound);
+    }
+    let sql = format!(
+        "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        if lock { " FOR UPDATE" } else { "" }
+    );
+    let row = client
+        .query_opt(&sql, &[&scope.tenant(), &id])
+        .await
+        .map_err(Error::from)?
+        .ok_or(WriteError::NotFound)?;
+    if row.get::<_, String>(0) == ARCHIVED {
+        return Err(WriteError::Archived);
+    }
+    Ok(id)
+}
+
+/// Authorizes one live company as the target of an operation (Bilimbi
+/// `authorize_company_target/3`): the capability now, and either the company
+/// the actor is affiliated with or `admin.company.tenant-wide.manage` for any
+/// other company of the tenant. Missing and cross-tenant ids are `NotFound`.
+pub async fn authorize_target(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: i64,
+    capability: &str,
+) -> Result<i64> {
+    authorize_key(client, scope, capability).await?;
+    require_live(client, scope, id).await?;
+    let own = scope
+        .actor()
+        .organisation()
+        .is_some_and(|organisation| organisation.get() == id);
+    if !own {
+        authorize_key(client, scope, TENANT_WIDE).await?;
+    }
+    Ok(id)
+}
+
+/// The Tenancy proof provider bound at boot (`PartyProofs::bind_organisations`):
+/// a target is proven only when it is a live, unarchived company of the
+/// actor's own tenant. An id alone is never such a proof.
+pub struct Provider;
+impl OrganisationProvider for Provider {
+    fn prove<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        id: OrganisationId,
+    ) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            let row = client
+                .query_opt(
+                    "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+                    &[&scope.tenant(), &id.get()],
+                )
+                .await?
+                .ok_or(Error::NotFound)?;
+            if row.get::<_, String>(0) == ARCHIVED {
+                return Err(Error::Forbidden);
+            }
+            Ok(())
+        })
+    }
+}
+
+/// `BlbStr::code`: Belimbing's slug of a name, kept so a code generated here
+/// matches one generated by the source. Dashes become the separator, `@` the
+/// word `at`, other punctuation is removed (not separated), Latin accents are
+/// stripped and anything still non-ASCII is dropped.
+pub fn slug_code(name: &str) -> String {
+    let mut slug = String::new();
+    let mut separator = false;
+    for ch in name.chars() {
+        let ch = match ch {
+            '-' | '_' => '_',
+            '@' => {
+                push_separated(&mut slug, &mut separator);
+                slug.push_str("at");
+                separator = true;
+                continue;
+            }
+            ch if ch.is_whitespace() => '_',
+            ch => strip_accent(ch),
+        };
+        if ch == '_' {
+            separator = !slug.is_empty();
+        } else if ch.is_ascii_alphanumeric() {
+            push_separated(&mut slug, &mut separator);
+            slug.push(ch.to_ascii_lowercase());
+        }
+    }
+    slug.chars().take(255).collect()
+}
+fn push_separated(slug: &mut String, separator: &mut bool) {
+    if *separator && !slug.is_empty() {
+        slug.push('_');
+    }
+    *separator = false;
+}
+/// Latin-1 and Latin Extended-A letters to their base letter; others unchanged.
+fn strip_accent(ch: char) -> char {
+    const TABLE: &[(&str, char)] = &[
+        ("ÀÁÂÃÄÅĀĂĄ", 'A'),
+        ("àáâãäåāăą", 'a'),
+        ("ÇĆĈĊČ", 'C'),
+        ("çćĉċč", 'c'),
+        ("ĎĐ", 'D'),
+        ("ďđ", 'd'),
+        ("ÈÉÊËĒĔĖĘĚ", 'E'),
+        ("èéêëēĕėęě", 'e'),
+        ("ĜĞĠĢ", 'G'),
+        ("ĝğġģ", 'g'),
+        ("ĤĦ", 'H'),
+        ("ĥħ", 'h'),
+        ("ÌÍÎÏĨĪĬĮİ", 'I'),
+        ("ìíîïĩīĭįı", 'i'),
+        ("Ĵ", 'J'),
+        ("ĵ", 'j'),
+        ("Ķ", 'K'),
+        ("ķ", 'k'),
+        ("ĹĻĽĿŁ", 'L'),
+        ("ĺļľŀł", 'l'),
+        ("ÑŃŅŇ", 'N'),
+        ("ñńņň", 'n'),
+        ("ÒÓÔÕÖØŌŎŐ", 'O'),
+        ("òóôõöøōŏő", 'o'),
+        ("ŔŖŘ", 'R'),
+        ("ŕŗř", 'r'),
+        ("ŚŜŞŠ", 'S'),
+        ("śŝşš", 's'),
+        ("ŢŤŦ", 'T'),
+        ("ţťŧ", 't'),
+        ("ÙÚÛÜŨŪŬŮŰŲ", 'U'),
+        ("ùúûüũūŭůűų", 'u'),
+        ("Ŵ", 'W'),
+        ("ŵ", 'w'),
+        ("ÝŶŸ", 'Y'),
+        ("ýÿŷ", 'y'),
+        ("ŹŻŽ", 'Z'),
+        ("źżž", 'z'),
+    ];
+    TABLE
+        .iter()
+        .find(|(accented, _)| accented.contains(ch))
+        .map_or(ch, |(_, base)| *base)
+}
+
+/// What a create submits: the creation fields of Bilimbi's schema, as the
+/// create page, the agent operation and the provisioning command send them.
+/// Unknown keys (HR, account, grant fields) are refused.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct NewCompany {
+    pub name: String,
+    pub code: Option<String>,
+    pub status: Option<String>,
+    pub parent_id: Option<i64>,
+    pub legal_name: Option<String>,
+    pub registration_number: Option<String>,
+    pub tax_id: Option<String>,
+    pub legal_entity_type_id: Option<i64>,
+    pub jurisdiction: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub website: Option<String>,
+}
+/// A create that passed its own validation: trimmed, defaulted, with a code.
+/// Reference facts (parent, legal entity type, jurisdiction, code uniqueness)
+/// are still proven on the write's transaction by `check_references`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidCompany {
+    pub name: String,
+    pub code: String,
+    pub status: String,
+    pub parent_id: Option<i64>,
+    pub legal_name: Option<String>,
+    pub registration_number: Option<String>,
+    pub tax_id: String,
+    pub legal_entity_type_id: Option<i64>,
+    pub jurisdiction: Option<String>,
+    pub email: String,
+    pub phone: String,
+    pub website: Option<String>,
+}
+fn trimmed(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+fn bounded(
+    errors: &mut Vec<FieldError>,
+    field: &'static str,
+    value: &Option<String>,
+    max: usize,
+) -> Option<String> {
+    let value = trimmed(value);
+    if value.as_ref().is_some_and(|v| v.chars().count() > max) {
+        errors.push(FieldError::new(
+            field,
+            format!("should be at most {max} character(s)"),
+        ));
+    }
+    value
+}
+/// Bilimbi `Schema.creation_changeset/2` and the restricted-field refusal of
+/// `create_company/3`: a field the actor may not see is not theirs to set,
+/// whatever the value.
+pub fn validate(
+    new: &NewCompany,
+    restricted: &HashSet<String>,
+) -> std::result::Result<ValidCompany, Vec<FieldError>> {
+    let mut errors = Vec::new();
+    let name = new.name.trim().to_owned();
+    if name.is_empty() {
+        errors.push(FieldError::new("name", "can't be blank"));
+    } else if name.chars().count() > 160 {
+        errors.push(FieldError::new(
+            "name",
+            "should be at most 160 character(s)",
+        ));
+    }
+    let code = trimmed(&new.code).unwrap_or_else(|| slug_code(&name));
+    if code.is_empty() {
+        errors.push(FieldError::new("code", "can't be blank"));
+    } else if code.chars().count() > 255 {
+        errors.push(FieldError::new(
+            "code",
+            "should be at most 255 character(s)",
+        ));
+    }
+    let status = trimmed(&new.status).unwrap_or_else(|| "active".into());
+    if !INITIAL_STATUSES.contains(&status.as_str()) {
+        errors.push(FieldError::new("status", "is invalid"));
+    }
+    let legal_name = bounded(&mut errors, "legal_name", &new.legal_name, 255);
+    let registration_number = bounded(
+        &mut errors,
+        "registration_number",
+        &new.registration_number,
+        255,
+    );
+    let tax_id = bounded(&mut errors, "tax_id", &new.tax_id, 64).unwrap_or_default();
+    let phone = bounded(&mut errors, "phone", &new.phone, 64).unwrap_or_default();
+    let website = bounded(&mut errors, "website", &new.website, 255);
+    let email = bounded(&mut errors, "email", &new.email, 254).unwrap_or_default();
+    if !email.is_empty() && !email_shaped(&email) {
+        errors.push(FieldError::new("email", "must be an email address"));
+    }
+    let jurisdiction = trimmed(&new.jurisdiction).map(|iso| iso.to_ascii_uppercase());
+    if jurisdiction
+        .as_ref()
+        .is_some_and(|iso| iso.len() != 2 || !iso.bytes().all(|b| b.is_ascii_uppercase()))
+    {
+        errors.push(FieldError::new(
+            "jurisdiction",
+            "must be a valid country ISO code",
+        ));
+    }
+    for (field, present) in [
+        ("parent_id", new.parent_id.is_some_and(|id| id <= 0)),
+        (
+            "legal_entity_type_id",
+            new.legal_entity_type_id.is_some_and(|id| id <= 0),
+        ),
+    ] {
+        if present {
+            errors.push(FieldError::new(field, "is invalid"));
+        }
+    }
+    let attempted = [
+        ("registration_number", registration_number.is_some()),
+        ("tax_id", !tax_id.is_empty()),
+        ("jurisdiction", jurisdiction.is_some()),
+        ("email", !email.is_empty()),
+        ("phone", !phone.is_empty()),
+        ("website", website.is_some()),
+    ];
+    for (field, present) in attempted {
+        if present && restricted.contains(field) {
+            errors.push(FieldError::new(field, "is restricted"));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    Ok(ValidCompany {
+        name,
+        code,
+        status,
+        parent_id: new.parent_id,
+        legal_name,
+        registration_number,
+        tax_id,
+        legal_entity_type_id: new.legal_entity_type_id,
+        jurisdiction,
+        email,
+        phone,
+        website,
+    })
+}
+/// `~r/^[^\s@]+@[^\s@]+$/`, the source's shape check.
+pub fn email_shaped(email: &str) -> bool {
+    match email.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && !domain.is_empty()
+                && !local.contains(char::is_whitespace)
+                && !domain.contains(['@'])
+                && !domain.contains(char::is_whitespace)
+        }
+        None => false,
+    }
+}
+
+/// Whether a jurisdiction ISO code names a known country. Geonames is the
+/// reference (Bilimbi validates through `Geonames.get_country/1`); an empty
+/// Geonames install knows no country, so a jurisdiction cannot be recorded
+/// until countries are imported.
+pub async fn known_country(client: &impl GenericClient, iso: &str) -> Result<bool> {
+    Ok(client
+        .query_opt("SELECT 1 FROM geonames_countries WHERE iso=$1", &[&iso])
+        .await?
+        .is_some())
+}
+
+/// Proves the reference facts of a validated create on the caller's
+/// connection or transaction: a live parent of the same tenant, an existing
+/// legal entity type, a known jurisdiction and a code no live or deleted
+/// company of the tenant already carries. Returns the field errors found.
+pub async fn check_references(
+    client: &impl GenericClient,
+    tenant: i64,
+    company: &ValidCompany,
+    except_id: Option<i64>,
+) -> Result<Vec<FieldError>> {
+    let mut errors = Vec::new();
+    if let Some(parent) = company.parent_id {
+        let live = client
+            .query_opt(
+                "SELECT id FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+                &[&tenant, &parent],
+            )
+            .await?
+            .is_some();
+        if !live || except_id == Some(parent) {
+            errors.push(FieldError::new(
+                "parent_id",
+                if except_id == Some(parent) {
+                    "cannot be set to itself"
+                } else {
+                    "does not exist"
+                },
+            ));
+        }
+    }
+    if let Some(type_id) = company.legal_entity_type_id {
+        let exists = client
+            .query_opt(
+                "SELECT id FROM company_legal_entity_types WHERE id=$1",
+                &[&type_id],
+            )
+            .await?
+            .is_some();
+        if !exists {
+            errors.push(FieldError::new("legal_entity_type_id", "does not exist"));
+        }
+    }
+    if let Some(iso) = &company.jurisdiction {
+        if !known_country(client, iso).await? {
+            errors.push(FieldError::new(
+                "jurisdiction",
+                "must be a valid country ISO code",
+            ));
+        }
+    }
+    let taken = client
+        .query_opt(
+            "SELECT id FROM companies WHERE tenant_id=$1 AND code=$2 AND id IS DISTINCT FROM $3",
+            &[&tenant, &company.code, &except_id],
+        )
+        .await?
+        .is_some();
+    if taken {
+        errors.push(FieldError::new("code", "has already been taken"));
+    }
+    Ok(errors)
+}
+
+/// Serializes concurrent creates of the same code within a tenant for the
+/// rest of the transaction, so the uniqueness check above cannot race.
+pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('company-code-' || $1::text || ':' || $2, 0))",
+            &[&tenant.to_string(), &code],
+        )
+        .await?;
+    Ok(())
+}
+
+/// Inserts the company row. Plain SQL on the caller's transaction: the
+/// audited paths wrap it in `tx.mutate`, provisioning records its own action.
+pub async fn insert(sql: &Transaction<'_>, tenant: i64, company: &ValidCompany) -> Result<Company> {
+    let row = sql.query_one(&format!("INSERT INTO companies(tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()) RETURNING {COLUMNS}"), &[
+        &tenant, &company.parent_id, &company.name, &company.code, &company.status, &company.legal_name,
+        &company.registration_number, &company.tax_id, &company.legal_entity_type_id, &company.jurisdiction,
+        &company.email, &company.phone, &company.website,
+    ]).await?;
+    Ok(Company::from_row(&row, &HashSet::new()))
+}
+
+/// The outcome of a create: the company, or why it was refused. A refusal
+/// is an outcome a form shows in place, never an `Error`.
+#[derive(Clone, Debug)]
+pub enum CreateOutcome {
+    Created(Box<Company>),
+    Refused(Vec<FieldError>),
+}
+
+/// Creates a company under the scope's tenant as an audited mutation
+/// (Bilimbi `create_company/3`): `admin.company.create` now, the actor's
+/// field restrictions, the reference facts on this transaction, one
+/// `company` change. Shares the caller's transaction; never commits it.
+pub async fn create(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    new: &NewCompany,
+) -> Result<CreateOutcome> {
+    authorize_key(tx.sql(), scope, CREATE).await?;
+    let restricted = restrictions(tx.sql(), scope).await?;
+    let company = match validate(new, &restricted) {
+        Ok(company) => company,
+        Err(errors) => return Ok(CreateOutcome::Refused(errors)),
+    };
+    let tenant = scope.tenant();
+    lock_code(tx.sql(), tenant, &company.code).await?;
+    let errors = check_references(tx.sql(), tenant, &company, None).await?;
+    if !errors.is_empty() {
+        return Ok(CreateOutcome::Refused(errors));
+    }
+    let created = tx
+        .mutate(move |sql| {
+            Box::pin(async move {
+                let created = insert(sql, tenant, &company).await?;
+                let change = Change {
+                    kind: "company".into(),
+                    id: created.id,
+                    old: serde_json::Value::Null,
+                    new: created.to_json(),
+                };
+                Ok((created, vec![change]))
+            })
+        })
+        .await?;
+    Ok(CreateOutcome::Created(Box::new(created)))
+}
+
+/// Validates a prospective company, including generated defaults, field
+/// access and current code uniqueness, without writing or reserving the code
+/// (Bilimbi `preview_create_company/2`).
+pub async fn preview(
+    client: &impl GenericClient,
+    scope: &Scope,
+    new: &NewCompany,
+) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
+    authorize_key(client, scope, CREATE).await?;
+    let restricted = restrictions(client, scope).await?;
+    let company = match validate(new, &restricted) {
+        Ok(company) => company,
+        Err(errors) => return Ok(Err(errors)),
+    };
+    let errors = check_references(client, scope.tenant(), &company, None).await?;
+    Ok(if errors.is_empty() {
+        Ok(company)
+    } else {
+        Err(errors)
+    })
+}
+
+/// One bounded page of the administration index (Bilimbi
+/// `list_administration_page/2`): search over name, code, legal name, email
+/// and jurisdiction, skipping a restricted column, with each row's parent
+/// name and whether it is the tenant's primary company.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SearchQuery {
+    pub search: String,
+    pub status: String,
+    pub page: i64,
+    pub page_size: i64,
+}
+impl Default for SearchQuery {
+    fn default() -> Self {
+        Self {
+            search: String::new(),
+            status: String::new(),
+            page: 1,
+            page_size: 25,
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Entry {
+    pub company: Company,
+    pub parent_name: Option<String>,
+    pub primary: bool,
+}
+pub struct SearchPage {
+    pub entries: Vec<Entry>,
+    pub total: i64,
+}
+pub async fn search(
+    client: &impl GenericClient,
+    scope: &Scope,
+    query: &SearchQuery,
+) -> Result<SearchPage> {
+    if !(1..=100_000).contains(&query.page)
+        || !(1..=300).contains(&query.page_size)
+        || query.search.chars().count() > 200
+        || !(query.status.is_empty() || STATUSES.contains(&query.status.as_str()))
+    {
+        return Err(Error::Invalid);
+    }
+    authorize_key(client, scope, crate::contributions::LIST).await?;
+    let masked = restrictions(client, scope).await?;
+    let columns = ["name", "code", "legal_name", "email", "jurisdiction"]
+        .into_iter()
+        .filter(|column| !masked.contains(*column))
+        .map(|column| format!("c.{column} ILIKE $3"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let pattern = format!("%{}%", escape_like(query.search.trim()));
+    let filter = format!(
+        "c.tenant_id=$1 AND c.deleted_at IS NULL AND ($2='' OR c.status=$2) AND ($3='%%' OR {columns})"
+    );
+    let total: i64 = client
+        .query_one(
+            &format!("SELECT count(*) FROM companies c WHERE {filter}"),
+            &[&scope.tenant(), &query.status, &pattern],
+        )
+        .await?
+        .get(0);
+    let columns = COLUMNS
+        .replace("id,", "c.id,")
+        .replace("tenant_id,", "c.tenant_id,");
+    let sql = format!("SELECT {columns},p.name AS parent_name,(t.company_id IS NOT NULL) AS is_primary FROM companies c LEFT JOIN companies p ON p.tenant_id=c.tenant_id AND p.id=c.parent_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE {filter} ORDER BY c.name, c.id LIMIT $4 OFFSET $5");
+    let entries = client
+        .query(
+            &sql,
+            &[
+                &scope.tenant(),
+                &query.status,
+                &pattern,
+                &query.page_size,
+                &((query.page - 1) * query.page_size),
+            ],
+        )
+        .await?
+        .iter()
+        .map(|row| Entry {
+            company: Company::from_row(row, &masked),
+            parent_name: row.get("parent_name"),
+            primary: row.get("is_primary"),
+        })
+        .collect();
+    Ok(SearchPage { entries, total })
+}
+/// LIKE metacharacters are literal: search is a case-insensitive substring.
+pub fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+impl Company {
+    /// The JSON shape of a company for audit and agent results, masked fields
+    /// already replaced by the mask text.
+    pub fn to_json(&self) -> serde_json::Value {
+        json!({
+            "id": self.id, "tenant_id": self.tenant_id, "parent_id": self.parent_id, "name": self.name, "code": self.code,
+            "status": self.status, "legal_name": self.legal_name, "registration_number": self.registration_number,
+            "tax_id": self.tax_id, "legal_entity_type_id": self.legal_entity_type_id, "jurisdiction": self.jurisdiction,
+            "email": self.email, "phone": self.phone, "website": self.website, "revenue": self.revenue, "version": self.version,
+        })
+    }
+    /// Which of this read model's fields carry the mask rather than a value.
+    pub fn masked_fields(&self) -> HashSet<String> {
+        [
+            ("registration_number", self.registration_number.as_deref()),
+            ("tax_id", Some(self.tax_id.as_str())),
+            ("jurisdiction", self.jurisdiction.as_deref()),
+            ("email", Some(self.email.as_str())),
+            ("phone", Some(self.phone.as_str())),
+            ("website", self.website.as_deref()),
+            ("revenue", Some(self.revenue.as_str())),
+        ]
+        .into_iter()
+        .filter(|(_, value)| *value == Some(MASK))
+        .map(|(field, _)| field.to_owned())
+        .collect()
+    }
+}

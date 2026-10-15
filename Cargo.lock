@@ -385,17 +385,25 @@ name = "bilibi-company"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "bilibi-agent-api",
+ "bilibi-audit",
+ "bilibi-authz",
  "bilibi-database",
+ "bilibi-geonames",
  "bilibi-grid",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-security",
+ "bilibi-tenancy",
  "bilibi-ui",
+ "bilibi-web",
  "inventory",
  "serde",
  "serde_json",
+ "thiserror",
+ "tokio",
  "tokio-postgres",
 ]
 

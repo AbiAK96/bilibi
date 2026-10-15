@@ -34,18 +34,39 @@ impl<'a> Detail<'a> {
             company,
             editable: editable && company.status != "archived",
             fields: vec![
-                ("name", "Name", &company.name),
-                ("status", "Status", &company.status),
-                ("email", "Email", &company.email),
-                ("phone", "Phone", &company.phone),
-                ("tax_id", "Tax ID", &company.tax_id),
-                ("revenue", "Revenue", &company.revenue),
+                ("name", "Name", company.name.clone()),
+                ("code", "Code", company.code.clone()),
+                ("status", "Status", company.status.clone()),
+                (
+                    "legal_name",
+                    "Legal name",
+                    company.legal_name.clone().unwrap_or_default(),
+                ),
+                (
+                    "registration_number",
+                    "Registration number",
+                    company.registration_number.clone().unwrap_or_default(),
+                ),
+                (
+                    "jurisdiction",
+                    "Jurisdiction",
+                    company.jurisdiction.clone().unwrap_or_default(),
+                ),
+                ("email", "Email", company.email.clone()),
+                ("phone", "Phone", company.phone.clone()),
+                (
+                    "website",
+                    "Website",
+                    company.website.clone().unwrap_or_default(),
+                ),
+                ("tax_id", "Tax ID", company.tax_id.clone()),
+                ("revenue", "Revenue", company.revenue.clone()),
             ]
             .into_iter()
             .map(|(key, label, value)| Field {
                 key,
                 label,
-                value: value.clone(),
+                value,
                 masked: masked.contains(key),
             })
             .collect(),

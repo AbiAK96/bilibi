@@ -7,8 +7,14 @@ license.workspace = true
 
 [dependencies]
 bilibi-party-ids = { path = "../../base/party_ids" }
+bilibi-agent-api = { path = "../../base/agent_api" }
+bilibi-audit.workspace = true
+bilibi-authz = { path = "../../base/authz" }
 bilibi-database.workspace = true
+bilibi-geonames = { path = "../geonames" }
 bilibi-security.workspace = true
+bilibi-tenancy = { path = "../../base/tenancy" }
+thiserror.workspace = true
 tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,3 +25,7 @@ inventory.workspace = true
 bilibi-ui.workspace = true
 bilibi-menu.workspace = true
 bilibi-grid = { path = "../../base/grid" }
+
+[dev-dependencies]
+bilibi-web = { path = "../../web" }
+tokio.workspace = true

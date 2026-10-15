@@ -31,6 +31,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Some(command @ ("tenant-provision" | "platform-provision")) => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            bilibi_web::provision(&db, command, &args).await?;
+        }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;

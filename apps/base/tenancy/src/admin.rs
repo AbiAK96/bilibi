@@ -148,6 +148,68 @@ fn validate(new: &NewTenant) -> (NewTenant, TenantErrors) {
     )
 }
 
+/// Deployment seams for Core's provisioning commands (Bilimbi
+/// `Tenancy.create_tenant/1` and `provision_platform_operator/1` as the
+/// `bilimbi.tenant.provision` and `bilimbi.platform.provision` tasks call
+/// them). They write on the caller's transaction with no operator proof, so
+/// only trusted deployment code calls them; a request path uses
+/// `Tenants::create`. The name is validated as a create validates it and an
+/// invalid one is `Error::Invalid`.
+pub async fn provision_tenant(client: &impl GenericClient, name: &str) -> Result<TenantIdentity> {
+    let (new, errors) = validate(&NewTenant {
+        name: name.to_owned(),
+        parent_id: None,
+        status: TenantStatus::Active.as_str().to_owned(),
+    });
+    if !errors.is_empty() {
+        return Err(bilibi_database::Error::Invalid);
+    }
+    let row = client
+        .query_one(
+            "INSERT INTO tenants(name, parent_id, status, created_at, updated_at) \
+             VALUES($1, NULL, $2, now(), now()) RETURNING id",
+            &[&new.name, &new.status],
+        )
+        .await?;
+    Ok(TenantIdentity {
+        id: row.get(0),
+        parent_id: None,
+        name: new.name,
+        status: new.status,
+        is_platform_operator: false,
+    })
+}
+
+/// The explicit platform-operator tenant: resolved when the marker exists
+/// (`false`), created and marked otherwise (`true`). The marker table is
+/// locked for the transaction, so a second operator is never created.
+pub async fn provision_platform_operator(
+    client: &impl GenericClient,
+    name: &str,
+) -> Result<(TenantIdentity, bool)> {
+    client
+        .execute(
+            "LOCK TABLE platform_operator IN SHARE ROW EXCLUSIVE MODE",
+            &[],
+        )
+        .await?;
+    if let Some(row) = client
+        .query_opt(&format!("{SELECT} AND o.tenant_id IS NOT NULL"), &[])
+        .await?
+    {
+        return Ok((TenantIdentity::from_row(&row), false));
+    }
+    let mut tenant = provision_tenant(client, name).await?;
+    client
+        .execute(
+            "INSERT INTO platform_operator(singleton, tenant_id) VALUES(true, $1)",
+            &[&tenant.id],
+        )
+        .await?;
+    tenant.is_platform_operator = true;
+    Ok((tenant, true))
+}
+
 /// The registry service `base/tenancy.tenants`.
 pub struct Tenants {
     db: Db,

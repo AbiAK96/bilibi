@@ -1,4 +1,8 @@
-//! Reuse the registry's route contract; Web owns dispatch and scope guards.
+//! What Company adds to the shared catalogs (Bilimbi
+//! `Bilimbi.Core.Company.Contributions`): its capability vocabulary and the
+//! roles that carry it, the two demo pages' routes and the Companies menu
+//! entry. Web owns dispatch and scope guards; a route here bypasses nothing.
+use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_grid::{Field, FieldType::*, GridContribution, Source, TableDecl};
 use bilibi_menu::{MenuItem, Requirement};
 use bilibi_module_registry::{
@@ -6,13 +10,63 @@ use bilibi_module_registry::{
     Contribution, Provenance,
 };
 
+/// Belimbing's durable keys. The two-segment demo keys (`companies.view`,
+/// `companies.update`) still guard the demo list and detail pages until K3
+/// rebinds them; every K1 API asks one of these.
+pub const VIEW: &str = "admin.company.view";
+pub const LIST: &str = "admin.company.list";
+pub const CREATE: &str = "admin.company.create";
+pub const UPDATE: &str = "admin.company.update";
+pub const DELETE: &str = "admin.company.delete";
+/// Reach beyond the actor's own company to any company of the tenant. It
+/// never authorizes an operation by itself.
+pub const TENANT_WIDE: &str = "admin.company.tenant-wide.manage";
+pub const CAPABILITIES: [&str; 6] = [VIEW, LIST, CREATE, UPDATE, DELETE, TENANT_WIDE];
+
+macro_rules! provenance {
+    () => {
+        Provenance {
+            module: "core/company",
+            source: file!(),
+            line: line!(),
+        }
+    };
+}
+const fn role(
+    code: &'static str,
+    name: &'static str,
+    capabilities: &'static [&'static str],
+) -> RoleDefinition {
+    RoleDefinition {
+        code,
+        name,
+        description: "Contributed system role; reconciled explicitly",
+        grant_all: false,
+        capabilities,
+    }
+}
+// `tenant_owner` receives the whole set as the source grants it. The demo
+// roles are extended so the seeded accounts can try the K1 APIs: the manager
+// administers any company of the tenant, staff edits, the viewer reads.
+inventory::submit! { Contribution::new(VOCABULARY, "core/company", provenance!(), &VocabularyContribution {
+    domains: &[], verbs: &[],
+    capabilities: &[C::tenant(VIEW), C::tenant(LIST), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE), C::tenant(TENANT_WIDE)],
+    roles: &[
+        role("tenant_owner", "Tenant Owner", &CAPABILITIES),
+        role("manager", "manager", &CAPABILITIES),
+        role("staff", "staff", &[VIEW, LIST, UPDATE]),
+        role("viewer", "viewer", &[VIEW, LIST]),
+    ],
+    system_principals: &[],
+}) }
+
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.list", Provenance { module: "core/company", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/company.list", provenance!(), &Route {
         method: Method::Get, path: "/companies", service: "core/company.pages", operation: "list", access: Access::Capability("companies.view"), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.detail", Provenance { module: "core/company", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/company.detail", provenance!(), &Route {
         method: Method::Get, path: "/companies/{id}", service: "core/company.pages", operation: "detail", access: Access::Capability("companies.view"), framed: true,
     })
 }

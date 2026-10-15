@@ -6,6 +6,7 @@ use crate::model::*;
 use crate::query::*;
 use bilibi_database::{Db, MutationBoundary, Result};
 use std::sync::Arc;
+use tokio_postgres::GenericClient;
 
 const POSTCODE_SEARCH_LIMIT: i64 = 10;
 const CITY_SEARCH_LIMIT: i64 = 15;
@@ -20,6 +21,18 @@ pub struct Geonames {
 }
 
 /// A two-letter ISO country code, trimmed and uppercased.
+/// Whether `iso` names an imported country, on the caller's connection or
+/// transaction. Company validates a jurisdiction with it inside its own
+/// write, where `Geonames::get_country` (a pooled read) cannot join.
+pub async fn country_known(client: &impl GenericClient, iso: &str) -> Result<bool> {
+    let Some(iso) = normalize_iso(iso) else {
+        return Ok(false);
+    };
+    Ok(client
+        .query_opt("SELECT 1 FROM geonames_countries WHERE iso=$1", &[&iso])
+        .await?
+        .is_some())
+}
 pub fn normalize_iso(value: &str) -> Option<String> {
     let value = value.trim();
     (value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_alphabetic()))
