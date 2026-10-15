@@ -5,10 +5,11 @@
 (legal entity types, department types), a company's departments, the tenant's
 primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and the free functions of
-`organisation`, `reference_types`, `departments`, `primary`, `lifecycle`
-and `eligibility`; table layout and SQL stay private. The module-owned pages
-(`web.rs`, `web/views.rs`) serve `/companies`, `/companies/create` and
-`/companies/{id}` through shared UI components.
+`organisation`, `reference_types`, `departments`, `primary`, `lifecycle`,
+`eligibility`, `relationship_roles` and `relationships`; table layout and
+SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
+`/companies`, `/companies/create` and `/companies/{id}` through shared UI
+components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
@@ -117,6 +118,77 @@ columns, the reference catalogs, departments on company 1, the archived
 refusals, primary assignment, the agent operations and a plan commit with
 replay, and both provisioning commands. It creates a tenant and, when none
 exists, the platform operator. No unit tests belong here.
+
+## Relationship roles and links (K5)
+
+`migrations/005-relationships.sql` adds the party model's
+`company_relationship_roles` and `company_relationships`
+(`apps/core/party/CONTRACT.md`). Bilimbi's global
+`company_relationship_types` and company-to-company links become a
+**tenant-local** catalog and **directed** links whose target is an
+organisation of the tenant or a Person, with scoped foreign keys, an
+exactly-one-target check and no cascade. Company therefore depends on
+`core/person` (its table must exist first) and on `core/party` for the
+wire types; a Person target is proven through Tenancy's `PartyProofs`,
+never read from Person's table, and is named through the Principal
+Directory.
+
+`relationship_roles`: a role reads from the source company's side
+(`name`: what the target is to the source; `inverse_name`: what the source
+is to the target) and confers no capability; it is never an Authz role. The
+contributed defaults (`vendor`, `customer`, `prospect`, `partner`) are
+reconciled **by code** into each tenant: the migration does it for existing
+tenants, provisioning for new ones, and `CompanyService::relationship_roles`
+for a tenant whose catalog is still empty (the demo seed creates its tenants
+after the migration). An administered role is never overwritten; no default
+has a fixed id. Codes are trimmed, lower-cased, 1–64 characters of letters,
+digits, `_`, `-` and `.`, unique within the tenant under an advisory lock.
+`create` needs `admin.company.create`; `update` (a rename: id and code never
+change) and `retire` need `admin.company.update`; `list`/`get` need
+`admin.company.list`/`.view`. A retired role refuses new assignments and
+keeps every link; `retire` locks the row `FOR UPDATE`, so it waits for an
+assignment holding the role `FOR SHARE`.
+
+`relationships`: `source → target: vendor` means the target supplies the
+source. `assign` needs `admin.company.update` with reach over the source
+(`organisation::authorize_target`), locks the source and an organisation
+target ascending through `eligibility::lock_account_company` (so an archive
+on either side serializes with it), proves a person target live and
+unretired, locks the role unretired, and refuses a self link, an archived or
+missing target and an exact duplicate (same source, target, role and
+start); different roles may overlap for one pair and one role may have
+separate dated intervals. `update` replaces the inclusive dates, `end` sets
+the last day, `unlink` sets `unlinked_at`: every row stays as history and
+`list_for_company`/`list_for_person` show it with `history`. Either company
+of a link may administer it, as in Bilimbi; a person target confers nothing.
+Each entry carries the link, its direction from the listed party, the other
+party's name and the label from that party's side (`name` outgoing,
+`inverse_name` incoming), sorted by other party then label. Refusals are
+`Outcome::Refused` field errors; `Stale`, `NotFound` (including an unlinked
+link) and `Archived` are `WriteError`s.
+
+`relationship_operations.rs` contributes `core.company.relationship_role.
+{list,get,create,update,retire}`, `core.company.relationship.{list,get,
+assign,update,end,unlink}` and the `core.company.relationship` guide. Writes
+are reviewed safe writes: previews share the owner's checks without locking
+or writing, commits write through the plan's audited transaction. Assign
+input is flat (`source_organisation_id`, `target_kind`, `target_id`,
+`role_id`, optional `effective_from`/`effective_to`); omitted dates are
+unbounded.
+
+```sh
+BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k5-relationships-walkthrough --locked
+```
+
+The walkthrough prints the reconciled catalogs of both tenants, refused and
+accepted roles, a rename keeping id and code, overlapping and duplicate
+assignments, self/archived/cross-tenant/retired-person targets, viewer and
+staff refusals, both companies' and the person's pages with inverse labels,
+a retirement waiting behind a concurrent assignment, date moves, ending and
+unlinking with history, an edit from the target's side, the agent reads and
+the reviewed assign/create commits with replay refusal, then bounded audit
+counts. It creates persons and companies with `K5`/`k5_`/`wt_` prefixes in
+the disposable database only. K6 owns the relationship screens.
 
 ## Lifecycle and account freeze (K2)
 

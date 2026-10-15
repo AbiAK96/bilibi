@@ -184,7 +184,7 @@ apps/base/notifications  transactional notification sink and adapter readiness
 apps/base/workflow    status definitions, append-only history, owner-transaction transition kernel
 apps/base/ui          shared shell, credential layout and cards, styles, small live browser adapter
 apps/core/user        credentials, password reset/verification, settings pages, sessions, notifications, owned SQL
-apps/core/company     Companies API, owned SQL, page templates
+apps/core/company     Companies API, relationship roles and links, owned SQL, page templates
 apps/web              executable host, route/socket transport, explicit seed
 ```
 
