@@ -388,6 +388,11 @@ fn choice(
                 .wrapper_class("mb-0"),
         )?
     };
+    let display = if value.is_empty() && name != "parent_id" {
+        render(&MutedValue { text: display })?
+    } else {
+        Html::text(display)
+    };
     let mut field = InlineField::new(id, name, format!("Edit {}", name.replace('_', " ")), value)
         .version(company.version)
         .status(status)
@@ -396,7 +401,7 @@ fn choice(
     field.editable = editable;
     render(&InlineChoice {
         field,
-        display: Html::text(display),
+        display,
         editor,
     })
 }
@@ -1091,4 +1096,13 @@ struct ReadValue<'a> {
 struct RecordPin {
     pin_label: String,
     url: String,
+}
+
+#[derive(Template)]
+#[template(
+    source = "<span class=\"text-ink-muted\">{{ text }}</span>",
+    ext = "html"
+)]
+struct MutedValue<'a> {
+    text: &'a str,
 }
