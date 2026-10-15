@@ -4,9 +4,10 @@ use bilibi_database::{pool, Change, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution as Registration, Provenance, Services};
 use bilibi_tenancy::{Authentication, Scope};
 use bilibi_workflow::{
-    Action, Completion, Contribution, Dependency, DependencyMode, Edge, Engine, Flow, Guard, Load,
-    Operation, OwnerFuture, Process, ProcessAdapter, Registry, Request, RunCommand, RunFacts,
-    RunView, StartOptions, Status, Step, Subject, SubjectAdapter, Transition, CONTRIBUTIONS,
+    Action, Claim, ClaimOptions, Completion, Contribution, Dependency, DependencyMode, Edge,
+    Engine, Flow, Guard, Load, Operation, OwnerFuture, Process, ProcessAdapter, Registry, Request,
+    RunCommand, RunFacts, RunView, StartOptions, Status, Step, Subject, SubjectAdapter, Transition,
+    WorkCommand, WorkView, CONTRIBUTIONS,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -227,6 +228,34 @@ const LIFECYCLE: [Step; 6] = [
         ..Step::new("delayed", "Delayed release")
     },
 ];
+// Worker-leased steps: `fetch` allows two attempts, the others one.
+const WORKER: [Step; 4] = [
+    Step {
+        max_attempts: 2,
+        executor: Some("reference.fetch"),
+        ..Step::new("fetch", "Fetch source")
+    },
+    Step {
+        dependencies: &[Dependency {
+            step: "fetch",
+            acceptable_outcomes: &[],
+        }],
+        executor: Some("reference.render"),
+        ..Step::new("render", "Render")
+    },
+    Step {
+        dependencies: &[Dependency {
+            step: "render",
+            acceptable_outcomes: &["completed", "waived"],
+        }],
+        executor: Some("reference.publish"),
+        ..Step::new("publish", "Publish")
+    },
+    Step {
+        executor: Some("reference.notify"),
+        ..Step::new("notify", "Notify")
+    },
+];
 /// Same key and version as the installed v1 with one changed step contract:
 /// the running proof builds a second registry from it to show the refusal.
 static DRIFTED_V1: Contribution = Contribution::Process(Process {
@@ -301,6 +330,16 @@ register!(
     })
 );
 register!(
+    "reference.process.worker",
+    Contribution::Process(Process {
+        key: "reference.worker",
+        version: 1,
+        subject: "reference.record",
+        adapter: &OWNER,
+        steps: &WORKER,
+    })
+);
+register!(
     "reference.flow",
     Contribution::Flow(Flow {
         code: "reference.approval",
@@ -354,10 +393,13 @@ fn print_view(view: &RunView) {
     );
     for item in &view.work_items {
         println!(
-            "  work={} step={} status={} outcome={:?} output={} signalled={} available_at={:?} version={} error={:?}",
+            "  work={} step={} status={} attempts={}/{} lease_expires_at={:?} outcome={:?} output={} signalled={} available_at={:?} version={} error={:?}",
             item.id,
             item.step_key,
             item.status,
+            item.attempts,
+            item.max_attempts,
+            item.lease_expires_at,
             item.outcome,
             item.output.clone().unwrap_or(json!(null)),
             item.signalled_at.is_some(),
@@ -430,7 +472,8 @@ async fn main() -> Result<()> {
             serde_json::to_string(&engine.available(&scope, "reference.record", id).await?)
                 .map_err(|_| Error::Internal)?
         ),
-        "start" | "start-v1" | "start-changed" | "start-deny" | "drift" | "start-lifecycle" => {
+        "start" | "start-v1" | "start-changed" | "start-deny" | "drift" | "start-lifecycle"
+        | "start-worker" => {
             // Keep the v1 drift proof separate from the default v2 replay key.
             let attempt = if matches!(command, "start-v1" | "drift") {
                 1
@@ -438,10 +481,10 @@ async fn main() -> Result<()> {
                 2
             };
             let mut options = StartOptions::new(format!("record:{id}:attempt:{attempt}"));
-            let process_key = if command == "start-lifecycle" {
-                "reference.lifecycle"
-            } else {
-                "reference.review"
+            let process_key = match command {
+                "start-lifecycle" => "reference.lifecycle",
+                "start-worker" => "reference.worker",
+                _ => "reference.review",
             };
             options.version = (command == "start-v1").then_some(1);
             options.correlation_key = Some(format!("reference-record:{id}"));
@@ -503,6 +546,8 @@ async fn main() -> Result<()> {
         | "pause"
         | "resume"
         | "supersede"
+        | "waive"
+        | "block"
         | "reconcile" => {
             let value = args.get(3).map(String::as_str);
             let command_value = match command {
@@ -524,6 +569,15 @@ async fn main() -> Result<()> {
                     reason: value.unwrap_or("Replaced by a new process").into(),
                 },
                 "reconcile" => RunCommand::Reconcile,
+                "waive" => RunCommand::Waive {
+                    step_key: value.unwrap_or("render").into(),
+                    reason: args.get(4).cloned().unwrap_or("Operator waived".into()),
+                    outcome: args.get(5).cloned().unwrap_or("waived".into()),
+                },
+                "block" => RunCommand::Block {
+                    step_key: value.unwrap_or("notify").into(),
+                    reason: args.get(4).cloned().unwrap_or("Operator blocked".into()),
+                },
                 _ => {
                     let view = engine.get_run(&scope, id).await?;
                     let item = view
@@ -579,6 +633,80 @@ async fn main() -> Result<()> {
                     Ok(view) => print_view(&view),
                     Err(error) => println!("command refused: {error:?}"),
                 }
+            }
+        }
+        "claim" | "claim-race" => {
+            // A worker process: claims, prints its durable claim and exits.
+            // Exiting before finishing is the crash the lease recovers from.
+            let options = ClaimOptions {
+                lease_seconds: args.get(3).and_then(|s| s.parse().ok()).unwrap_or(2),
+                definition_key: Some("reference.worker".into()),
+                run_ids: Some(vec![id]),
+                executor_keys: args.get(5).map(|key| vec![key.clone()]),
+            };
+            let worker = args.get(4).cloned().unwrap_or("worker-a".into());
+            let claims = if command == "claim-race" {
+                let (a, b) = tokio::join!(
+                    engine.claim_work(&scope, "worker-a", options.clone()),
+                    engine.claim_work(&scope, "worker-b", options)
+                );
+                vec![a, b]
+            } else {
+                vec![engine.claim_work(&scope, &worker, options).await]
+            };
+            for claimed in claims {
+                match claimed {
+                    Ok(Some(claimed)) => {
+                        println!(
+                            "claimed step={} attempt={} lease_expires_at={:?}",
+                            claimed.work_item.step_key,
+                            claimed.work_item.attempts,
+                            claimed.work_item.lease_expires_at
+                        );
+                        println!(
+                            "claim={}",
+                            serde_json::to_string(&claimed.claim).map_err(|_| Error::Internal)?
+                        );
+                    }
+                    Ok(None) => println!("nothing claimable"),
+                    Err(error) => println!("claim refused: {error:?}"),
+                }
+            }
+        }
+        "heartbeat" | "complete-claimed" | "fail" | "block-claimed" => {
+            // The record-ID position takes the claim JSON a `claim` printed.
+            let claim: Claim = args
+                .get(2)
+                .and_then(|s| serde_json::from_str(s).ok())
+                .ok_or(Error::Invalid)?;
+            let value = args.get(3).cloned();
+            let work = match command {
+                "heartbeat" => WorkCommand::Heartbeat {
+                    lease_seconds: value.and_then(|s| s.parse().ok()).unwrap_or(30),
+                },
+                "complete-claimed" => WorkCommand::Complete {
+                    outcome: value.unwrap_or("completed".into()),
+                    output: json!({"worker_fact":"saved once"}),
+                    result_ref: None,
+                },
+                "fail" => WorkCommand::Fail {
+                    error: "Source unavailable".into(),
+                    retryable: value.as_deref() != Some("final"),
+                    category: "transient".into(),
+                    retry_at: None,
+                },
+                _ => WorkCommand::Block {
+                    reason: value.unwrap_or("Source rejected the request".into()),
+                    output: json!(null),
+                    result_ref: None,
+                },
+            };
+            match engine.update_work(&scope, &claim, work).await {
+                Ok(WorkView { run, work_item }) => println!(
+                    "run={} status={} work={} step={} status={} attempts={}/{} lease_expires_at={:?} outcome={:?} version={} error={:?}",
+                    run.id, run.status, work_item.id, work_item.step_key, work_item.status, work_item.attempts, work_item.max_attempts, work_item.lease_expires_at, work_item.outcome, work_item.version, work_item.last_error
+                ),
+                Err(error) => println!("worker call refused: {error:?}"),
             }
         }
         "run" | "run-drift" => {
