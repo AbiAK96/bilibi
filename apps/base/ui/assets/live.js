@@ -113,8 +113,11 @@
     if (!form.dataset.event) return;
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form));
-    if (form.dataset.event === 'save') { submittedField = values.field; send({type:'event', target:form.dataset.target || 'page', payload:{type:'save', edit:{...values, id:Number(values.id), version:Number(values.version)}}}); }
-    else send({type:'params', params:values});
+    const target = form.dataset.target || 'page';
+    if (form.dataset.event === 'save') { submittedField = values.field; send({type:'event', target, payload:{type:'save', edit:{...values, id:Number(values.id), version:Number(values.version)}}}); }
+    else if (form.dataset.event === 'params') send({type:'params', params:values});
+    // Any other form is the module event it names, carrying its field values.
+    else send({type:'event', target, payload:{type:form.dataset.event, ...values}});
   });
   document.addEventListener('click', event => {
     const button = event.target.closest('button[data-event]');
@@ -132,8 +135,10 @@
     send({type:'navigate', path:detail.path, params:detail.params || {}});
   });
   // Component adapters send module intent through this bounded transport entry point.
+  // A ui.js controller raises {event, ...values}; an adapter may name a payload.
   document.addEventListener('bilibi:event', ({detail}) => {
-    send({type:'event', target:detail.target || 'page', payload:detail.payload});
+    const {event: type, target, payload, ...values} = detail;
+    send({type:'event', target:target || 'page', payload:payload || {type, ...values}});
   });
   connect();
 })();

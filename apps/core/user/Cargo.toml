@@ -17,6 +17,9 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-notifications.workspace = true
 bilibi-principal-directory.workspace = true
+bilibi-ui.workspace = true
+askama.workspace = true
+serde.workspace = true
 bilibi-mail = { path = "../../base/mail" }
 thiserror.workspace = true
 hmac = "0.13.0"
