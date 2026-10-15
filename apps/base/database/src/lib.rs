@@ -1,5 +1,6 @@
 //! Shared PostgreSQL pool, errors, migration runner, and transactional mutation capture.
 pub mod seeds;
+pub mod timing;
 mod transaction;
 pub use transaction::{
     Capture, CaptureFuture, Change, Context, MutationBoundary, MutationTransaction, Principal,

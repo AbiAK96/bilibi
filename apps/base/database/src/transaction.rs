@@ -141,8 +141,9 @@ impl<'a> MutationTransaction<'a> {
         capture: Arc<dyn Capture>,
     ) -> Result<Self> {
         context.validate()?;
+        let tx = crate::timing::timed(client.transaction()).await?;
         Ok(Self {
-            tx: client.transaction().await?,
+            tx,
             context,
             capture,
             callbacks: std::sync::Mutex::new(Vec::new()),
@@ -167,10 +168,8 @@ impl<'a> MutationTransaction<'a> {
         }
         // Cancellation while awaiting capture must also forbid commit.
         self.poisoned = true;
-        let result = self
-            .capture
-            .mutation(&self.tx, &self.context, &change)
-            .await;
+        let result =
+            crate::timing::timed(self.capture.mutation(&self.tx, &self.context, &change)).await;
         self.poisoned = result.is_err();
         result
     }
@@ -189,7 +188,7 @@ impl<'a> MutationTransaction<'a> {
         // A timed-out/cancelled owner future may already have performed SQL.
         // Leave the transaction poisoned until the write and capture finish.
         self.poisoned = true;
-        let result = write(&self.tx).await;
+        let result = crate::timing::timed(write(&self.tx)).await;
         match result {
             Ok((value, changes)) => {
                 if changes.is_empty()
@@ -201,10 +200,9 @@ impl<'a> MutationTransaction<'a> {
                     return Err(Error::Invalid);
                 }
                 // Stay poisoned while capture runs; cancellation forbids commit.
-                let result = self
-                    .capture
-                    .mutations(&self.tx, &self.context, &changes)
-                    .await;
+                let result =
+                    crate::timing::timed(self.capture.mutations(&self.tx, &self.context, &changes))
+                        .await;
                 self.poisoned = result.is_err();
                 result.map(|()| value)
             }
@@ -231,8 +229,8 @@ impl<'a> MutationTransaction<'a> {
             self.tx.rollback().await?;
             return Err(Error::Internal);
         }
-        self.capture.action(&self.tx, &self.context).await?;
-        self.tx.commit().await?;
+        crate::timing::timed(self.capture.action(&self.tx, &self.context)).await?;
+        crate::timing::timed(self.tx.commit()).await?;
         let callbacks = self
             .callbacks
             .into_inner()
