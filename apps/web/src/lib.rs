@@ -2,11 +2,13 @@
 mod api;
 mod auth;
 mod live;
+mod mcp;
 mod media;
 mod pdf;
 mod perf;
 mod routes;
 mod shell;
+mod webhooks;
 use askama::Template;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade},
@@ -36,6 +38,7 @@ pub struct App {
     pub mutations: Arc<bilibi_database::MutationBoundary>,
     pub perf: Arc<bilibi_base::perf::Recorder>,
     api: Arc<api::Edge>,
+    webhooks: Arc<webhooks::Boundary>,
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
@@ -57,6 +60,7 @@ impl App {
         }
         let routes = Arc::new(routes::bind(&services)?);
         let api = Arc::new(api::Edge::new(&services)?);
+        let webhooks = Arc::new(webhooks::Boundary::bind(&services)?);
         Ok(Self {
             routes,
             db,
@@ -70,6 +74,7 @@ impl App {
             mutations,
             perf,
             api,
+            webhooks,
             services: Arc::new(services),
         })
     }
@@ -101,6 +106,7 @@ pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
     routes::install(Router::new(), &app.routes)
         .merge(api::router(app.clone()))
+        .merge(webhooks::router())
         .route("/", get(auth::home))
         .route("/login", get(auth::home).post(auth::login))
         .route(

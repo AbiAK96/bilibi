@@ -1,8 +1,9 @@
 //! Host agent edge: OAuth discovery, device authorization and token endpoints,
 //! the bearer `AgentAuth` boundary and the `/api/v1` operation and plan
-//! endpoints. Answers are JSON only, errors included. Every request here is
-//! one incoming Integration exchange, recorded after dispatch. Bodies, query
-//! strings, authorization headers and token values never reach the recorder.
+//! endpoints; `/mcp` (`mcp.rs`) shares this boundary and its recorder. Answers
+//! are JSON only, errors included. Every request here is one incoming
+//! Integration exchange, recorded after dispatch. Bodies, query strings,
+//! authorization headers and token values never reach the recorder.
 //!
 //! A bearer token is a claim, never a grant: each request reproves the grant,
 //! the account and its party facets (`AgentAccess::seal`), then seals a fresh
@@ -44,24 +45,26 @@ pub const AGENT_ID_HEADER: &str = "x-bilibi-agent-id";
 const RUN_ID_HEADER: &str = "x-bilibi-run-id";
 const TRACE_HEADER: &str = "x-bilibi-trace-id";
 /// A plan may encode up to 1 MiB canonically; leave room for whitespace.
-const API_BODY_LIMIT: usize = 2 << 20;
+pub(crate) const API_BODY_LIMIT: usize = 2 << 20;
 
 /// Host-owned paths no discovered page may claim.
 pub fn reserved(path: &str) -> bool {
     path == "/api/v1"
         || path.starts_with("/api/v1/")
         || path.starts_with("/.well-known/")
+        || path == "/webhooks"
+        || path.starts_with("/webhooks/")
         || ["/oauth/device_authorization", "/oauth/token", "/mcp"].contains(&path)
 }
 
 /// Services this edge composes; built once at boot from the registry.
 pub struct Edge {
-    access: Arc<AgentAccess>,
-    registry: Arc<Registry>,
-    plans: Arc<Plans>,
+    pub(crate) access: Arc<AgentAccess>,
+    pub(crate) registry: Arc<Registry>,
+    pub(crate) plans: Arc<Plans>,
     integration: Arc<Integration>,
-    settings: Arc<Settings>,
-    throttle: Throttle,
+    pub(crate) settings: Arc<Settings>,
+    pub(crate) throttle: Throttle,
 }
 impl Edge {
     pub fn new(services: &bilibi_module_registry::Services) -> bilibi_database::Result<Self> {
@@ -100,19 +103,20 @@ pub fn router(app: App) -> Router<App> {
         .route("/oauth/device_authorization", post(device))
         .route("/oauth/token", post(token))
         .merge(api)
+        .merge(crate::mcp::router())
         .method_not_allowed_fallback(method_not_allowed)
         .layer(middleware::from_fn_with_state(app, record))
 }
 
 /// One request's correlation ID, set before dispatch.
 #[derive(Clone)]
-struct Trace(String);
+pub(crate) struct Trace(String);
 /// What dispatch learned for the exchange row. The scope is the sealed bearer
 /// scope; without one the row is a system row the operator alone can see.
 #[derive(Clone, Default)]
-struct Exchange {
-    scope: Option<Scope>,
-    operation: Option<String>,
+pub(crate) struct Exchange {
+    pub(crate) scope: Option<Scope>,
+    pub(crate) operation: Option<String>,
 }
 
 async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
@@ -166,18 +170,18 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
 }
 
 /// A self-reported label; an unshowable value is treated as not stated.
-fn label(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn label(headers: &HeaderMap, name: &str) -> Option<String> {
     let mut values = headers.get_all(name).iter();
     let value = values.next()?.to_str().ok()?;
     (values.next().is_none() && bilibi_core::agent_access::valid_label(value))
         .then(|| value.to_owned())
 }
 
-fn reply(status: StatusCode, body: Value) -> Response {
+pub(crate) fn reply(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
 /// A JSON refusal; `challenge` adds the bearer `WWW-Authenticate` header.
-struct Refusal {
+pub(crate) struct Refusal {
     status: StatusCode,
     body: Value,
     challenge: bool,
@@ -200,7 +204,7 @@ fn refusal(status: StatusCode, body: Value) -> Refusal {
         challenge: false,
     }
 }
-fn error(status: StatusCode, code: &str) -> Refusal {
+pub(crate) fn error(status: StatusCode, code: &str) -> Refusal {
     refusal(status, json!({"error": code}))
 }
 async fn not_found() -> Refusal {
@@ -209,12 +213,12 @@ async fn not_found() -> Refusal {
 async fn method_not_allowed() -> Refusal {
     error(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed")
 }
-fn unavailable(error: &Error) -> Refusal {
+pub(crate) fn unavailable(error: &Error) -> Refusal {
     eprintln!("warning: agent edge storage failure: {error}");
     self::error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
 }
 
-fn origin(app: &App) -> &str {
+pub(crate) fn origin(app: &App) -> &str {
     app.origin.trim_end_matches('/')
 }
 /// The MCP endpoint's protected-resource identifier, from `APP_ORIGIN`.
@@ -308,7 +312,7 @@ async fn params(request: Request) -> Option<HashMap<String, String>> {
 /// The direct peer, or the client a loopback reverse proxy reports: read
 /// `X-Forwarded-For` right to left, skipping loopback hops, and stop at the
 /// first other address. An unparseable hop leaves the peer address.
-fn sender(request: &Request) -> String {
+pub(crate) fn sender(request: &Request) -> String {
     let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
         return "unknown".into();
     };
@@ -467,10 +471,10 @@ fn oauth_code(code: &str) -> Response {
 
 /// A bearer request whose grant, account and party facets were proven live
 /// for this request alone.
-struct Agent {
-    scope: Scope,
-    claims: AgentClaims,
-    trace: String,
+pub(crate) struct Agent {
+    pub(crate) scope: Scope,
+    pub(crate) claims: AgentClaims,
+    pub(crate) trace: String,
 }
 
 /// HTTP authentication scheme names are case-insensitive; token bytes are not.
@@ -485,23 +489,29 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && parts.next().is_none()).then_some(token)
 }
 
-fn refused() -> Refusal {
+pub(crate) fn refused() -> Refusal {
     Refusal {
         challenge: true,
         ..error(StatusCode::UNAUTHORIZED, "invalid_token")
     }
 }
 
-/// Cookies and caller-supplied identity are unused. API tokens carry no MCP
-/// resource; an MCP-bound token is refused here.
-async fn authenticate(app: &App, headers: &HeaderMap, trace: &str) -> Result<Agent, Refusal> {
+/// Cookies and caller-supplied identity are unused. `resource` is the audience
+/// the token must have been issued for: none for `/api/v1`, the MCP resource for
+/// `/mcp`, so neither edge accepts the other's tokens.
+pub(crate) async fn authenticate(
+    app: &App,
+    headers: &HeaderMap,
+    trace: &str,
+    resource: Option<&str>,
+) -> Result<Agent, Refusal> {
     let access = &app.api.access;
     let fail = |error: OAuthError| match error {
         OAuthError::Other(error) => unavailable(&error),
         _ => refused(),
     };
     let token = bearer(headers).ok_or_else(refused)?;
-    let claims = access.authenticate(token, None).await.map_err(fail)?;
+    let claims = access.authenticate(token, resource).await.map_err(fail)?;
     let scope = access.seal(&claims, trace).await.map_err(fail)?;
     access
         .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref())
@@ -532,10 +542,10 @@ impl Agent {
 /// The plan service's credential adapter: reproves and locks the grant on the
 /// plan's own transaction. The binding names the connection, not the rotating
 /// access token, so a refreshed token can still commit its connection's plan.
-struct Grant<'a> {
-    access: &'a AgentAccess,
-    claims: &'a AgentClaims,
-    trace: &'a str,
+pub(crate) struct Grant<'a> {
+    pub(crate) access: &'a AgentAccess,
+    pub(crate) claims: &'a AgentClaims,
+    pub(crate) trace: &'a str,
 }
 impl PlanAuthority for Grant<'_> {
     fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
@@ -614,7 +624,7 @@ async fn body(request: Request<Body>) -> Result<Map<String, Value>, Refusal> {
 
 async fn search(State(app): State<App>, uri: Uri, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
@@ -658,7 +668,7 @@ async fn search(State(app): State<App>, uri: Uri, request: Request) -> Response 
     agent.answer(None, result)
 }
 
-fn trace(request: &Request) -> String {
+pub(crate) fn trace(request: &Request) -> String {
     request
         .extensions()
         .get::<Trace>()
@@ -668,7 +678,7 @@ fn trace(request: &Request) -> String {
 
 async fn describe(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
@@ -686,7 +696,7 @@ async fn describe(State(app): State<App>, Path(key): Path<String>, request: Requ
 
 async fn guide(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
@@ -704,7 +714,7 @@ async fn guide(State(app): State<App>, Path(key): Path<String>, request: Request
 
 async fn call(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
@@ -738,7 +748,7 @@ fn operations(value: Value) -> Result<Vec<PlannedOperation>, Refusal> {
 
 async fn plan(State(app): State<App>, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
@@ -762,7 +772,7 @@ async fn plan(State(app): State<App>, request: Request) -> Response {
 
 async fn commit(State(app): State<App>, request: Request) -> Response {
     let trace = trace(&request);
-    let agent = match authenticate(&app, request.headers(), &trace).await {
+    let agent = match authenticate(&app, request.headers(), &trace, None).await {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };

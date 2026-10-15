@@ -52,6 +52,7 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             crate::media::STREAM,
             crate::media::ATTACHMENT,
             crate::pdf::RENDER,
+            crate::webhooks::PATH,
         ] {
             if intersects(route.path, reserved) {
                 return Err(invalid(format!(
