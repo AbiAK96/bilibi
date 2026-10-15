@@ -1,5 +1,6 @@
 //! Stable read models. They carry only what callers of the lookup API need;
 //! table layout and SQL stay private to this module.
+use crate::corrections::{override_revision, source_revision, Provenance};
 use std::time::SystemTime;
 use tokio_postgres::Row;
 
@@ -202,8 +203,9 @@ impl Admin1Index {
     }
 }
 
-/// Postcode fields the Postcodes index shows. Provenance and revision arrive
-/// with the correction overlay (C3).
+/// Postcode fields the Postcodes index shows. `provenance` says whether an
+/// operator made or corrected the row; `revision` is the opaque token
+/// `Geonames::update_postcode` needs back, so a stale edit is refused.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PostcodeIndex {
     pub id: i64,
@@ -215,12 +217,29 @@ pub struct PostcodeIndex {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub accuracy: Option<i16>,
+    pub provenance: Provenance,
+    pub revision: String,
     pub updated_at: SystemTime,
 }
 impl PostcodeIndex {
+    pub(crate) const COLUMNS: &'static str = "p.id,p.country_iso,c.country AS country_name,p.postcode,p.place_name,p.admin1_code,\
+        p.latitude::float8 AS latitude,p.longitude::float8 AS longitude,p.accuracy,p.updated_at,o.id AS override_id,o.lock_version";
+    /// `p` the postcode, `c` its country, `o` its override when one exists.
+    pub(crate) const FROM: &'static str =
+        "FROM geonames_postcodes p LEFT JOIN geonames_countries c ON c.iso = p.country_iso \
+        LEFT JOIN geonames_postcode_overrides o ON o.applied_postcode_id = p.id";
     pub(crate) fn from_row(row: &Row) -> Self {
+        let id: i64 = row.get("id");
+        let updated_at: SystemTime = row.get("updated_at");
+        let (provenance, revision) = match row.get::<_, Option<i64>>("override_id") {
+            None => (Provenance::Geonames, source_revision(id, updated_at)),
+            Some(override_id) => (
+                Provenance::Operator,
+                override_revision(override_id, row.get("lock_version")),
+            ),
+        };
         Self {
-            id: row.get("id"),
+            id,
             country_iso: row.get("country_iso"),
             country_name: row.get("country_name"),
             postcode: row.get("postcode"),
@@ -229,7 +248,9 @@ impl PostcodeIndex {
             latitude: row.get("latitude"),
             longitude: row.get("longitude"),
             accuracy: row.get("accuracy"),
-            updated_at: row.get("updated_at"),
+            provenance,
+            revision,
+            updated_at,
         }
     }
 }

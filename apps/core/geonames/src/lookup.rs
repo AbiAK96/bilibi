@@ -4,7 +4,8 @@
 //! address form's lookup.
 use crate::model::*;
 use crate::query::*;
-use bilibi_database::{Db, Result};
+use bilibi_database::{Db, MutationBoundary, Result};
+use std::sync::Arc;
 
 const POSTCODE_SEARCH_LIMIT: i64 = 10;
 const CITY_SEARCH_LIMIT: i64 = 15;
@@ -12,7 +13,10 @@ const POSTCODE_LOOKUP_LIMIT: i64 = 100;
 const MAX_POSTCODE: usize = 20;
 
 pub struct Geonames {
-    db: Db,
+    pub(crate) db: Db,
+    /// Operator corrections (`corrections`) are business writes and go
+    /// through mutation capture; lookups and the import do not.
+    pub(crate) boundary: Arc<MutationBoundary>,
 }
 
 /// A two-letter ISO country code, trimmed and uppercased.
@@ -23,8 +27,8 @@ pub fn normalize_iso(value: &str) -> Option<String> {
 }
 
 impl Geonames {
-    pub fn new(db: Db) -> Self {
-        Self { db }
+    pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Self {
+        Self { db, boundary }
     }
 
     /// What this installation holds. Fresh installs are empty by design.
@@ -237,23 +241,24 @@ impl Geonames {
             .collect())
     }
 
-    /// A page of the Postcodes index (search over code, place, ISO and country).
+    /// A page of the Postcodes index (search over code, place, ISO and
+    /// country), each row with its provenance and revision.
     pub async fn page_postcodes(&self, query: &IndexQuery) -> Result<Page<PostcodeIndex>> {
         let n = Normal::<PostcodeSort>::of(query);
         let pattern = n.search.as_deref().map(contains_pattern);
-        let from =
-            "FROM geonames_postcodes p LEFT JOIN geonames_countries c ON c.iso = p.country_iso \
-                    WHERE ($1::text IS NULL OR p.postcode ILIKE $1 OR p.place_name ILIKE $1 \
-                    OR p.country_iso ILIKE $1 OR c.country ILIKE $1)";
+        let from = format!(
+            "{} WHERE ($1::text IS NULL OR p.postcode ILIKE $1 OR p.place_name ILIKE $1 \
+             OR p.country_iso ILIKE $1 OR c.country ILIKE $1)",
+            PostcodeIndex::FROM
+        );
         let client = self.db.get().await?;
         let total: i64 = client
             .query_one(&format!("SELECT count(*) {from}"), &[&pattern])
             .await?
             .get(0);
         let sql = format!(
-            "SELECT p.id,p.country_iso,c.country AS country_name,p.postcode,p.place_name,p.admin1_code,\
-             p.latitude::float8 AS latitude,p.longitude::float8 AS longitude,p.accuracy,p.updated_at {from} \
-             ORDER BY {} {}, p.id DESC LIMIT $2 OFFSET $3",
+            "SELECT {} {from} ORDER BY {} {}, p.id DESC LIMIT $2 OFFSET $3",
+            PostcodeIndex::COLUMNS,
             n.sort.sql(),
             n.dir.sql()
         );

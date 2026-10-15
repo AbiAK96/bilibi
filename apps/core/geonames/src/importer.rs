@@ -10,7 +10,10 @@
 //! The tables are reference data imported wholesale, so the import writes
 //! outside mutation capture, as Bilimbi excludes these schemas from audit.
 //! Country and Admin1 names are never overwritten by a re-import: an operator's
-//! local name survives every refresh.
+//! local name survives every refresh. Postcodes have no upstream identity, so a
+//! country's rows are replaced wholesale and the operator's corrections
+//! (`corrections`) are materialized again before the transaction commits.
+use crate::{corrections, normalize_iso};
 use bilibi_database::Db;
 use std::{collections::HashMap, future::Future, hash::Hash, path::Path};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -33,6 +36,10 @@ pub enum ImportFailure {
     Read(String),
     #[error("no valid rows")]
     NoValidRows,
+    #[error("invalid country code {0:?}")]
+    InvalidCountryIso(String),
+    #[error("country {0} is not imported; import countries first")]
+    CountryNotFound(String),
     #[error("database: {0}")]
     Database(String),
 }
@@ -48,8 +55,15 @@ impl From<tokio_postgres::Error> for ImportFailure {
 
 /// One parsed upstream row and how a batch of them is written.
 pub(crate) trait Rows: Sized + Send + Sync {
+    /// What a parser needs besides the line (the expected country for a
+    /// postcode file).
+    type Context: Sync;
     type Key: Eq + Hash;
-    fn parse(fields: &[&str]) -> Option<Self>;
+    /// Whether `persist` upserts on `key`. A batch then keeps the last row of
+    /// a repeated key, as a row-at-a-time upsert would, because one statement
+    /// cannot touch a row twice. Plain inserts keep every row.
+    const UPSERT: bool = true;
+    fn parse(context: &Self::Context, fields: &[&str]) -> Option<Self>;
     fn key(&self) -> Self::Key;
     fn persist<'a>(
         tx: &'a Transaction<'_>,
@@ -58,28 +72,91 @@ pub(crate) trait Rows: Sized + Send + Sync {
 }
 
 pub(crate) async fn countries(db: &Db, path: &Path) -> Result<Counts, ImportFailure> {
-    atomic_import::<Country>(db, path).await
+    atomic_import::<Country>(db, path, &()).await
 }
 pub(crate) async fn admin1(db: &Db, path: &Path) -> Result<Counts, ImportFailure> {
-    atomic_import::<Admin1>(db, path).await
+    atomic_import::<Admin1>(db, path, &()).await
 }
 pub(crate) async fn cities(db: &Db, path: &Path) -> Result<Counts, ImportFailure> {
-    atomic_import::<City>(db, path).await
+    atomic_import::<City>(db, path, &()).await
 }
 
-async fn atomic_import<R: Rows>(db: &Db, path: &Path) -> Result<Counts, ImportFailure> {
+/// Replaces one country's postcodes with the file's rows, then materializes
+/// the operator's corrections for that country again, all in one
+/// transaction. The country must already be imported; lines naming another
+/// country are skipped.
+pub(crate) async fn postcodes(
+    db: &Db,
+    country_iso: &str,
+    path: &Path,
+) -> Result<Counts, ImportFailure> {
+    let iso = normalize_iso(country_iso)
+        .ok_or_else(|| ImportFailure::InvalidCountryIso(country_iso.into()))?;
+    let mut lines = open(path).await?;
+    let mut client = db
+        .get()
+        .await
+        .map_err(|error| ImportFailure::Database(error.to_string()))?;
+    let tx = client.transaction().await?;
+    if tx
+        .query_opt("SELECT 1 FROM geonames_countries WHERE iso=$1", &[&iso])
+        .await?
+        .is_none()
+    {
+        return Err(ImportFailure::CountryNotFound(iso));
+    }
+    corrections::lock_country(&tx, &iso).await?;
+    tx.execute(
+        "DELETE FROM geonames_postcodes WHERE country_iso=$1",
+        &[&iso],
+    )
+    .await?;
+    let counts = stream::<Postcode>(&tx, &mut lines, &iso).await?;
+    // Dropping the transaction rolls it back: the old rows are still there.
+    if counts.imported == 0 {
+        return Err(ImportFailure::NoValidRows);
+    }
+    corrections::reapply_country(&tx, &iso).await?;
+    tx.commit().await?;
+    Ok(counts)
+}
+
+async fn atomic_import<R: Rows>(
+    db: &Db,
+    path: &Path,
+    context: &R::Context,
+) -> Result<Counts, ImportFailure> {
+    let mut lines = open(path).await?;
+    let mut client = db
+        .get()
+        .await
+        .map_err(|error| ImportFailure::Database(error.to_string()))?;
+    let tx = client.transaction().await?;
+    let counts = stream::<R>(&tx, &mut lines, context).await?;
+    // Dropping the transaction rolls it back: nothing is half-imported.
+    if counts.imported == 0 {
+        return Err(ImportFailure::NoValidRows);
+    }
+    tx.commit().await?;
+    Ok(counts)
+}
+
+async fn open(path: &Path) -> Result<BufReader<tokio::fs::File>, ImportFailure> {
     if !path.is_file() {
         return Err(ImportFailure::FileNotFound(path.display().to_string()));
     }
     let file = tokio::fs::File::open(path)
         .await
         .map_err(|error| ImportFailure::Read(error.to_string()))?;
-    let mut lines = BufReader::new(file);
-    let mut client = db
-        .get()
-        .await
-        .map_err(|error| ImportFailure::Database(error.to_string()))?;
-    let tx = client.transaction().await?;
+    Ok(BufReader::new(file))
+}
+
+/// Reads every line and writes the valid rows in batches inside `tx`.
+async fn stream<R: Rows>(
+    tx: &Transaction<'_>,
+    lines: &mut BufReader<tokio::fs::File>,
+    context: &R::Context,
+) -> Result<Counts, ImportFailure> {
     let mut counts = Counts::default();
     let mut batch = Vec::with_capacity(BATCH);
     let mut line = Vec::new();
@@ -95,41 +172,39 @@ async fn atomic_import<R: Rows>(db: &Db, path: &Path) -> Result<Counts, ImportFa
         match std::str::from_utf8(&line)
             .ok()
             .and_then(fields)
-            .and_then(|f| R::parse(&f))
+            .and_then(|f| R::parse(context, &f))
         {
             Some(row) => batch.push(row),
             None => counts.skipped += 1,
         }
         if batch.len() == BATCH {
-            counts.imported += persist(&tx, &mut batch).await?;
+            counts.imported += persist(tx, &mut batch).await?;
         }
     }
-    counts.imported += persist(&tx, &mut batch).await?;
-    // Dropping the transaction rolls it back: nothing is half-imported.
-    if counts.imported == 0 {
-        return Err(ImportFailure::NoValidRows);
-    }
-    tx.commit().await?;
+    counts.imported += persist(tx, &mut batch).await?;
     Ok(counts)
 }
 
-/// Writes one batch. A key repeated inside the batch keeps its last row, as a
-/// row-at-a-time upsert would; one statement cannot touch a row twice.
+/// Writes one batch.
 async fn persist<R: Rows>(tx: &Transaction<'_>, batch: &mut Vec<R>) -> Result<u64, ImportFailure> {
     let count = batch.len() as u64;
     if count == 0 {
         return Ok(0);
     }
-    let mut last = HashMap::with_capacity(batch.len());
-    for (index, row) in batch.iter().enumerate() {
-        last.insert(row.key(), index);
-    }
-    let rows: Vec<R> = batch
-        .drain(..)
-        .enumerate()
-        .filter(|(index, row)| last.get(&row.key()) == Some(index))
-        .map(|(_, row)| row)
-        .collect();
+    let rows: Vec<R> = if R::UPSERT {
+        let mut last = HashMap::with_capacity(batch.len());
+        for (index, row) in batch.iter().enumerate() {
+            last.insert(row.key(), index);
+        }
+        batch
+            .drain(..)
+            .enumerate()
+            .filter(|(index, row)| last.get(&row.key()) == Some(index))
+            .map(|(_, row)| row)
+            .collect()
+    } else {
+        std::mem::take(batch)
+    };
     R::persist(tx, &rows).await?;
     Ok(count)
 }
@@ -170,6 +245,13 @@ fn coordinate(fields: &[&str], index: usize, limit: f64) -> Option<String> {
     let text = optional(fields, index)?;
     let value: f64 = text.parse().ok()?;
     (value.is_finite() && value.abs() <= limit).then_some(text)
+}
+/// Absent is fine; present but invalid or out of range refuses the row.
+fn optional_coordinate(fields: &[&str], index: usize, limit: f64) -> Option<Option<String>> {
+    match optional(fields, index) {
+        None => Some(None),
+        Some(_) => coordinate(fields, index, limit).map(Some),
+    }
 }
 /// A real calendar date in `YYYY-MM-DD`; anything else is unknown.
 fn date(fields: &[&str], index: usize) -> Option<String> {
@@ -220,8 +302,9 @@ pub(crate) struct Country {
     geoname_id: Option<i32>,
 }
 impl Rows for Country {
+    type Context = ();
     type Key = String;
-    fn parse(f: &[&str]) -> Option<Self> {
+    fn parse(_: &(), f: &[&str]) -> Option<Self> {
         if f.len() < 17 {
             return None;
         }
@@ -290,8 +373,9 @@ pub(crate) struct Admin1 {
     geoname_id: Option<i32>,
 }
 impl Rows for Admin1 {
+    type Context = ();
     type Key = String;
-    fn parse(f: &[&str]) -> Option<Self> {
+    fn parse(_: &(), f: &[&str]) -> Option<Self> {
         if f.len() < 4 {
             return None;
         }
@@ -336,8 +420,9 @@ pub(crate) struct City {
     modification_date: Option<String>,
 }
 impl Rows for City {
+    type Context = ();
     type Key = i32;
-    fn parse(f: &[&str]) -> Option<Self> {
+    fn parse(_: &(), f: &[&str]) -> Option<Self> {
         if f.len() < 19 {
             return None;
         }
@@ -381,6 +466,81 @@ impl Rows for City {
              population=EXCLUDED.population, timezone=EXCLUDED.timezone, modification_date=EXCLUDED.modification_date, updated_at=now()",
             &[&geoname_id, &name, &ascii_name, &alternate_names, &latitude, &longitude, &country_iso, &admin1_code,
               &population, &timezone, &modification_date],
+        )
+        .await
+    }
+}
+
+/// GeoNames' postal-code layout (`<CC>.txt` inside `<CC>.zip`): country code,
+/// postal code, place name, admin name1, admin code1, admin name2, admin code2,
+/// admin name3, admin code3, latitude, longitude, accuracy. A line naming
+/// another country than the file's is skipped; `admin1_code` is admin code1,
+/// as Bilimbi stores it. Rows have no upstream identity and are inserted as
+/// they come: several places share one postcode.
+pub(crate) struct Postcode {
+    country_iso: String,
+    postcode: String,
+    place_name: String,
+    admin_name1: Option<String>,
+    admin_code1: Option<String>,
+    admin_name2: Option<String>,
+    admin_code2: Option<String>,
+    admin_name3: Option<String>,
+    admin_code3: Option<String>,
+    latitude: Option<String>,
+    longitude: Option<String>,
+    accuracy: Option<i16>,
+}
+impl Rows for Postcode {
+    /// The country the file is for.
+    type Context = String;
+    type Key = ();
+    const UPSERT: bool = false;
+    fn parse(iso: &String, f: &[&str]) -> Option<Self> {
+        if f.len() < 3 || !optional(f, 0)?.eq_ignore_ascii_case(iso) {
+            return None;
+        }
+        let accuracy = match optional(f, 11) {
+            None => None,
+            Some(value) => Some(value.parse::<i16>().ok().filter(|a| (1..=6).contains(a))?),
+        };
+        Some(Self {
+            country_iso: iso.clone(),
+            postcode: required(f, 1, 20)?,
+            place_name: required(f, 2, 180)?,
+            admin_name1: bounded(f, 3, 100)?,
+            admin_code1: bounded(f, 4, 20)?,
+            admin_name2: bounded(f, 5, 100)?,
+            admin_code2: bounded(f, 6, 20)?,
+            admin_name3: bounded(f, 7, 100)?,
+            admin_code3: bounded(f, 8, 20)?,
+            latitude: optional_coordinate(f, 9, 90.0)?,
+            longitude: optional_coordinate(f, 10, 180.0)?,
+            accuracy,
+        })
+    }
+    fn key(&self) {}
+    async fn persist(tx: &Transaction<'_>, rows: &[Self]) -> Result<u64, tokio_postgres::Error> {
+        let text = |get: fn(&Self) -> Option<&str>| rows.iter().map(get).collect::<Vec<_>>();
+        let country_iso = text(|r| Some(&r.country_iso));
+        let postcode = text(|r| Some(&r.postcode));
+        let place_name = text(|r| Some(&r.place_name));
+        let admin_name1 = text(|r| r.admin_name1.as_deref());
+        let admin_code1 = text(|r| r.admin_code1.as_deref());
+        let admin_name2 = text(|r| r.admin_name2.as_deref());
+        let admin_code2 = text(|r| r.admin_code2.as_deref());
+        let admin_name3 = text(|r| r.admin_name3.as_deref());
+        let admin_code3 = text(|r| r.admin_code3.as_deref());
+        let latitude = text(|r| r.latitude.as_deref());
+        let longitude = text(|r| r.longitude.as_deref());
+        let accuracy: Vec<Option<i16>> = rows.iter().map(|r| r.accuracy).collect();
+        tx.execute(
+            "INSERT INTO geonames_postcodes (country_iso,postcode,place_name,admin1_code,admin_name1,admin_code1,admin_name2,admin_code2,admin_name3,admin_code3,latitude,longitude,accuracy) \
+             SELECT u.country_iso,u.postcode,u.place_name,u.admin_code1,u.admin_name1,u.admin_code1,u.admin_name2,u.admin_code2,u.admin_name3,u.admin_code3,u.latitude::numeric,u.longitude::numeric,u.accuracy \
+             FROM unnest($1::text[],$2::text[],$3::text[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[],$9::text[],$10::text[],$11::text[],$12::int2[]) \
+               AS u(country_iso,postcode,place_name,admin_name1,admin_code1,admin_name2,admin_code2,admin_name3,admin_code3,latitude,longitude,accuracy)",
+            &[&country_iso, &postcode, &place_name, &admin_name1, &admin_code1, &admin_name2, &admin_code2,
+              &admin_name3, &admin_code3, &latitude, &longitude, &accuracy],
         )
         .await
     }

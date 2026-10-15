@@ -1,7 +1,8 @@
 //! Global geographic reference data: countries, first-level divisions,
 //! postcodes and cities. A fresh install creates the tables and no rows; every
-//! lookup answers empty until an operator imports (C2/C3). See `README.md`.
+//! lookup answers empty until an operator imports. See `README.md`.
 mod contributions;
+mod corrections;
 mod download;
 mod importer;
 mod lookup;
@@ -14,14 +15,15 @@ pub use lookup::{normalize_iso, Geonames};
 pub use model::*;
 pub use query::*;
 
+pub use corrections::{FieldError, PostcodeDraft, PostcodeWriteError, Provenance};
 pub use download::{DownloadFailure, DownloadStatus, FallbackCause};
 pub use importer::ImportFailure;
 pub use reference_data::{
-    default_cache_dir, Dataset, DatasetReport, ImportError, ImportOptions, ReferenceImport,
-    DEFAULT_BASE_URL, IMPORT_SERVICE, USAGE,
+    default_cache_dir, Dataset, DatasetReport, ImportError, ImportOptions, ReferenceImport, Target,
+    DEFAULT_BASE_URL, DEFAULT_POSTCODES_URL, IMPORT_SERVICE, USAGE,
 };
 
-use bilibi_database::Db;
+use bilibi_database::{Db, MutationBoundary};
 use bilibi_integration::Integration;
 use bilibi_module_registry::{Layer, Module, Service};
 use std::sync::Arc;
@@ -32,15 +34,22 @@ pub const MIGRATION: (&str, &str) = (
     "core-geonames-001",
     include_str!("../migrations/001-geonames.sql"),
 );
+pub const MIGRATION_OVERRIDES: (&str, &str) = (
+    "core-geonames-002",
+    include_str!("../migrations/002-postcode-overrides.sql"),
+);
 
 inventory::submit! {
     Module {
         id: "core/geonames", layer: Layer::Core,
         dependencies: &["base/module_registry", "base/database", "base/authz", "base/grid", "base/integration", "base/tenancy"],
-        migrations: &[MIGRATION],
+        migrations: &[MIGRATION, MIGRATION_OVERRIDES],
         services: &[
             Service { id: SERVICE, factory: |services| {
-                Ok(Arc::new(Geonames::new(services.get::<Db>("base/database.pool")?.as_ref().clone())))
+                Ok(Arc::new(Geonames::new(
+                    services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    services.get::<MutationBoundary>("base/database.mutations")?,
+                )))
             } },
             Service { id: IMPORT_SERVICE, factory: |services| {
                 Ok(Arc::new(ReferenceImport::new(

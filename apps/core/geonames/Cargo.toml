@@ -13,6 +13,7 @@ bilibi-integration = { path = "../../base/integration" }
 bilibi-module-registry.workspace = true
 bilibi-tenancy = { path = "../../base/tenancy" }
 inventory.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
