@@ -17,6 +17,8 @@ use tokio_postgres::{Row, Transaction};
 
 #[path = "coordination.rs"]
 mod coordination;
+#[path = "sweep.rs"]
+mod sweep;
 pub use coordination::{Completion, RunCommand};
 #[path = "leases.rs"]
 mod leases;

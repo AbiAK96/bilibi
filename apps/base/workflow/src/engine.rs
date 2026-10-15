@@ -62,6 +62,7 @@ pub struct Engine {
     pub(crate) boundary: Arc<MutationBoundary>,
     pub(crate) authentication: Arc<Authentication>,
     pub(crate) registry: Arc<Registry>,
+    pub(crate) queue: Arc<bilibi_queue::Queue>,
 }
 impl Engine {
     pub fn new(
@@ -69,12 +70,14 @@ impl Engine {
         boundary: Arc<MutationBoundary>,
         authentication: Arc<Authentication>,
         registry: Registry,
+        queue: Arc<bilibi_queue::Queue>,
     ) -> Self {
         Self {
             db,
             boundary,
             authentication,
             registry: Arc::new(registry),
+            queue,
         }
     }
     pub fn registry(&self) -> &Registry {
@@ -274,7 +277,8 @@ impl Engine {
         let scope = scope.clone();
         let kind = kind.to_owned();
         let to = to.map(str::to_owned);
-        tx.mutate(move |sql|Box::pin(async move {
+        let delivery_scope = scope.clone();
+        let fact = tx.mutate(move |sql|Box::pin(async move {
             request.validate()?;
             engine.writer(&context,&scope,id)?;
             let scope=engine.live(sql,&scope).await?;
@@ -300,6 +304,7 @@ impl Engine {
                 let binding=history::bind(sql,&scope,owner,flow,id).await?;
                 let (fact,change)=history::append(sql,&context,binding,(&subject,&next),operation,&request).await?;
                 changes.push(change);
+                changes.push(crate::outbox::insert(sql, &fact, &edge).await?);
                 return Ok((fact,changes));
             }
             if matches!(operation,Operation::RecordComment) && !request.comment.as_ref().is_some_and(|c|!c.trim().is_empty()) { return Err(Error::Invalid); }
@@ -308,7 +313,26 @@ impl Engine {
             let (fact,change)=history::append(sql,&context,binding,(&subject,&subject),operation,&request).await?;
             changes.push(change);
             Ok((fact,changes))
-        })).await
+        })).await?;
+        if matches!(operation, Operation::Transition) {
+            if let Err(error) = self
+                .queue
+                .enqueue_for(
+                    tx,
+                    &delivery_scope,
+                    crate::outbox::DELIVERY_WORKER,
+                    json!({"history_id":fact.id}),
+                )
+                .await
+            {
+                // Even a pre-insert queue refusal must poison the caller's
+                // owner transaction, just like a kernel callback refusal.
+                return tx
+                    .mutate(move |_| Box::pin(async move { Err(error) }))
+                    .await;
+            }
+        }
+        Ok(fact)
     }
     pub(crate) async fn live(&self, sql: &Transaction<'_>, scope: &Scope) -> Result<Scope> {
         let current = self

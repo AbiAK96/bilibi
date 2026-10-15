@@ -156,6 +156,7 @@ pub enum Contribution {
     Process(Process),
     /// Human action on a subject this module owns; see `crate::runs::human`.
     HumanAction(HumanAction),
+    Listener(crate::outbox::Listener),
 }
 #[derive(Clone, Copy)]
 pub struct OwnedSubject {
@@ -170,6 +171,7 @@ pub struct Registry {
     pub(crate) processes: BTreeMap<(&'static str, i32), ProcessDefinition>,
     /// Keyed by (subject key, action key), with the contributing owner.
     pub(crate) human_actions: BTreeMap<(&'static str, &'static str), (&'static str, HumanAction)>,
+    pub(crate) listeners: BTreeMap<&'static str, crate::outbox::Listener>,
     guards: BTreeMap<&'static str, (&'static str, &'static dyn Guard)>,
     actions: BTreeMap<&'static str, (&'static str, &'static dyn Action)>,
     aliases: BTreeMap<(&'static str, &'static str), &'static str>,
@@ -216,6 +218,19 @@ impl Registry {
                     .any(|m| m.id == owner && m.dependencies.contains(&"base/workflow"))
             {
                 return Err(invalid(format!("{owner} must depend on base/workflow")));
+            }
+            if let Contribution::Listener(listener) = entry {
+                if !key(listener.key)
+                    || listener.subjects.is_empty()
+                    || listener.subjects.len() > 500
+                    || registry.listeners.insert(listener.key, *listener).is_some()
+                {
+                    return Err(invalid(format!(
+                        "invalid/duplicate listener {}",
+                        listener.key
+                    )));
+                }
+                continue;
             }
             if let Contribution::Process(process) = entry {
                 let compiled = process::compile(owner, process)?;
@@ -291,7 +306,9 @@ impl Registry {
                     &[][..],
                     registry.flows.insert(flow.code, (owner, *flow)).is_some(),
                 ),
-                Contribution::Process(_) | Contribution::HumanAction(_) => {
+                Contribution::Process(_)
+                | Contribution::HumanAction(_)
+                | Contribution::Listener(_) => {
                     unreachable!("handled above")
                 }
             };
@@ -304,6 +321,17 @@ impl Registry {
                     || registry.aliases.insert((kind, alias), k).is_some()
                 {
                     return Err(invalid(format!("duplicate/invalid {kind} alias {alias}")));
+                }
+            }
+        }
+        for listener in registry.listeners.values() {
+            let mut seen = BTreeSet::new();
+            for subject in listener.subjects {
+                if !registry.subjects.contains_key(subject) || !seen.insert(subject) {
+                    return Err(invalid(format!(
+                        "listener {} has unknown/duplicate subject",
+                        listener.key
+                    )));
                 }
             }
         }

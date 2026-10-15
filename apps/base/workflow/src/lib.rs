@@ -1,10 +1,13 @@
 //! Owner-proven status transitions, versioned process runs, worker leases
 //! and the human action gate. All callbacks share the caller's audited
-//! transaction; hooks perform database effects only. Durable delivery is W6.
+//! transaction; hooks perform database effects only. Committed transitions
+//! are delivered through the durable outbox.
 pub mod definitions;
 pub mod engine;
 pub mod history;
 mod intent;
+pub mod maintenance;
+pub mod outbox;
 pub mod process;
 pub mod runs;
 use bilibi_database::{Change, Result};
@@ -77,6 +80,17 @@ pub enum Operation {
 /// and rereads on `Load::Lock`, and enforces live record policy even on edges
 /// without a capability. Never open/commit another transaction in a callback.
 pub trait SubjectAdapter: Send + Sync {
+    /// Maintenance locks only: prove the tenant and lock the owner row using
+    /// this system scope. Executes no business policy or effect. Owners opt in;
+    /// the default defers their runs until they implement this seam.
+    fn maintenance_load<'a>(
+        &'a self,
+        _tx: &'a Transaction<'_>,
+        _scope: &'a bilibi_authz::SystemScope,
+        _id: i64,
+    ) -> OwnerFuture<'a, Subject> {
+        Box::pin(async { Err(bilibi_database::Error::Invalid) })
+    }
     fn load<'a>(
         &'a self,
         tx: &'a Transaction<'_>,
@@ -105,16 +119,26 @@ pub trait SubjectAdapter: Send + Sync {
 
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/workflow",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/database","base/audit","base/authz","base/tenancy","base/queue"],
+    dependencies:&["base/module_registry","base/database","base/audit","base/authz","base/tenancy","base/queue","base/schedule","base/settings"],
     migrations:&[("workflow-001-status-kernel",include_str!("../migrations/001-status.sql")),
         ("workflow-002-process-graphs",include_str!("../migrations/002-process.sql")),
-        ("workflow-003-human-actions",include_str!("../migrations/003-human-actions.sql"))],
+        ("workflow-003-human-actions",include_str!("../migrations/003-human-actions.sql")),
+        ("workflow-004-outbox",include_str!("../migrations/004-outbox.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/workflow.engine",factory:|services| {
         Ok(Arc::new(Engine::new(
             services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
             services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?,
-            Registry::from_inventory()?,
+            Registry::from_inventory()?, services.get("base/queue.store")?,
         )))
+    }}, bilibi_module_registry::Service {id:"base/workflow.delivery",factory:|services| {
+        Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(outbox::Delivery {
+            engine: services.get("base/workflow.engine")?,
+        }))))
+    }}, bilibi_module_registry::Service {id:"base/workflow.maintenance",factory:|services| {
+        Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(maintenance::Maintenance {
+            engine: services.get("base/workflow.engine")?, schedule: services.get("base/schedule.store")?,
+            settings: services.get("base/settings.store")?,
+        }))))
     }}],
 } }
 

@@ -12,14 +12,16 @@ bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-queue = { path = "../queue" }
+bilibi-schedule = { path = "../schedule" }
+bilibi-settings = { path = "../settings" }
 tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 inventory.workspace = true
 sha2 = "0.11.1"
 uuid.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }
-tokio.workspace = true
