@@ -74,13 +74,18 @@ async fn main() -> Result<()> {
             let worker = tokio::spawn(executor.run(stopped.clone()));
             let ticker = tokio::spawn(scheduler.run(stopped));
             let shutdown = stop.clone();
-            let result = axum::serve(listener, bilibi_web::router(app))
-                .with_graceful_shutdown(async move {
-                    let _ = tokio::signal::ctrl_c().await;
-                    let _ = shutdown.send(true);
-                })
-                .await
-                .map_err(|_| Error::Internal);
+            // The peer address feeds the OAuth per-sender throttle.
+            let result = axum::serve(
+                listener,
+                bilibi_web::router(app)
+                    .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = tokio::signal::ctrl_c().await;
+                let _ = shutdown.send(true);
+            })
+            .await
+            .map_err(|_| Error::Internal);
             let _ = stop.send(true);
             worker.await.map_err(|_| Error::Internal)??;
             history.await.map_err(|_| Error::Internal)??;

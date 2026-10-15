@@ -31,6 +31,12 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
     for entry in services.catalog()?.entries::<Route>(ROUTES)? {
         let route = entry.get::<Route>()?;
         validate_pattern(route.path)?;
+        if crate::api::reserved(route.path) {
+            return Err(invalid(format!(
+                "{} at {}:{} claims the host agent path {}",
+                entry.id, entry.provenance.source, entry.provenance.line, route.path
+            )));
+        }
         for reserved in [
             "/",
             "/login",

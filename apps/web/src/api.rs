@@ -1,0 +1,788 @@
+//! Host agent edge: OAuth discovery, device authorization and token endpoints,
+//! the bearer `AgentAuth` boundary and the `/api/v1` operation and plan
+//! endpoints. Answers are JSON only, errors included. Every request here is
+//! one incoming Integration exchange, recorded after dispatch. Bodies, query
+//! strings, authorization headers and token values never reach the recorder.
+//!
+//! A bearer token is a claim, never a grant: each request reproves the grant,
+//! the account and its party facets (`AgentAccess::seal`), then seals a fresh
+//! scope carrying the agent facet. Nothing is cached across requests.
+use crate::App;
+use axum::{
+    body::Body,
+    extract::{ConnectInfo, FromRequest, Path, Query, Request, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{any, get, post},
+    Json, Router,
+};
+use bilibi_base::{
+    agent_api::{
+        plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
+        Kind, Registry, SearchOptions,
+    },
+    integration::{Incoming, Integration},
+    settings::Settings,
+    tenancy::{ProofFuture, Scope},
+};
+use bilibi_core::agent_access::{
+    AgentAccess, AgentClaims, CodeExchange, OAuthError, Throttle, CLIENT_ID, DEVICE_GRANT,
+    OAUTH_REQUESTS_PER_MINUTE, OAUTH_SCOPE,
+};
+use bilibi_database::Error;
+use serde_json::{json, Map, Value};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Instant,
+};
+use tokio_postgres::Transaction;
+
+pub const AGENT_ID_HEADER: &str = "x-bilibi-agent-id";
+const RUN_ID_HEADER: &str = "x-bilibi-run-id";
+const TRACE_HEADER: &str = "x-bilibi-trace-id";
+/// A plan may encode up to 1 MiB canonically; leave room for whitespace.
+const API_BODY_LIMIT: usize = 2 << 20;
+
+/// Host-owned paths no discovered page may claim.
+pub fn reserved(path: &str) -> bool {
+    path == "/api/v1"
+        || path.starts_with("/api/v1/")
+        || path.starts_with("/.well-known/")
+        || ["/oauth/device_authorization", "/oauth/token", "/mcp"].contains(&path)
+}
+
+/// Services this edge composes; built once at boot from the registry.
+pub struct Edge {
+    access: Arc<AgentAccess>,
+    registry: Arc<Registry>,
+    plans: Arc<Plans>,
+    integration: Arc<Integration>,
+    settings: Arc<Settings>,
+    throttle: Throttle,
+}
+impl Edge {
+    pub fn new(services: &bilibi_module_registry::Services) -> bilibi_database::Result<Self> {
+        Ok(Self {
+            access: services.get("core/agent_access.grants")?,
+            registry: services.get("base/agent_api.registry")?,
+            plans: services.get("base/agent_api.plans")?,
+            integration: services.get(bilibi_base::integration::SERVICE)?,
+            settings: services.get("base/settings.store")?,
+            throttle: Throttle::default(),
+        })
+    }
+}
+
+pub fn router(app: App) -> Router<App> {
+    let api = Router::new()
+        .route("/api/v1/search", get(search))
+        .route("/api/v1/operations/{key}", get(describe))
+        .route("/api/v1/guides/{key}", get(guide))
+        .route("/api/v1/operations/{key}/call", post(call))
+        .route("/api/v1/plans", post(plan))
+        .route("/api/v1/plans/commit", post(commit))
+        .route("/api/v1", any(not_found))
+        .route("/api/v1/{*rest}", any(not_found));
+    Router::new()
+        .route("/.well-known/oauth-authorization-server", get(metadata))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(protected_resource),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/mcp",
+            get(protected_resource),
+        )
+        .route("/.well-known/bilibi", get(descriptor))
+        .route("/oauth/device_authorization", post(device))
+        .route("/oauth/token", post(token))
+        .merge(api)
+        .method_not_allowed_fallback(method_not_allowed)
+        .layer(middleware::from_fn_with_state(app, record))
+}
+
+/// One request's correlation ID, set before dispatch.
+#[derive(Clone)]
+struct Trace(String);
+/// What dispatch learned for the exchange row. The scope is the sealed bearer
+/// scope; without one the row is a system row the operator alone can see.
+#[derive(Clone, Default)]
+struct Exchange {
+    scope: Option<Scope>,
+    operation: Option<String>,
+}
+
+async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
+    let started = Instant::now();
+    let trace = uuid::Uuid::new_v4().simple().to_string();
+    let method = request.method().to_string();
+    let endpoint = request.uri().path().to_owned();
+    let agent_id = label(request.headers(), AGENT_ID_HEADER);
+    let run_id = label(request.headers(), RUN_ID_HEADER);
+    request.extensions_mut().insert(Trace(trace.clone()));
+    let mut response = next.run(request).await;
+    let exchange = response
+        .extensions_mut()
+        .remove::<Exchange>()
+        .unwrap_or_default();
+    let incoming = Incoming {
+        method: Some(method),
+        operation: Some(
+            exchange
+                .operation
+                .unwrap_or_else(|| endpoint.clone())
+                .chars()
+                .take(255)
+                .collect(),
+        ),
+        endpoint: Some(endpoint),
+        response_status: i16::try_from(response.status().as_u16()).ok(),
+        duration_ms: Some(i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX)),
+        connection_id: exchange
+            .scope
+            .as_ref()
+            .and_then(Scope::agent)
+            .map(|agent| agent.connection().to_string()),
+        agent_id,
+        run_id,
+        correlation_id: Some(trace.clone()),
+        ..Incoming::default()
+    };
+    let integration = &app.api.integration;
+    let recorded = match &exchange.scope {
+        Some(scope) => integration.record_incoming(scope, &incoming).await,
+        None => integration.record_incoming_system(&incoming).await,
+    };
+    if let Err(error) = recorded {
+        eprintln!("warning: API exchange {trace} was not recorded: {error}");
+    }
+    if let Ok(value) = HeaderValue::from_str(&trace) {
+        response.headers_mut().insert(TRACE_HEADER, value);
+    }
+    response
+}
+
+/// A self-reported label; an unshowable value is treated as not stated.
+fn label(headers: &HeaderMap, name: &str) -> Option<String> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?.to_str().ok()?;
+    (values.next().is_none() && bilibi_core::agent_access::valid_label(value))
+        .then(|| value.to_owned())
+}
+
+fn reply(status: StatusCode, body: Value) -> Response {
+    (status, Json(body)).into_response()
+}
+/// A JSON refusal; `challenge` adds the bearer `WWW-Authenticate` header.
+struct Refusal {
+    status: StatusCode,
+    body: Value,
+    challenge: bool,
+}
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        let mut response = reply(self.status, self.body);
+        if self.challenge {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        }
+        response
+    }
+}
+fn refusal(status: StatusCode, body: Value) -> Refusal {
+    Refusal {
+        status,
+        body,
+        challenge: false,
+    }
+}
+fn error(status: StatusCode, code: &str) -> Refusal {
+    refusal(status, json!({"error": code}))
+}
+async fn not_found() -> Refusal {
+    error(StatusCode::NOT_FOUND, "not_found")
+}
+async fn method_not_allowed() -> Refusal {
+    error(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed")
+}
+fn unavailable(error: &Error) -> Refusal {
+    eprintln!("warning: agent edge storage failure: {error}");
+    self::error(StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable")
+}
+
+fn origin(app: &App) -> &str {
+    app.origin.trim_end_matches('/')
+}
+/// The MCP endpoint's protected-resource identifier, from `APP_ORIGIN`.
+pub fn mcp_resource(app: &App) -> String {
+    format!("{}/mcp", origin(app))
+}
+
+// --- OAuth discovery ---------------------------------------------------------
+
+async fn metadata(State(app): State<App>) -> Response {
+    let base = origin(&app);
+    reply(
+        StatusCode::OK,
+        json!({
+            "issuer": base,
+            "device_authorization_endpoint": format!("{base}/oauth/device_authorization"),
+            "authorization_endpoint": format!("{base}/oauth/authorize"),
+            "token_endpoint": format!("{base}/oauth/token"),
+            "response_types_supported": ["code"],
+            "grant_types_supported": [DEVICE_GRANT, "authorization_code", "refresh_token"],
+            "code_challenge_methods_supported": ["S256"],
+            "scopes_supported": [OAUTH_SCOPE],
+            "authorization_response_iss_parameter_supported": true,
+            "token_endpoint_auth_methods_supported": ["none"],
+        }),
+    )
+}
+async fn protected_resource(State(app): State<App>) -> Response {
+    reply(
+        StatusCode::OK,
+        json!({
+            "resource": mcp_resource(&app),
+            "authorization_servers": [origin(&app)],
+            "scopes_supported": [OAUTH_SCOPE],
+            "bearer_methods_supported": ["header"],
+        }),
+    )
+}
+async fn descriptor(State(app): State<App>) -> Response {
+    let base = origin(&app);
+    let host = base
+        .split_once("://")
+        .map_or(base, |(_, rest)| rest)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or_default();
+    reply(
+        StatusCode::OK,
+        json!({
+            "api_base": format!("{base}/api/v1"),
+            "api_version": "1",
+            "plan_endpoint": format!("{base}/api/v1/plans"),
+            "commit_endpoint": format!("{base}/api/v1/plans/commit"),
+            "server_name": host,
+            "client_id": CLIENT_ID,
+        }),
+    )
+}
+
+// --- OAuth device authorization and token ------------------------------------
+
+/// OAuth form fields, urlencoded as RFC 6749 requires or as a JSON object.
+/// Non-string values count as absent.
+async fn params(request: Request) -> Option<HashMap<String, String>> {
+    let json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if json {
+        let Json(fields) = Json::<Map<String, Value>>::from_request(request, &())
+            .await
+            .ok()?;
+        Some(
+            fields
+                .into_iter()
+                .filter_map(|(key, value)| match value {
+                    Value::String(value) => Some((key, value)),
+                    _ => None,
+                })
+                .collect(),
+        )
+    } else {
+        let axum::Form(fields) = axum::Form::<HashMap<String, String>>::from_request(request, &())
+            .await
+            .ok()?;
+        Some(fields)
+    }
+}
+
+/// The direct peer, or the client a loopback reverse proxy reports: read
+/// `X-Forwarded-For` right to left, skipping loopback hops, and stop at the
+/// first other address. An unparseable hop leaves the peer address.
+fn sender(request: &Request) -> String {
+    let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
+        return "unknown".into();
+    };
+    let peer = peer.ip();
+    if !peer.is_loopback() {
+        return peer.to_string();
+    }
+    let hops: Vec<&str> = request
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .collect();
+    for hop in hops.into_iter().rev() {
+        match hop.trim().parse::<IpAddr>() {
+            Ok(address) if address.is_loopback() => continue,
+            Ok(address) => return address.to_string(),
+            Err(_) => break,
+        }
+    }
+    peer.to_string()
+}
+
+async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {
+    let client = app.db.get().await?;
+    let limit = app
+        .api
+        .settings
+        .get_global(&**client, OAUTH_REQUESTS_PER_MINUTE)
+        .await?
+        .as_u64()
+        .and_then(|limit| u32::try_from(limit).ok())
+        .ok_or(Error::Invalid)?;
+    Ok(app.api.throttle.allow(&format!("{kind}:{sender}"), limit))
+}
+
+/// Token-endpoint answers are never cached (RFC 6749 section 5.1).
+fn oauth(result: Result<Value, OAuthError>) -> Response {
+    let mut response = match result {
+        Ok(body) => reply(StatusCode::OK, body),
+        Err(OAuthError::Other(error)) => unavailable(&error).into_response(),
+        Err(code) => error(StatusCode::BAD_REQUEST, &code.to_string()).into_response(),
+    };
+    response
+        .headers_mut()
+        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    response
+}
+
+async fn device(State(app): State<App>, request: Request) -> Response {
+    let sender = sender(&request);
+    match allowed(&app, "device", &sender).await {
+        Ok(true) => {}
+        Ok(false) => return oauth(Err(OAuthError::SlowDown)),
+        Err(error) => return oauth(Err(error.into())),
+    }
+    let Some(fields) = params(request).await else {
+        return oauth(Err(OAuthError::InvalidRequest));
+    };
+    let field = |key: &str| fields.get(key).map(String::as_str).unwrap_or_default();
+    let started = app
+        .api
+        .access
+        .start_device(field("client_id"), field("agent_id"))
+        .await;
+    oauth(started.map(|start| {
+        let uri = format!("{}/oauth/device", origin(&app));
+        json!({
+            "device_code": start.device_code,
+            "user_code": start.user_code,
+            "expires_in": start.expires_in,
+            "interval": start.interval,
+            "verification_uri_complete": format!("{uri}?user_code={}", query_value(&start.user_code)),
+            "verification_uri": uri,
+        })
+    }))
+}
+
+fn query_value(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                char::from(byte).to_string()
+            }
+            other => format!("%{other:02X}"),
+        })
+        .collect()
+}
+
+async fn token(State(app): State<App>, request: Request) -> Response {
+    let sender = sender(&request);
+    match allowed(&app, "token", &sender).await {
+        Ok(true) => {}
+        Ok(false) => return oauth(Err(OAuthError::SlowDown)),
+        Err(error) => return oauth(Err(error.into())),
+    }
+    let Some(fields) = params(request).await else {
+        return oauth(Err(OAuthError::InvalidRequest));
+    };
+    let field = |key: &str| fields.get(key).map(String::as_str).unwrap_or_default();
+    let access = &app.api.access;
+    let issued = match fields.get("grant_type").map(String::as_str) {
+        None => Err(OAuthError::InvalidRequest),
+        Some(DEVICE_GRANT) => {
+            access
+                .exchange(field("client_id"), field("device_code"))
+                .await
+        }
+        Some("refresh_token") => {
+            access
+                .refresh(
+                    field("client_id"),
+                    field("refresh_token"),
+                    fields.get("resource").map(String::as_str),
+                )
+                .await
+        }
+        Some("authorization_code") => {
+            let exchange = CodeExchange {
+                code: field("code").into(),
+                client_id: field("client_id").into(),
+                redirect_uri: field("redirect_uri").into(),
+                code_verifier: field("code_verifier").into(),
+                resource: field("resource").into(),
+            };
+            access.exchange_code(&exchange, &mcp_resource(&app)).await
+        }
+        Some(_) => {
+            return oauth_code("unsupported_grant_type");
+        }
+    };
+    oauth(issued.map(|tokens| {
+        let mut body = json!({
+            "access_token": tokens.access_token,
+            "refresh_token": tokens.refresh_token,
+            "token_type": tokens.token_type,
+            "expires_in": tokens.expires_in,
+        });
+        if let Some(scope) = tokens.scope {
+            body["scope"] = json!(scope);
+        }
+        body
+    }))
+}
+fn oauth_code(code: &str) -> Response {
+    let mut response = error(StatusCode::BAD_REQUEST, code).into_response();
+    response
+        .headers_mut()
+        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
+    response
+}
+
+// --- AgentAuth ---------------------------------------------------------------
+
+/// A bearer request whose grant, account and party facets were proven live
+/// for this request alone.
+struct Agent {
+    scope: Scope,
+    claims: AgentClaims,
+    trace: String,
+}
+
+/// HTTP authentication scheme names are case-insensitive; token bytes are not.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let value = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let mut parts = value.split_whitespace();
+    let (scheme, token) = (parts.next()?, parts.next()?);
+    (scheme.eq_ignore_ascii_case("bearer") && parts.next().is_none()).then_some(token)
+}
+
+fn refused() -> Refusal {
+    Refusal {
+        challenge: true,
+        ..error(StatusCode::UNAUTHORIZED, "invalid_token")
+    }
+}
+
+/// Cookies and caller-supplied identity are unused. API tokens carry no MCP
+/// resource; an MCP-bound token is refused here.
+async fn authenticate(app: &App, headers: &HeaderMap, trace: &str) -> Result<Agent, Refusal> {
+    let access = &app.api.access;
+    let fail = |error: OAuthError| match error {
+        OAuthError::Other(error) => unavailable(&error),
+        _ => refused(),
+    };
+    let token = bearer(headers).ok_or_else(refused)?;
+    let claims = access.authenticate(token, None).await.map_err(fail)?;
+    let scope = access.seal(&claims, trace).await.map_err(fail)?;
+    access
+        .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref())
+        .await
+        .map_err(fail)?;
+    Ok(Agent {
+        scope,
+        claims,
+        trace: trace.to_owned(),
+    })
+}
+
+impl Agent {
+    /// Attaches the sealed scope so the exchange row belongs to its tenant.
+    fn answer(self, operation: Option<String>, result: Result<Value, Refusal>) -> Response {
+        let mut response = match result {
+            Ok(body) => reply(StatusCode::OK, body),
+            Err(refusal) => refusal.into_response(),
+        };
+        response.extensions_mut().insert(Exchange {
+            scope: Some(self.scope),
+            operation,
+        });
+        response
+    }
+}
+
+/// The plan service's credential adapter: reproves and locks the grant on the
+/// plan's own transaction. The binding names the connection, not the rotating
+/// access token, so a refreshed token can still commit its connection's plan.
+struct Grant<'a> {
+    access: &'a AgentAccess,
+    claims: &'a AgentClaims,
+    trace: &'a str,
+}
+impl PlanAuthority for Grant<'_> {
+    fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            let scope = self
+                .access
+                .prove(tx, self.claims, true, self.trace)
+                .await
+                .map_err(|error| match error {
+                    OAuthError::Other(error) => error,
+                    _ => Error::Unauthorized,
+                })?;
+            Ok(PlanIdentity {
+                credential_binding: format!("agent-connection:{}", self.claims.connection),
+                scope,
+            })
+        })
+    }
+}
+
+/// Bilimbi's `/api/v1` wire errors.
+fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
+    use bilibi_base::agent_api::Error as E;
+    match error {
+        E::InvalidInput(fields) => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"invalid_input","fields":fields}),
+        ),
+        E::Forbidden | E::Backend(Error::Forbidden) => refusal(
+            StatusCode::FORBIDDEN,
+            json!({"error":"forbidden","reason":"missing_capability"}),
+        ),
+        E::UnknownOperation | E::UnknownGuide | E::NotFound | E::Backend(Error::NotFound) => {
+            let code = match error {
+                E::UnknownOperation => "unknown_operation",
+                E::UnknownGuide => "unknown_guide",
+                _ => "not_found",
+            };
+            self::error(StatusCode::NOT_FOUND, code)
+        }
+        E::InvalidPlanCode
+        | E::PlanMismatch
+        | E::PlanAlreadyUsed
+        | E::PlanExpired
+        | E::StalePlan
+        | E::WritesNotEnabled => self::error(StatusCode::CONFLICT, &error.to_string()),
+        E::PlanRejected(results) => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"plan_rejected","results":results}),
+        ),
+        // The grant stopped proving live between the edge and the commit.
+        E::Backend(Error::Unauthorized) => refused(),
+        E::Backend(Error::Conflict | Error::Invalid) => {
+            self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected")
+        }
+        E::Backend(other) => unavailable(&other),
+    }
+}
+
+fn invalid_request() -> Refusal {
+    error(StatusCode::BAD_REQUEST, "invalid_request")
+}
+
+/// A JSON object body within the API limit, or the JSON refusal to send.
+async fn body(request: Request<Body>) -> Result<Map<String, Value>, Refusal> {
+    let bytes = axum::body::to_bytes(request.into_body(), API_BODY_LIMIT)
+        .await
+        .map_err(|_| error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large"))?;
+    match serde_json::from_slice(&bytes) {
+        Ok(Value::Object(fields)) => Ok(fields),
+        _ => Err(invalid_request()),
+    }
+}
+
+// --- /api/v1 -----------------------------------------------------------------
+
+async fn search(State(app): State<App>, uri: Uri, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = async {
+        let Query(query) =
+            Query::<HashMap<String, String>>::try_from_uri(&uri).map_err(|_| invalid_request())?;
+        let limit = match query.get("limit") {
+            None => 10,
+            Some(value) => value
+                .parse::<usize>()
+                .ok()
+                .filter(|limit| (1..=50).contains(limit))
+                .ok_or_else(invalid_request)?,
+        };
+        let kind = match query.get("kind").map(String::as_str) {
+            None => None,
+            Some("read") => Some(Kind::Read),
+            Some("write") => Some(Kind::Write),
+            Some(_) => return Err(invalid_request()),
+        };
+        let include_unavailable = match query.get("include_unavailable").map(String::as_str) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => return Err(invalid_request()),
+        };
+        let client = app.db.get().await.map_err(|e| unavailable(&e.into()))?;
+        let words = query.get("q").map(String::as_str).unwrap_or_default();
+        let options = SearchOptions {
+            kind,
+            limit,
+            include_unavailable,
+        };
+        app.api
+            .registry
+            .search(&**client, &agent.scope, words, options)
+            .await
+            .map(|found| json!({"result": found}))
+            .map_err(api_error)
+    }
+    .await;
+    agent.answer(None, result)
+}
+
+fn trace(request: &Request) -> String {
+    request
+        .extensions()
+        .get::<Trace>()
+        .map(|trace| trace.0.clone())
+        .unwrap_or_default()
+}
+
+async fn describe(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = match app.db.get().await {
+        Ok(client) => app
+            .api
+            .registry
+            .describe(&**client, &agent.scope, &key)
+            .await
+            .map_err(api_error),
+        Err(error) => Err(unavailable(&error.into())),
+    };
+    agent.answer(None, result)
+}
+
+async fn guide(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = match app.db.get().await {
+        Ok(client) => app
+            .api
+            .registry
+            .guide(&**client, &agent.scope, &key)
+            .await
+            .map_err(api_error),
+        Err(error) => Err(unavailable(&error.into())),
+    };
+    agent.answer(None, result)
+}
+
+async fn call(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = async {
+        let mut fields = body(request).await?;
+        let input = match fields.remove("input") {
+            Some(input @ Value::Object(_)) => input,
+            _ => return Err(invalid_request()),
+        };
+        let client = app.db.get().await.map_err(|e| unavailable(&e.into()))?;
+        app.api
+            .registry
+            .call(&**client, &agent.scope, &key, &input)
+            .await
+            .map_err(api_error)
+    }
+    .await;
+    agent.answer(Some(key), result)
+}
+
+/// The ordered list exactly as sent; a malformed list is a reviewable input
+/// error, as the plan service reports its own bounds.
+fn operations(value: Value) -> Result<Vec<PlannedOperation>, Refusal> {
+    serde_json::from_value(value).map_err(|_| {
+        refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"invalid_input","fields":{"operations":["must be a bounded non-empty list of key/input objects"]}}),
+        )
+    })
+}
+
+async fn plan(State(app): State<App>, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = async {
+        let mut fields = body(request).await?;
+        let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        let authority = Grant {
+            access: &app.api.access,
+            claims: &agent.claims,
+            trace: &agent.trace,
+        };
+        app.api
+            .plans
+            .preview(&authority, &operations)
+            .await
+            .map_err(api_error)
+    }
+    .await;
+    agent.answer(Some("agent_api.plan".into()), result)
+}
+
+async fn commit(State(app): State<App>, request: Request) -> Response {
+    let trace = trace(&request);
+    let agent = match authenticate(&app, request.headers(), &trace).await {
+        Ok(agent) => agent,
+        Err(refusal) => return refusal.into_response(),
+    };
+    let result = async {
+        let mut fields = body(request).await?;
+        let Some(Value::String(code)) = fields.remove("plan_code") else {
+            return Err(invalid_request());
+        };
+        let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        let authority = Grant {
+            access: &app.api.access,
+            claims: &agent.claims,
+            trace: &agent.trace,
+        };
+        app.api
+            .plans
+            .commit(&agent.scope, &authority, &code, &operations)
+            .await
+            .map_err(api_error)
+    }
+    .await;
+    agent.answer(Some("agent_api.commit".into()), result)
+}

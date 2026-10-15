@@ -1,4 +1,5 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+mod api;
 mod auth;
 mod live;
 mod media;
@@ -34,6 +35,7 @@ pub struct App {
     pub display: Arc<bilibi_base::datetime::DisplayPolicy>,
     pub mutations: Arc<bilibi_database::MutationBoundary>,
     pub perf: Arc<bilibi_base::perf::Recorder>,
+    api: Arc<api::Edge>,
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
@@ -54,6 +56,7 @@ impl App {
             eprintln!("warning: {dropped}");
         }
         let routes = Arc::new(routes::bind(&services)?);
+        let api = Arc::new(api::Edge::new(&services)?);
         Ok(Self {
             routes,
             db,
@@ -66,6 +69,7 @@ impl App {
             display,
             mutations,
             perf,
+            api,
             services: Arc::new(services),
         })
     }
@@ -96,6 +100,7 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
     routes::install(Router::new(), &app.routes)
+        .merge(api::router(app.clone()))
         .route("/", get(auth::home))
         .route("/login", get(auth::home).post(auth::login))
         .route(
