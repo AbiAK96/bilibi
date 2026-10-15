@@ -1,0 +1,15 @@
+{#- The Postcodes index (Bilimbi `Geonames.Web.PostcodesLive` render). The
+    header, totals card, toolbar, table, pager and dialog are rendered by
+    src/web/postcodes.rs through the shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="postcodes-index", class="space-y-5") %}
+{{ header|safe }}
+{{ summary|safe }}
+{{ toolbar|safe }}
+{{ card|safe }}
+{{ modal|safe }}
+{% endcall %}
+</div>

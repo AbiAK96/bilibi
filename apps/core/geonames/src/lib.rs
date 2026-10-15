@@ -7,17 +7,21 @@ mod download;
 mod importer;
 mod lookup;
 mod model;
+mod names;
 mod query;
 mod reference_data;
+mod web;
 
 pub use contributions::{LIST, UPDATE, VIEW};
 pub use lookup::{normalize_iso, Geonames};
 pub use model::*;
 pub use query::*;
 
+pub use contributions::{ADMIN1_PATH, COUNTRIES_PATH, POSTCODES_PATH};
 pub use corrections::{FieldError, PostcodeDraft, PostcodeWriteError, Provenance};
 pub use download::{DownloadFailure, DownloadStatus, FallbackCause};
 pub use importer::ImportFailure;
+pub use names::NameWriteError;
 pub use reference_data::{
     default_cache_dir, Dataset, DatasetReport, ImportError, ImportOptions, ReferenceImport, Target,
     DEFAULT_BASE_URL, DEFAULT_POSTCODES_URL, IMPORT_SERVICE, USAGE,
@@ -30,6 +34,8 @@ use std::sync::Arc;
 
 /// The registry service id of the lookup API.
 pub const SERVICE: &str = "core/geonames.lookup";
+/// The registry service id of the three index screens.
+pub const PAGES_SERVICE: &str = "core/geonames.pages";
 pub const MIGRATION: (&str, &str) = (
     "core-geonames-001",
     include_str!("../migrations/001-geonames.sql"),
@@ -42,7 +48,7 @@ pub const MIGRATION_OVERRIDES: (&str, &str) = (
 inventory::submit! {
     Module {
         id: "core/geonames", layer: Layer::Core,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/grid", "base/integration", "base/tenancy"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/grid", "base/integration", "base/tenancy", "base/ui", "base/menu", "base/datetime", "base/locale"],
         migrations: &[MIGRATION, MIGRATION_OVERRIDES],
         services: &[
             Service { id: SERVICE, factory: |services| {
@@ -56,6 +62,15 @@ inventory::submit! {
                     services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     services.get::<Integration>(bilibi_integration::SERVICE)?,
                 )))
+            } },
+            Service { id: PAGES_SERVICE, factory: |services| {
+                Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    geonames: services.get(SERVICE)?,
+                    importer: services.get(IMPORT_SERVICE)?,
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
             } },
         ],
     }

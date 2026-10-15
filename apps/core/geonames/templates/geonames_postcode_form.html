@@ -1,0 +1,20 @@
+{#- The New/Edit Postcode form inside the dialog (Bilimbi `PostcodesLive`
+    render, `postcode-form`). Values change raises validate-postcode (phx-change);
+    Enter or Save raises save-postcode with the same values (phx-submit). -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+<form id="postcode-form" data-event="validate-postcode" data-change data-submit-event="save-postcode" class="mt-4 space-y-4">
+<div class="grid gap-x-4 sm:grid-cols-2">
+{% call form::input(field=country) %}{% endcall %}
+{% call form::input(field=postcode) %}{% endcall %}
+{% call form::input(field=place_name) %}{% endcall %}
+{% call form::input(field=admin1) %}{% endcall %}
+{% call form::input(field=latitude) %}{% endcall %}
+{% call form::input(field=longitude) %}{% endcall %}
+{% call form::input(field=accuracy) %}{% endcall %}
+</div>
+<div class="mt-6 flex justify-end gap-2">
+{% call ui::button(id="postcode-cancel", button_type="button", event="close-postcode-modal") %}Cancel{% endcall %}
+{% call ui::button(id="postcode-save", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Saving…") %}Save{% endcall %}
+</div>
+</form>

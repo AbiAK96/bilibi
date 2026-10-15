@@ -1,0 +1,13 @@
+{#- The Admin1 index (Bilimbi `Geonames.Web.Admin1Live` render). The header,
+    toolbar, table and pager are rendered by src/web/admin1.rs through the
+    shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="admin1-index") %}
+{{ header|safe }}
+{{ toolbar|safe }}
+{{ card|safe }}
+{% endcall %}
+</div>
