@@ -9,7 +9,7 @@
 pub mod layout;
 mod web;
 
-use bilibi_module_registry::contributions::{Access, Method, Route, ROUTES};
+use bilibi_module_registry::contributions::{Access, Catalog, Method, Route, ROUTES};
 use std::sync::Arc;
 
 inventory::submit! {
@@ -18,7 +18,9 @@ inventory::submit! {
         dependencies: &["base/module_registry", "base/ui", "base/database", "base/tenancy", "base/authz", "base/menu"],
         migrations: &[], services: &[
             bilibi_module_registry::Service { id: "base/tiling.pages", factory: |services| {
-                let catalog = services.catalog()?;
+                // Services installs its catalog only after every factory has
+                // run, so read the same discovered contributions directly.
+                let catalog = &Catalog::discover(&bilibi_module_registry::discover()?)?;
                 let menu = bilibi_menu::Menu::from_catalog(catalog)?;
                 let routes = catalog.entries::<Route>(ROUTES)?.iter()
                     .map(|entry| entry.get::<Route>())
