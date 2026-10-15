@@ -23,6 +23,7 @@ bilibi-menu = { path = "menu" }
 bilibi-module-registry = { path = "module_registry" }
 bilibi-notifications = { path = "notifications" }
 bilibi-party-ids = { path = "party_ids" }
+bilibi-perf = { path = "perf" }
 bilibi-principal-directory = { path = "principal_directory" }
 bilibi-queue = { path = "queue" }
 bilibi-schedule = { path = "schedule" }

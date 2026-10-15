@@ -337,6 +337,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
+ "bilibi-perf",
  "bilibi-principal-directory",
  "bilibi-queue",
  "bilibi-schedule",
@@ -404,6 +405,7 @@ dependencies = [
  "inventory",
  "serde_json",
  "thiserror",
+ "tokio",
  "tokio-postgres",
  "uuid",
 ]
@@ -570,6 +572,24 @@ dependencies = [
  "bilibi-module-registry",
  "inventory",
  "serde",
+]
+
+[[package]]
+name = "bilibi-perf"
+version = "0.1.0"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-queue",
+ "bilibi-schedule",
+ "bilibi-settings",
+ "inventory",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

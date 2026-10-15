@@ -1,0 +1,22 @@
+[package]
+name = "bilibi-perf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-authz = { path = "../authz" }
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-queue = { path = "../queue" }
+bilibi-schedule = { path = "../schedule" }
+bilibi-settings = { path = "../settings" }
+inventory.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
