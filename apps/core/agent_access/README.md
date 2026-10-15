@@ -1,11 +1,11 @@
-# Agent connections (E3, E4)
+# Agent connections (E3, E4, E5)
 
 `core/agent_access` owns OAuth device codes, per-person connections, opaque
 access/refresh tokens and PKCE authorization codes, ported from Bilimbi's
 `apps/core/agent_access` (ADR 0021). E3 is the service layer; E4 adds the
 `/oauth/device`, `/oauth/authorize` and `/settings/agent-connections` pages
 (`src/web.rs`, `templates/`). The host OAuth metadata/device/token endpoints
-and `AgentAuth` (E5) still follow. Use `AgentAccess`
+and the bearer edge (E5) live in `apps/web/src/api.rs`. Use `AgentAccess`
 (`core/agent_access.grants`, `src/lib.rs`) for every code, token and
 connection decision; never query `core_agent_*` tables from another module or
 compare a credential yourself.
@@ -33,20 +33,25 @@ compare a credential yourself.
   everywhere, so concurrent redemption, refresh and replay cannot invert lock
   order. A receipt is spent by a conditional update, so a racing poll loses.
 - `authenticate` is the one unscoped read: it maps a live access token to
-  `AgentClaims` (connection, tenant, user and recorded party facets). The host
-  seals those into a scope with an agent facet; the claims are never a scope.
+  `AgentClaims` (connection, tenant, user and recorded party facets); the
+  claims are never a scope. `seal` (and `prove`, on the caller's transaction,
+  optionally locking the grant row) is the live actor proof for one request.
+  It checks the grant is live against the wall clock, re-authenticates the
+  account, reproves each recorded party facet, and returns that fresh scope
+  with the tenancy agent facet. A failed proof is `invalid_token`.
   `observe` records the ID an authenticated request stated (or `(not stated)`),
   keeps the newest 20 distinct IDs and never refuses a changed ID. An ID is
   self-reported and grants no authority.
 - `list_connections` and `revoke` are the person's own connections only.
-  Bilimbi refuses impersonated sessions and agent facets there; the one gate
-  `self_service` is where K14/E5 add that check when the scope carries them.
+  Bilimbi refuses impersonated sessions and agent facets there. The one gate
+  `self_service` refuses a scope carrying the agent facet (`access_denied`);
+  K14 adds impersonation there.
 - Operator-registered MCP clients live in `agent_access.oauth_clients`: client
   IDs mapped to a name and exact HTTPS `redirect_uris` (`src/oauth_client.rs`
   validates the setting and each request). PKCE S256 and the resource are
   mandatory; the scope is always `bilibi`. `agent_access.authorization_code_seconds`
   bounds the code (120 by default). `agent_access.oauth_requests_per_minute`
-  is the host's per-sender limit; `Throttle` is the per-node counter E5 applies.
+  is the host's per-sender limit; `Throttle` is the per-node counter the host applies.
   Editing these needs the platform capability `admin.system.agent-access.manage`.
 
 ## Pages
@@ -71,8 +76,8 @@ The pages render instants through `templates/datetime.html`, the Bilimbi
 `<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in
 `base/ui` once the shell's display-mode control and `DateTime` hook land (P10,
 C5). The flash outlet renders inside each page until the shared shell owns it.
-Impersonation and agent facets are refused by `self_service` in `src/lib.rs`
-when the scope carries them (K14, E5), not by the pages.
+Agent facets (and, after K14, impersonation) are refused by `self_service` in
+`src/lib.rs`, not by the pages.
 
 ## Injected identity
 

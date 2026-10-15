@@ -17,8 +17,8 @@ entries retain source provenance and materialized schemas.
 
 The host passes a fresh sealed `tenancy::Scope` authenticated through the live
 account/session or credential owner. E1 deliberately uses the existing proven
-account actor; K9 supplies Person/Organisation facets and E5 supplies production
-OAuth/HTTP adapters. System scopes cannot enter this API. Never deserialize a
+account actor; K9 supplies Person/Organisation facets. The production OAuth/HTTP
+adapter is the host's `/api/v1` edge (`apps/web/src/api.rs`). System scopes cannot enter this API. Never deserialize a
 scope, infer an actor from operation input, or cache reach across requests.
 
 Search uses one fresh capability snapshot without per-candidate decision logs.
@@ -74,8 +74,9 @@ party eligibility, and lock the credential/eligibility records so revocation
 cannot race execution. `PlanIdentity.credential_binding` identifies the OAuth
 connection, or the browser session for a session adapter; include impersonation
 identity and session when supported. Never populate it from operation inputs or
-cache an authenticated Scope across requests. E5 supplies the production OAuth
-adapter; the walkthrough supplies a real session adapter. The credential is
+cache an authenticated Scope across requests. The host's `Grant` adapter
+(`apps/web/src/api.rs`) is the production OAuth authority; the walkthrough
+supplies a real session adapter. The credential is
 rechecked before owner execution and again before consuming the code.
 
 `PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
@@ -112,7 +113,8 @@ first inserts), enforce field policy, and use `tx.mutate`/`tx.record` for all
 writes. The plan's preview comparison cannot replace owner concurrency checks.
 Never open a separate owner transaction or publish before the outer commit.
 The non-business reference write demonstrates version fencing and audited
-mutation. There are no product UI or HTTP endpoints in E2; E5 owns adapters.
+mutation. There is no product UI; the HTTP endpoints are the host's `/api/v1`
+edge (`apps/web/README.md`).
 
 Run the real safe-write walkthrough after migrating and seeding an isolated DB:
 
