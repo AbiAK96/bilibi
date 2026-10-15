@@ -245,6 +245,7 @@ pub(super) fn page(
         inner_class: "p-0",
         class: "mb-2",
         body: regression_body,
+        ..Card::default()
     })?);
     body.push(&render(FilterToolbar::new(
         "performance-filters",

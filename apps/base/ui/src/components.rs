@@ -441,7 +441,7 @@ pub struct SectionHeading<'a> {
 /// A card container with a subtle border.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::card(id=id, title=title, class=class, inner_class=inner_class) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::card(id=id, title=title, class=class, inner_class=inner_class, role=role, labelledby=labelledby) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Card<'a> {
@@ -449,6 +449,9 @@ pub struct Card<'a> {
     pub title: &'a str,
     pub class: &'a str,
     pub inner_class: &'a str,
+    /// A landmark role (`region`) with the heading that labels it.
+    pub role: &'a str,
+    pub labelledby: &'a str,
     pub body: Html,
 }
 

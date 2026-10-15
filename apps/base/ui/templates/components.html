@@ -83,10 +83,12 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
 {% endmacro %}
 
 {#- Card with a subtle border; inner_class "p-0" is the flat full-bleed table frame.
+    role/labelledby name a card as a landmark region (Bilimbi passes them as
+    rest attributes: role="region" aria-labelledby="<heading id>").
     Askama refuses a macro nested in its own body, so a card inside a card
     renders the inner one through the typed `bilibi_ui::Card` model as Html. -#}
-{% macro card(id="", title="", class="", inner_class="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}">{% if !title.is_empty() %}<div class="border-b border-line px-4 py-3"><h3 class="text-base font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div class="{% if bilibi_ui::card_pads(inner_class) %}p-2{% if !inner_class.is_empty() %} {% endif %}{% endif %}{{ inner_class }}">{{ caller() }}</div></div>
+{% macro card(id="", title="", class="", inner_class="", role="", labelledby="") %}
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-4 py-3"><h3 class="text-base font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div class="{% if bilibi_ui::card_pads(inner_class) %}p-2{% if !inner_class.is_empty() %} {% endif %}{% endif %}{{ inner_class }}">{{ caller() }}</div></div>
 {% endmacro %}
 
 {#- The facts of one record as a definition list of fact rows (Bilimbi `list`). -#}
