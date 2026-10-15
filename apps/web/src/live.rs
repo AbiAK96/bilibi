@@ -1,6 +1,7 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
 use crate::{routes, App};
 use axum::extract::ws::{Message, WebSocket};
+use bilibi_base::perf::{Finish, Kind, Outcome};
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::contributions::{Access, Embed, EMBEDS};
 use bilibi_security::Scope;
@@ -126,6 +127,8 @@ struct Panel {
 struct Session {
     framed: bool,
     path: String,
+    /// Route template of the mounted page, the stable identity Perf records.
+    route: String,
     page: Option<Mounted>,
     panels: HashMap<String, Panel>,
     generation: u64,
@@ -176,6 +179,7 @@ impl Session {
             &self.sender,
         ));
         self.path = path;
+        self.route = bound.route.path.to_owned();
         self.update(app, token, "page", LiveInput::Refresh).await
     }
     async fn update(
@@ -340,6 +344,17 @@ impl Session {
         }
         Ok(messages)
     }
+    /// Perf identity for an accepted event: the page it mounts, or the page it
+    /// acts on. No identity (an unroutable path, nothing mounted) is not recorded.
+    fn identity(&self, app: &App, event: &Event) -> Option<String> {
+        let route = match event {
+            Event::Mount { path, .. } | Event::Navigate { path, .. } => {
+                routes::resolve(app, path).ok()?.0.route.path.to_owned()
+            }
+            _ => self.route.clone(),
+        };
+        (!route.is_empty()).then(|| format!("event:{route}"))
+    }
     async fn event(&mut self, app: &App, token: &str, event: Event) -> Result<Vec<Value>> {
         let messages = match event {
             Event::Mount { path, params } | Event::Navigate { path, params } => {
@@ -391,6 +406,7 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
     let mut session = Session {
         framed,
         path: String::new(),
+        route: String::new(),
         page: None,
         panels: HashMap::new(),
         generation: 0,
@@ -413,7 +429,10 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
                         Ok(event) => {
                             if let Event::Action {target: id, ..} = &event {target = id.clone();}
                             if matches!(event, Event::Navigate {..} | Event::Params {..} | Event::Action {..}) {history = "push";}
-                            session.event(&app, &token, event).await
+                            let identity = session.identity(&app, &event);
+                            app.perf.observe(Kind::Event, identity.as_deref(), session.event(&app, &token, event), |result| {
+                                Finish::outcome(if result.is_ok() { Outcome::Ok } else { Outcome::Error })
+                            }).await
                         },
                         Err(error) => Err(error),
                     }

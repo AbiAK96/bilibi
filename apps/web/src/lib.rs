@@ -3,6 +3,7 @@ mod auth;
 mod live;
 mod media;
 mod pdf;
+mod perf;
 mod routes;
 mod shell;
 use askama::Template;
@@ -34,6 +35,7 @@ pub struct App {
     pub menu: Arc<bilibi_base::menu::Menu>,
     pub display: Arc<bilibi_base::datetime::DisplayPolicy>,
     pub mutations: Arc<bilibi_database::MutationBoundary>,
+    pub perf: Arc<bilibi_base::perf::Recorder>,
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
@@ -53,6 +55,7 @@ impl App {
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
         let mutations = services.get("base/database.mutations")?;
+        let perf = services.get("base/perf.recorder")?;
         for dropped in menu.dropped() {
             eprintln!("warning: {dropped}");
         }
@@ -69,6 +72,7 @@ impl App {
             menu: Arc::new(menu),
             display,
             mutations,
+            perf,
             services: Arc::new(services),
         })
     }
@@ -97,6 +101,7 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 }
 
 pub fn router(app: App) -> Router {
+    let perf = app.perf.clone();
     routes::install(Router::new(), &app.routes)
         .route("/", get(auth::home))
         .route("/login", get(auth::home).post(auth::login))
@@ -189,6 +194,7 @@ pub fn router(app: App) -> Router {
         )
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn(response_headers))
+        .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
 }
 

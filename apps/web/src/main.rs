@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
                 bilibi_base::schedule::scheduler::Config::default(),
             )?;
             let (stop, stopped) = tokio::sync::watch::channel(false);
+            let history = tokio::spawn(app.perf.clone().run(stopped.clone()));
             let worker = tokio::spawn(executor.run(stopped.clone()));
             let ticker = tokio::spawn(scheduler.run(stopped));
             let shutdown = stop.clone();
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
                 .map_err(|_| Error::Internal);
             let _ = stop.send(true);
             worker.await.map_err(|_| Error::Internal)??;
+            history.await.map_err(|_| Error::Internal)??;
             ticker.await.map_err(|_| Error::Internal)??;
             result?;
         }
