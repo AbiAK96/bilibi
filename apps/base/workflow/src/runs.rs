@@ -21,6 +21,9 @@ pub use coordination::{Completion, RunCommand};
 #[path = "leases.rs"]
 mod leases;
 pub use leases::{Claim, ClaimOptions, Claimed, WorkCommand, WorkView};
+#[path = "human.rs"]
+pub mod human;
+pub use human::{ActionRequest, ActionResult, AvailableAction, AvailableActions};
 
 const TERMINAL_WORK: [&str; 4] = ["completed", "failed", "waived", "blocked"];
 const WORK_STATUSES: [&str; 7] = [

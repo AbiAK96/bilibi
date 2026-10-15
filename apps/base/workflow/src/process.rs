@@ -156,7 +156,7 @@ pub(crate) fn text(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 255 && !value.contains('\0')
 }
 /// Floats are refused so no serializer choice can change a fingerprint.
-fn exact(value: &Value) -> bool {
+pub(crate) fn exact(value: &Value) -> bool {
     match value {
         Value::Number(n) => n.is_i64() || n.is_u64(),
         Value::Array(items) => items.iter().all(exact),
@@ -360,7 +360,7 @@ fn member(out: &mut String, name: &str, value: &Value) {
     out.push(':');
     canonical(value, out);
 }
-fn canonical(value: &Value, out: &mut String) {
+pub(crate) fn canonical(value: &Value, out: &mut String) {
     match value {
         Value::Object(map) => {
             let mut members: Vec<_> = map.iter().collect();

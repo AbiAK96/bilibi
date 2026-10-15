@@ -233,16 +233,14 @@ async fn apply(
                 .iter()
                 .find(|i| i.fact.step_key == *step_key)
                 .ok_or(Error::NotFound)?;
-            let due: bool = sql.query_one("SELECT r.available_at<=now() AND w.available_at<=now() FROM base_workflow_process_runs r JOIN base_workflow_process_work_items w ON w.run_id=r.id WHERE r.id=$1 AND w.id=$2", &[&run.id, &item.fact.id]).await?.get::<_, Option<bool>>(0).unwrap_or(false);
-            if run.status != "running"
-                || run.last_error.is_some()
-                || item.fact.status != "available"
-                || !due
-                || item.fact.executor_key != completion.executor_key
-                || item.fact.version != completion.expected_version
-            {
-                return Err(Error::Conflict);
-            }
+            completable(
+                sql,
+                run,
+                item,
+                &completion.executor_key,
+                completion.expected_version,
+            )
+            .await?;
             let finish = Finish::completed(
                 item,
                 &completion.outcome,
@@ -408,6 +406,27 @@ async fn apply(
             .await
         }
     }
+}
+/// A completion needs a running, error-free run and an `available`, due item
+/// of the expected executor at the expected version; anything else is stale.
+pub(super) async fn completable(
+    sql: &Transaction<'_>,
+    run: &Run,
+    item: &Item,
+    executor_key: &str,
+    expected_version: i64,
+) -> Result<()> {
+    let due: bool = sql.query_one("SELECT r.available_at<=now() AND w.available_at<=now() FROM base_workflow_process_runs r JOIN base_workflow_process_work_items w ON w.run_id=r.id WHERE r.id=$1 AND w.id=$2", &[&run.id, &item.fact.id]).await?.get::<_, Option<bool>>(0).unwrap_or(false);
+    if run.status != "running"
+        || run.last_error.is_some()
+        || item.fact.status != "available"
+        || !due
+        || item.fact.executor_key != executor_key
+        || item.fact.version != expected_version
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
 }
 #[allow(clippy::too_many_arguments)]
 async fn administer(

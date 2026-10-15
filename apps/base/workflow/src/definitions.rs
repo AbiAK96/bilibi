@@ -2,7 +2,7 @@
 //! inserted, never overwritten at boot or on an owner definition change.
 use crate::{
     process::{self, Process, ProcessDefinition},
-    OwnerFuture, Request, Subject, SubjectAdapter,
+    ActionRequest, OwnerFuture, Request, Subject, SubjectAdapter,
 };
 use bilibi_database::{Change, Error, Result};
 use bilibi_module_registry::{Entry, RegistryError};
@@ -30,6 +30,66 @@ pub trait Action: Send + Sync {
         edge: &'a Transition,
         request: &'a Request,
     ) -> OwnerFuture<'a, Vec<Change>>;
+}
+/// The owner's business effect of one human action, run by the gate inside
+/// its transaction once the subject is locked and proven, the capability and
+/// expected subject version checked, idempotency settled (a repeated request
+/// never reaches the handler) and, for a work-bound action, the work item's
+/// run, availability, executor and version verified. Take who acts from the
+/// scope, never from the payload; perform database effects only. Any error
+/// rolls back the owner writes, the request row and the work completion.
+pub trait HumanActionHandler: Send + Sync {
+    fn handle<'a>(
+        &'a self,
+        tx: &'a Transaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        action: &'a HumanAction,
+        request: &'a ActionRequest,
+    ) -> OwnerFuture<'a, HumanOutcome>;
+}
+/// Saved on the request and, for a work-bound action, as the completed work
+/// item's outcome, output and result reference. `changes` are the handler's
+/// owner writes for audit capture.
+#[derive(Debug)]
+pub struct HumanOutcome {
+    pub outcome: String,
+    pub output: serde_json::Value,
+    pub result_ref: Option<String>,
+    pub changes: Vec<Change>,
+}
+impl HumanOutcome {
+    /// `completed` with the given output, no result reference.
+    pub fn completed(output: serde_json::Value, changes: Vec<Change>) -> Self {
+        Self {
+            outcome: "completed".into(),
+            output,
+            result_ref: None,
+            changes,
+        }
+    }
+}
+/// An action a signed-in person may perform on a registered subject. `key` is
+/// unique per subject. With `executor`, the action completes due available
+/// work of that executor key in a running run of the same subject.
+#[derive(Clone, Copy)]
+pub struct HumanAction {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub subject: &'static str,
+    pub capability: &'static str,
+    pub executor: Option<&'static str>,
+    pub handler: &'static dyn HumanActionHandler,
+}
+impl std::fmt::Debug for HumanAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HumanAction")
+            .field("key", &self.key)
+            .field("subject", &self.subject)
+            .field("capability", &self.capability)
+            .field("executor", &self.executor)
+            .finish_non_exhaustive()
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
@@ -94,6 +154,8 @@ pub enum Contribution {
     Flow(Flow),
     /// Versioned process graph; see `crate::process`.
     Process(Process),
+    /// Human action on a subject this module owns; see `crate::runs::human`.
+    HumanAction(HumanAction),
 }
 #[derive(Clone, Copy)]
 pub struct OwnedSubject {
@@ -106,6 +168,8 @@ pub struct Registry {
     pub(crate) subjects: BTreeMap<&'static str, OwnedSubject>,
     pub(crate) flows: BTreeMap<&'static str, (&'static str, Flow)>,
     pub(crate) processes: BTreeMap<(&'static str, i32), ProcessDefinition>,
+    /// Keyed by (subject key, action key), with the contributing owner.
+    pub(crate) human_actions: BTreeMap<(&'static str, &'static str), (&'static str, HumanAction)>,
     guards: BTreeMap<&'static str, (&'static str, &'static dyn Guard)>,
     actions: BTreeMap<&'static str, (&'static str, &'static dyn Action)>,
     aliases: BTreeMap<(&'static str, &'static str), &'static str>,
@@ -167,6 +231,19 @@ impl Registry {
                 }
                 continue;
             }
+            if let Contribution::HumanAction(action) = entry {
+                if registry
+                    .human_actions
+                    .insert((action.subject, action.key), (owner, *action))
+                    .is_some()
+                {
+                    return Err(invalid(format!(
+                        "duplicate human action {} on {}",
+                        action.key, action.subject
+                    )));
+                }
+                continue;
+            }
             let (kind, k, aliases, duplicate) = match entry {
                 Contribution::Subject {
                     key,
@@ -214,7 +291,9 @@ impl Registry {
                     &[][..],
                     registry.flows.insert(flow.code, (owner, *flow)).is_some(),
                 ),
-                Contribution::Process(_) => unreachable!("handled above"),
+                Contribution::Process(_) | Contribution::HumanAction(_) => {
+                    unreachable!("handled above")
+                }
             };
             if !key(k) || duplicate {
                 return Err(invalid(format!("invalid/duplicate {kind} {k}")));
@@ -246,6 +325,25 @@ impl Registry {
                 return Err(invalid(format!(
                     "process {} crosses ownership or subject boundaries",
                     definition.key
+                )));
+            }
+        }
+        // A human action names a subject its contributor owns and a capability
+        // in the Authz vocabulary; its handler belongs to the same module.
+        for &(owner, action) in registry.human_actions.values() {
+            if !key(action.key)
+                || action.label.trim().is_empty()
+                || !key(action.capability)
+                || vocabulary.is_some_and(|v| !v.capabilities.contains_key(action.capability))
+                || action.executor.is_some_and(|e| !process::text(e))
+                || !registry
+                    .subjects
+                    .get(action.subject)
+                    .is_some_and(|s| s.owner == owner)
+            {
+                return Err(invalid(format!(
+                    "invalid human action {} on {}",
+                    action.key, action.subject
                 )));
             }
         }
@@ -312,6 +410,17 @@ impl Registry {
             .get(&("subject", alias))
             .ok_or(Error::Invalid)?;
         self.subjects.get(key).copied().ok_or(Error::Invalid)
+    }
+    /// The subject's human actions, ordered by key, with their owner.
+    pub(crate) fn human_actions(
+        &self,
+        subject: OwnedSubject,
+    ) -> impl Iterator<Item = HumanAction> + '_ {
+        self.human_actions
+            .range((subject.key, "")..)
+            .take_while(move |((s, _), _)| *s == subject.key)
+            .filter(move |(_, (owner, _))| *owner == subject.owner)
+            .map(|(_, (_, action))| *action)
     }
     /// `None` selects the highest installed version of `key`.
     pub fn process(&self, key: &str, version: Option<i32>) -> Result<&ProcessDefinition> {

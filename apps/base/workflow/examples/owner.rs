@@ -4,10 +4,11 @@ use bilibi_database::{pool, Change, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution as Registration, Provenance, Services};
 use bilibi_tenancy::{Authentication, Scope};
 use bilibi_workflow::{
-    Action, Claim, ClaimOptions, Completion, Contribution, Dependency, DependencyMode, Edge,
-    Engine, Flow, Guard, Load, Operation, OwnerFuture, Process, ProcessAdapter, Registry, Request,
-    RunCommand, RunFacts, RunView, StartOptions, Status, Step, Subject, SubjectAdapter, Transition,
-    WorkCommand, WorkView, CONTRIBUTIONS,
+    Action, ActionRequest, ActionResult, Claim, ClaimOptions, Completion, Contribution, Dependency,
+    DependencyMode, Edge, Engine, Flow, Guard, HumanAction, HumanActionHandler, HumanOutcome, Load,
+    Operation, OwnerFuture, Process, ProcessAdapter, Registry, Request, RunCommand, RunFacts,
+    RunView, StartOptions, Status, Step, Subject, SubjectAdapter, Transition, WorkCommand,
+    WorkView, CONTRIBUTIONS,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -143,6 +144,41 @@ impl ProcessAdapter for Owner {
         })
     }
 }
+impl HumanActionHandler for Owner {
+    fn handle<'a>(
+        &'a self,
+        tx: &'a Transaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        action: &'a HumanAction,
+        request: &'a ActionRequest,
+    ) -> OwnerFuture<'a, HumanOutcome> {
+        Box::pin(async move {
+            // The owner write: every row change increments the version, so a
+            // page holding the old version cannot act again.
+            let row = tx.query_opt("UPDATE workflow_reference_records SET action_count=action_count+1,version=version+1 WHERE tenant_id=$1 AND id=$2 AND version=$3 RETURNING version,action_count", &[&scope.tenant(), &subject.id, &subject.version]).await?.ok_or(Error::Conflict)?;
+            let (version, count): (i64, i32) = (row.get(0), row.get(1));
+            if request.payload.get("handler_wait") == Some(&json!(true)) {
+                // Widens the window so a concurrent duplicate really overlaps.
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            if request.payload.get("handler_fail") == Some(&json!(true)) {
+                return Err(Error::Invalid);
+            }
+            Ok(HumanOutcome {
+                outcome: "completed".into(),
+                output: json!({"action":action.key,"action_count":count,"payload":request.payload}),
+                result_ref: Some(format!("reference:{}:{}", subject.id, action.key)),
+                changes: vec![Change {
+                    kind: "reference.human_action".into(),
+                    id: subject.id,
+                    old: json!({"version":subject.version}),
+                    new: json!({"version":version,"action_count":count}),
+                }],
+            })
+        })
+    }
+}
 static OWNER: Owner = Owner;
 const REVIEW_V1: [Step; 3] = [
     Step::new("first", "First review"),
@@ -256,6 +292,21 @@ const WORKER: [Step; 4] = [
         ..Step::new("notify", "Notify")
     },
 ];
+// A person submits `review` through a work-bound human action.
+const HUMAN: [Step; 2] = [
+    Step {
+        executor: Some("reference.human.review"),
+        ..Step::new("review", "Human review")
+    },
+    Step {
+        dependencies: &[Dependency {
+            step: "review",
+            acceptable_outcomes: &[],
+        }],
+        executor: Some("reference.human.publish"),
+        ..Step::new("publish", "Publish")
+    },
+];
 /// Same key and version as the installed v1 with one changed step contract:
 /// the running proof builds a second registry from it to show the refusal.
 static DRIFTED_V1: Contribution = Contribution::Process(Process {
@@ -340,6 +391,38 @@ register!(
     })
 );
 register!(
+    "reference.process.human",
+    Contribution::Process(Process {
+        key: "reference.human",
+        version: 1,
+        subject: "reference.record",
+        adapter: &OWNER,
+        steps: &HUMAN,
+    })
+);
+register!(
+    "reference.human.acknowledge",
+    Contribution::HumanAction(HumanAction {
+        key: "reference.acknowledge",
+        label: "Acknowledge",
+        subject: "reference.record",
+        capability: "companies.update",
+        executor: None,
+        handler: &OWNER,
+    })
+);
+register!(
+    "reference.human.review",
+    Contribution::HumanAction(HumanAction {
+        key: "reference.review.submit",
+        label: "Submit review",
+        subject: "reference.record",
+        capability: "companies.update",
+        executor: Some("reference.human.review"),
+        handler: &OWNER,
+    })
+);
+register!(
     "reference.flow",
     Contribution::Flow(Flow {
         code: "reference.approval",
@@ -410,6 +493,47 @@ fn print_view(view: &RunView) {
     }
 }
 
+/// The page's view of a human action: the first available entry for
+/// `action_key`, with the subject and work versions it would echo back.
+async fn page_request(
+    engine: &Engine,
+    scope: &Scope,
+    id: i64,
+    action_key: &str,
+    idempotency_key: &str,
+    payload: Option<&String>,
+) -> Result<ActionRequest> {
+    let available = engine
+        .available_actions(scope, "reference.record", id)
+        .await?;
+    let entry = available
+        .actions
+        .iter()
+        .find(|a| a.key == action_key)
+        .ok_or(Error::NotFound)?;
+    let mut request =
+        ActionRequest::new(action_key, idempotency_key, available.subject_version).for_entry(entry);
+    if let Some(payload) = payload {
+        request.payload = serde_json::from_str(payload).map_err(|_| Error::Invalid)?;
+    }
+    Ok(request)
+}
+fn print_result(label: &str, result: Result<ActionResult>) {
+    match result {
+        Ok(result) => println!(
+            "{label}: request={} action={} replayed={} outcome={} work={:?} result_ref={:?} output={}",
+            result.request_id,
+            result.action_key,
+            result.replayed,
+            result.outcome,
+            result.work_item_id,
+            result.result_ref,
+            result.output
+        ),
+        Err(error) => println!("{label}: refused {error:?}"),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::var("BILIBI_DISPOSABLE_WORKFLOW_DEMO").as_deref() != Ok("yes") {
@@ -473,7 +597,7 @@ async fn main() -> Result<()> {
                 .map_err(|_| Error::Internal)?
         ),
         "start" | "start-v1" | "start-changed" | "start-deny" | "drift" | "start-lifecycle"
-        | "start-worker" => {
+        | "start-worker" | "start-human" => {
             // Keep the v1 drift proof separate from the default v2 replay key.
             let attempt = if matches!(command, "start-v1" | "drift") {
                 1
@@ -484,6 +608,7 @@ async fn main() -> Result<()> {
             let process_key = match command {
                 "start-lifecycle" => "reference.lifecycle",
                 "start-worker" => "reference.worker",
+                "start-human" => "reference.human",
                 _ => "reference.review",
             };
             options.version = (command == "start-v1").then_some(1);
@@ -708,6 +833,102 @@ async fn main() -> Result<()> {
                 ),
                 Err(error) => println!("worker call refused: {error:?}"),
             }
+        }
+        "actions" => println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &engine
+                    .available_actions(&scope, "reference.record", id)
+                    .await?
+            )
+            .map_err(|_| Error::Internal)?
+        ),
+        "act" | "act-stale" | "act-work-stale" | "act-race" | "act-outer-fail" => {
+            // Arguments: action key, idempotency key, optional JSON payload.
+            let action_key = args
+                .get(3)
+                .map(String::as_str)
+                .unwrap_or("reference.acknowledge");
+            let key = args.get(4).map(String::as_str).unwrap_or("ack:1");
+            let mut request =
+                page_request(&engine, &scope, id, action_key, key, args.get(5)).await?;
+            match command {
+                "act-stale" => request.expected_subject_version += 1,
+                "act-work-stale" => {
+                    request.expected_work_version = request.expected_work_version.map(|v| v + 1)
+                }
+                _ => {}
+            }
+            println!(
+                "page: subject_version={} run={:?} work={:?} work_version={:?}",
+                request.expected_subject_version,
+                request.process_run_id,
+                request.work_item_id,
+                request.expected_work_version
+            );
+            if command == "act-race" {
+                // Two connections submit the same request from the same page.
+                let (a, b) = tokio::join!(
+                    engine.execute_action(&scope, "reference.record", id, request.clone()),
+                    engine.execute_action(&scope, "reference.record", id, request)
+                );
+                print_result("first", a);
+                print_result("second", b);
+            } else if command == "act-outer-fail" {
+                let mut client = db.get().await?;
+                let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+                let mut tx = boundary
+                    .begin(
+                        &mut client,
+                        scope.mutation_context("reference.facade.updated"),
+                    )
+                    .await?;
+                print_result(
+                    "inside owner transaction",
+                    engine
+                        .execute_action_in(&mut tx, &scope, "reference.record", id, request)
+                        .await,
+                );
+                tx.rollback().await?;
+                println!("owner transaction rolled back");
+            } else {
+                print_result(
+                    command,
+                    engine
+                        .execute_action(&scope, "reference.record", id, request)
+                        .await,
+                );
+            }
+        }
+        "act-race-cross" => {
+            // One idempotency key raced on two subjects of the same tenant.
+            let other = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(id + 1);
+            let key = args.get(4).map(String::as_str).unwrap_or("cross:1");
+            let wait = Some("{\"handler_wait\":true}".to_string());
+            let first = page_request(
+                &engine,
+                &scope,
+                id,
+                "reference.acknowledge",
+                key,
+                wait.as_ref(),
+            )
+            .await?;
+            let second = page_request(
+                &engine,
+                &scope,
+                other,
+                "reference.acknowledge",
+                key,
+                wait.as_ref(),
+            )
+            .await?;
+            let (a, b) = tokio::join!(
+                engine.execute_action(&scope, "reference.record", id, first),
+                engine.execute_action(&scope, "reference.record", other, second)
+            );
+            print_result(&format!("record {id}"), a);
+            print_result(&format!("record {other}"), b);
         }
         "run" | "run-drift" => {
             let engine = if command == "run-drift" {
