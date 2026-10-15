@@ -286,7 +286,22 @@
     attributes(from, to, context, (name) => !pinned(from, name, context));
     // An iframe's document belongs to the frame; its fallback children never render.
     if (from.tagName !== 'IFRAME') children(from, to, context);
+    if (following(from) && dirty(from)) follow(from);
     return from;
+  }
+
+  // A control of a data-change form (Bilimbi's phx-change) shows what the
+  // server rendered unless the person is in it, as LiveView does, so Clear,
+  // Back and a corrected value reach every filter the person is not typing in.
+  function following(el) {
+    return ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) && !!el.form
+      && el.form.hasAttribute('data-change') && el !== document.activeElement;
+  }
+
+  function follow(el) {
+    if (el.tagName === 'SELECT') for (const option of el.options) option.selected = option.defaultSelected;
+    else if (el.type === 'checkbox' || el.type === 'radio') el.checked = el.defaultChecked;
+    else el.value = el.defaultValue;
   }
 
   // Attributes the person or a controller owns on an existing element.

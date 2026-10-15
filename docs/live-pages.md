@@ -113,7 +113,10 @@ that type carrying the form values; `data-target` picks a mounted panel. A form
 also marked `data-change` (Bilimbi's `phx-change`) raises the same intent as
 its values change: at once for a select, after a control's `data-debounce`
 milliseconds of typing, and at once on commit or Enter; identical values raised
-twice within 500ms are sent once, and the form is not reset afterwards. Buttons
+twice within 500ms are sent once, and the form is not reset afterwards. As
+with LiveView, a reply sets every control of a `data-change` form to the
+rendered value except the focused one, so Clear and Back reach the filters
+while typing continues undisturbed. Buttons
 send their `data-*` values (`data-page="3"` becomes `page: "3"`); only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
 their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape
