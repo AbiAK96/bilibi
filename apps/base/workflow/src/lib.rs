@@ -16,7 +16,7 @@ pub use process::{
     Dependency, DependencyMode, Process, ProcessAdapter, ProcessDefinition, RunFacts, Step,
     StepDefinition,
 };
-pub use runs::{Event, EventPage, Run, RunView, StartOptions, WorkItem};
+pub use runs::{Completion, Event, EventPage, Run, RunCommand, RunView, StartOptions, WorkItem};
 use serde_json::Value;
 use std::{future::Future, pin::Pin, sync::Arc};
 use tokio_postgres::Transaction;
@@ -48,6 +48,12 @@ pub enum Operation {
     /// `ReadRun` never grants execution.
     StartRun,
     ReadRun,
+    ReconcileRun,
+    CompleteWork,
+    SignalRun,
+    PauseRun,
+    ResumeRun,
+    SupersedeRun,
 }
 /// The owner facade accepts the kernel transaction, scopes every query, locks
 /// and rereads on `Load::Lock`, and enforces live record policy even on edges

@@ -27,7 +27,7 @@ pub struct RunFacts {
 }
 /// Owner policy for durable coordination, run inside the kernel transaction
 /// after the subject adapter authorized the same operation on the locked
-/// subject. This slice asks `StartRun` and `ReadRun`; `ReadRun` never grants
+/// subject. Each command asks its specific `Operation`; `ReadRun` never grants
 /// execution. Perform database effects only.
 pub trait ProcessAdapter: Send + Sync {
     fn authorize<'a>(

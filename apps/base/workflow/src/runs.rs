@@ -15,6 +15,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio_postgres::{Row, Transaction};
 
+#[path = "coordination.rs"]
+mod coordination;
+pub use coordination::{Completion, RunCommand};
+
 const TERMINAL_WORK: [&str; 4] = ["completed", "failed", "waived", "blocked"];
 const WORK_STATUSES: [&str; 7] = [
     "pending",
@@ -257,7 +261,9 @@ fn facts(run: &Run) -> RunFacts {
 /// 170 bytes plus the SHA-256 of the whole namespaced key, so a repeated
 /// start always finds the same run.
 fn start_key(tenant: i64, definition: &str, raw: &str) -> String {
-    let namespaced = format!("start:tenant:{tenant}:{definition}:{raw}");
+    event_key(format!("start:tenant:{tenant}:{definition}:{raw}"))
+}
+fn event_key(namespaced: String) -> String {
     if namespaced.len() <= 240 {
         return namespaced;
     }
@@ -474,7 +480,18 @@ async fn append_event(
     payload: Value,
     changes: &mut Vec<Change>,
 ) -> Result<Event> {
-    let row=sql.query_one(&format!("INSERT INTO base_workflow_process_events(tenant_id,run_id,work_item_id,sequence,type,payload) VALUES($1,$2,$3,(SELECT coalesce(max(sequence),0)+1 FROM base_workflow_process_events WHERE run_id=$2),$4,$5) RETURNING {EVENT_COLUMNS}"),&[&run.tenant,&run.id,&item,&kind,&payload]).await?;
+    append_keyed_event(sql, run, item, kind, payload, None, changes).await
+}
+async fn append_keyed_event(
+    sql: &Transaction<'_>,
+    run: &Run,
+    item: Option<i64>,
+    kind: &str,
+    payload: Value,
+    key: Option<&str>,
+    changes: &mut Vec<Change>,
+) -> Result<Event> {
+    let row=sql.query_one(&format!("INSERT INTO base_workflow_process_events(tenant_id,run_id,work_item_id,sequence,type,payload,idempotency_key) VALUES($1,$2,$3,(SELECT coalesce(max(sequence),0)+1 FROM base_workflow_process_events WHERE run_id=$2),$4,$5,$6) RETURNING {EVENT_COLUMNS}"),&[&run.tenant,&run.id,&item,&kind,&payload,&key]).await?;
     let event = event_row(row);
     changes.push(Change {
         kind: "workflow.process_event".into(),
@@ -663,8 +680,8 @@ fn readiness(item: &Item, items: &[Item], dependencies: &[Dependency]) -> Readin
     }
 }
 /// Releases pending work whose dependencies and signal are satisfied and
-/// whose timer is due, then aggregates a finished run. Lease expiry, signals
-/// and completions are later slices; they feed this same function.
+/// whose timer is due, then aggregates a finished run. Every lifecycle write
+/// feeds this same function under the subject, run and graph locks.
 async fn settle(
     sql: &Transaction<'_>,
     run: &Run,
@@ -709,6 +726,12 @@ async fn settle(
                 {
                     if items[index].fact.available_at.is_none() {
                         let at: String=sql.query_one("UPDATE base_workflow_process_work_items SET available_at=greatest((SELECT available_at FROM base_workflow_process_runs WHERE id=$2),now())+make_interval(secs=>delay_seconds),updated_at=now() WHERE id=$1 RETURNING available_at::text",&[&id,&run.id]).await?.get(0);
+                        changes.push(Change {
+                            kind: "workflow.process_work".into(),
+                            id,
+                            old: json!({"available_at":null}),
+                            new: json!({"available_at":at}),
+                        });
                         append_event(
                             sql,
                             run,
@@ -749,9 +772,18 @@ async fn settle(
         &[&run.id],
     )
     .await?;
-    if items
-        .iter()
-        .all(|i| TERMINAL_WORK.contains(&i.fact.status.as_str()))
+    finish_run(sql, run, &items, changes).await
+}
+async fn finish_run(
+    sql: &Transaction<'_>,
+    run: &Run,
+    items: &[Item],
+    changes: &mut Vec<Change>,
+) -> Result<()> {
+    if matches!(run.status.as_str(), "running" | "paused")
+        && items
+            .iter()
+            .all(|i| TERMINAL_WORK.contains(&i.fact.status.as_str()))
     {
         let status = if items.iter().any(|i| i.fact.status == "failed") {
             "failed"
@@ -775,7 +807,7 @@ async fn settle(
         changes.push(Change {
             kind: "workflow.process_run".into(),
             id: run.id,
-            old: json!({"status":"running"}),
+            old: json!({"status":run.status}),
             new: json!({"status":status}),
         });
         append_event(
