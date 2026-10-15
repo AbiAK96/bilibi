@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-affiliation = { path = "affiliation" }
 bilibi-agent-access = { path = "agent_access" }
 bilibi-company = { path = "company" }
 bilibi-geonames = { path = "geonames" }

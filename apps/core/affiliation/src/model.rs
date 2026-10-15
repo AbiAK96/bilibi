@@ -1,0 +1,133 @@
+use bilibi_database::{Error, Result};
+pub use bilibi_party::{
+    AffiliationId, AffiliationInput, CalendarDate, EffectiveDates, OrganisationId, PersonId,
+};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, time::SystemTime};
+use tokio_postgres::Row;
+
+pub const COLUMNS: &str = "id,person_id,organisation_id,title,work_email,work_phone,effective_from::text,effective_to::text,unlinked_at,version,created_at,updated_at";
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Affiliation {
+    pub id: AffiliationId,
+    pub version: i64,
+    pub affiliation: AffiliationInput,
+    pub unlinked_at: Option<SystemTime>,
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
+    pub restricted: Vec<String>,
+}
+impl Affiliation {
+    pub(crate) fn from_row(row: &Row) -> Result<Self> {
+        let date = |name| -> Result<Option<CalendarDate>> {
+            row.get::<_, Option<String>>(name)
+                .map(CalendarDate::try_from)
+                .transpose()
+                .map_err(|_| Error::Internal)
+        };
+        Ok(Self {
+            id: AffiliationId::new(row.get("id")).map_err(|_| Error::Internal)?,
+            version: row.get("version"),
+            affiliation: AffiliationInput {
+                person_id: PersonId::new(row.get("person_id")).map_err(|_| Error::Internal)?,
+                organisation_id: OrganisationId::new(row.get("organisation_id"))
+                    .map_err(|_| Error::Internal)?,
+                title: row.get("title"),
+                work_email: row.get("work_email"),
+                work_phone: row.get("work_phone"),
+                dates: EffectiveDates::new(date("effective_from")?, date("effective_to")?)
+                    .map_err(|_| Error::Internal)?,
+            },
+            unlinked_at: row.get("unlinked_at"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+            restricted: Vec::new(),
+        })
+    }
+    pub(crate) fn redact(mut self, fields: &HashSet<String>) -> Self {
+        if fields.contains("work_email") {
+            self.affiliation.work_email = None;
+            self.restricted.push("work_email".into());
+        }
+        if fields.contains("work_phone") {
+            self.affiliation.work_phone = None;
+            self.restricted.push("work_phone".into());
+        }
+        self
+    }
+    pub(crate) fn json(&self) -> serde_json::Value {
+        serde_json::to_value(self).expect("Affiliation serializes")
+    }
+}
+
+/// Affiliation endpoints are immutable: move by creating another affiliation,
+/// retaining this identity for account and Employment foreign keys.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Update {
+    pub version: i64,
+    pub affiliation: AffiliationInput,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Search {
+    pub person_id: Option<PersonId>,
+    pub organisation_id: Option<OrganisationId>,
+    pub include_unlinked: bool,
+    /// Optional inclusive calendar-day filter; no filter returns dated history.
+    pub on: Option<CalendarDate>,
+    pub page: i64,
+    pub page_size: i64,
+}
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            person_id: None,
+            organisation_id: None,
+            include_unlinked: false,
+            on: None,
+            page: 1,
+            page_size: 25,
+        }
+    }
+}
+impl Search {
+    pub(crate) fn check(&self) -> Result<()> {
+        if !(1..=1_000_000).contains(&self.page) || !(1..=100).contains(&self.page_size) {
+            return Err(Error::Invalid);
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Serialize)]
+pub struct Page {
+    pub entries: Vec<Affiliation>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+pub(crate) fn validate(input: &AffiliationInput) -> Result<AffiliationInput> {
+    // Reuse the Person owner's contact rules; work contacts remain separate.
+    let contact = bilibi_person::model::validate(&bilibi_person::PersonInput {
+        name: "Affiliation".into(),
+        kind: bilibi_person::PersonKind::Human,
+        email: input.work_email.clone(),
+        phone: input.work_phone.clone(),
+    })
+    .map_err(|_| Error::Invalid)?;
+    let title = bilibi_person::model::optional(&input.title);
+    if title
+        .as_ref()
+        .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))
+    {
+        return Err(Error::Invalid);
+    }
+    Ok(AffiliationInput {
+        title,
+        work_email: contact.email,
+        work_phone: contact.phone,
+        ..input.clone()
+    })
+}
