@@ -222,6 +222,7 @@ pub async fn provision_tenant(
     let tx = client.transaction().await?;
     let sql: &Transaction<'_> = &tx;
     let tenant = bilibi_tenancy::admin::provision_tenant(sql, tenant_name).await?;
+    crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
     let created = match provisioned_company(sql, tenant.id, company).await? {
         Ok(created) => created,
         Err(errors) => {
@@ -264,6 +265,7 @@ pub async fn provision_platform_operator(
     let sql: &Transaction<'_> = &tx;
     let (tenant, tenant_created) =
         bilibi_tenancy::admin::provision_platform_operator(sql, tenant_name).await?;
+    crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
     tx.execute(
         "SELECT id FROM tenants WHERE id=$1 FOR UPDATE",
         &[&tenant.id],

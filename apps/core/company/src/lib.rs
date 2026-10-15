@@ -11,6 +11,9 @@ pub mod organisation;
 mod page_data;
 pub mod primary;
 pub mod reference_types;
+mod relationship_operations;
+pub mod relationship_roles;
+pub mod relationships;
 pub mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
@@ -32,6 +35,11 @@ pub const MIGRATION: (&str, &str) = ("003-company", include_str!("../migrations/
 pub const MIGRATION_ORGANISATION: (&str, &str) = (
     "core-company-004-organisation",
     include_str!("../migrations/004-organisation.sql"),
+);
+/// K5: the relationship-role catalog and directed company → party links.
+pub const MIGRATION_RELATIONSHIPS: (&str, &str) = (
+    "core-company-005-relationships",
+    include_str!("../migrations/005-relationships.sql"),
 );
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
@@ -366,6 +374,8 @@ pub struct CompanyService {
     db: Db,
     notifications: Arc<NotificationBoundary>,
     mutations: Arc<MutationBoundary>,
+    proofs: Arc<bilibi_tenancy::PartyProofs>,
+    directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
 }
 impl CompanyService {
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
@@ -626,23 +636,208 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","core/geonames"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
                 // Company is the Organisation owner: it proves targets for
                 // Tenancy and reads for the agent operations.
-                services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?.bind_organisations(Arc::new(organisation::Provider))?;
+                let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
+                proofs.bind_organisations(Arc::new(organisation::Provider))?;
+                let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
                 agent_operations::bind(db.clone())?;
+                relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;
                 Ok(Arc::new(CompanyService {
                     sessions: services.get("base/session.sessions")?, mutations: services.get("base/database.mutations")?,
-                    db, notifications: services.get("base/notifications.sink")?,
+                    db, notifications: services.get("base/notifications.sink")?, proofs, directory,
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
             })))) },
         ],
+    }
+}
+
+/// K5: the relationship-role catalog and the directed links of the party
+/// model (`relationship_roles`, `relationships`). Each write is one audited
+/// mutation transaction; a refusal is an outcome, never an `Error`.
+impl CompanyService {
+    /// The tenant's roles. A tenant whose catalog is empty (one created by
+    /// the demo seed after the migration ran) first receives the contributed
+    /// defaults by code; an administered catalog is never touched here.
+    pub async fn relationship_roles(
+        &self,
+        scope: &Scope,
+        include_retired: bool,
+    ) -> Result<Vec<relationship_roles::RelationshipRole>> {
+        let client = self.db.get().await?;
+        relationship_roles::ensure_defaults_if_empty(&**client, scope.tenant()).await?;
+        relationship_roles::list(&**client, scope, include_retired).await
+    }
+    pub async fn relationship_role(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipRoleId,
+    ) -> Result<relationship_roles::RelationshipRole> {
+        let client = self.db.get().await?;
+        relationship_roles::get(&**client, scope, id).await
+    }
+    pub async fn create_relationship_role(
+        &self,
+        scope: &Scope,
+        input: &bilibi_party::RelationshipRoleInput,
+    ) -> Result<reference_types::Outcome<relationship_roles::RelationshipRole>> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship_role.create"),
+            )
+            .await?;
+        let outcome = relationship_roles::create(&mut tx, scope, input).await?;
+        finish(tx, matches!(outcome, reference_types::Outcome::Saved(_))).await?;
+        Ok(outcome)
+    }
+    pub async fn update_relationship_role(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipRoleId,
+        update: &relationship_roles::RoleUpdate,
+    ) -> std::result::Result<
+        reference_types::Outcome<relationship_roles::RelationshipRole>,
+        WriteError,
+    > {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship_role.update"),
+            )
+            .await?;
+        let outcome = relationship_roles::update(&mut tx, scope, id, update).await?;
+        finish(tx, matches!(outcome, reference_types::Outcome::Saved(_))).await?;
+        Ok(outcome)
+    }
+    pub async fn retire_relationship_role(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipRoleId,
+        version: i64,
+        retired_on: Option<&bilibi_party::CalendarDate>,
+    ) -> std::result::Result<relationship_roles::RelationshipRole, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship_role.retire"),
+            )
+            .await?;
+        let saved = relationship_roles::retire(&mut tx, scope, id, version, retired_on).await?;
+        tx.commit().await?;
+        Ok(saved)
+    }
+    pub async fn company_relationships(
+        &self,
+        scope: &Scope,
+        company: bilibi_party::OrganisationId,
+        history: bool,
+    ) -> Result<Vec<relationships::Entry>> {
+        let client = self.db.get().await?;
+        relationships::list_for_company(&**client, scope, &self.directory, company, history).await
+    }
+    pub async fn person_relationships(
+        &self,
+        scope: &Scope,
+        person: bilibi_party::PersonId,
+        history: bool,
+    ) -> Result<Vec<relationships::Entry>> {
+        let client = self.db.get().await?;
+        relationships::list_for_person(&**client, scope, &self.directory, person, history).await
+    }
+    pub async fn relationship(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipId,
+    ) -> Result<relationships::Entry> {
+        let client = self.db.get().await?;
+        relationships::read(&**client, scope, &self.directory, id).await
+    }
+    pub async fn assign_relationship(
+        &self,
+        scope: &Scope,
+        input: &bilibi_party::RelationshipInput,
+    ) -> std::result::Result<reference_types::Outcome<relationships::Relationship>, WriteError>
+    {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship.assign"),
+            )
+            .await?;
+        let outcome = relationships::assign(&mut tx, scope, &self.proofs, input).await?;
+        finish(tx, matches!(outcome, reference_types::Outcome::Saved(_))).await?;
+        Ok(outcome)
+    }
+    pub async fn update_relationship(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipId,
+        update: &relationships::RelationshipUpdate,
+    ) -> std::result::Result<relationships::Relationship, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship.update"),
+            )
+            .await?;
+        let saved = relationships::update(&mut tx, scope, id, update).await?;
+        tx.commit().await?;
+        Ok(saved)
+    }
+    pub async fn end_relationship(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipId,
+        version: i64,
+        effective_to: &bilibi_party::CalendarDate,
+    ) -> std::result::Result<relationships::Relationship, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship.end"),
+            )
+            .await?;
+        let saved = relationships::end(&mut tx, scope, id, version, effective_to).await?;
+        tx.commit().await?;
+        Ok(saved)
+    }
+    pub async fn unlink_relationship(
+        &self,
+        scope: &Scope,
+        id: bilibi_party::RelationshipId,
+        version: i64,
+    ) -> std::result::Result<relationships::Relationship, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.relationship.unlink"),
+            )
+            .await?;
+        let saved = relationships::unlink(&mut tx, scope, id, version).await?;
+        tx.commit().await?;
+        Ok(saved)
     }
 }
