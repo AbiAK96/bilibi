@@ -54,6 +54,10 @@ pub struct LiveBody {
     /// A full browser navigation instead of installing `html`, for a page that
     /// hands the person to an external callback (an OAuth client's redirect).
     pub redirect: Option<String>,
+    /// Pushes to browser hooks, dispatched after the patch as `window` events
+    /// `bilibi:<name>` with `detail` (Bilimbi's `push_event`). Names are fixed
+    /// by the owner; a hook must ignore detail not addressed to its element.
+    pub events: Vec<(&'static str, serde_json::Value)>,
 }
 /// Server-owned child mounts. Client events cannot pick an arbitrary embed/service.
 /// `id` must name the HTML element containing this panel's complete fragment.

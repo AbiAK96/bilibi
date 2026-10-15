@@ -54,6 +54,10 @@ background updates use null. A rejected intent with a valid request ID also
 acknowledges that ID. Canonical query values are encoded by Web, never supplied
 as a client URL. User navigation/query changes push history when the URL changes;
 mount and background refresh replace it. Browser Back remounts the historical URL.
+`page` and `fragment` also carry the owner's `LiveBody.events`, which the
+browser dispatches after patching as `window` events `bilibi:<name>` with the
+pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
+`secret:reveal`. Never push a value the owner has not just reauthorized.
 
 The browser adapter supports `data-target` on event buttons/forms and these
 DOM events:

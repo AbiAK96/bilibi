@@ -294,7 +294,7 @@ impl Session {
             format!("{}?{query}", self.path)
         };
         Ok(
-            json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows, "redirect":body.redirect}),
+            json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows, "redirect":body.redirect, "events":events(&body.events)}),
         )
     }
     async fn sync_panels(&mut self, app: &App, token: &str, scope: &Scope) -> Result<Vec<Value>> {
@@ -406,7 +406,14 @@ impl Session {
     }
 }
 fn fragment(id: &str, body: LiveBody) -> Value {
-    json!({"type":"fragment", "target":id, "html":body.html, "notice":body.notice, "rows":body.rows, "redirect":body.redirect})
+    json!({"type":"fragment", "target":id, "html":body.html, "notice":body.notice, "rows":body.rows, "redirect":body.redirect, "events":events(&body.events)})
+}
+/// Owner pushes for browser hooks, dispatched by live.js after the patch.
+fn events(pushes: &[(&'static str, Value)]) -> Value {
+    pushes
+        .iter()
+        .map(|(name, detail)| json!({"name":name, "detail":detail}))
+        .collect()
 }
 fn encode(value: &str) -> String {
     value

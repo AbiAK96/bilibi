@@ -274,7 +274,7 @@ impl bilibi_ui::page::LiveState<bilibi_security::Scope, bilibi_database::Error> 
                 query,
                 notice,
                 rows,
-                redirect: None,
+                ..LiveBody::default()
             })
         })
     }

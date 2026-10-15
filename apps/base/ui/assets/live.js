@@ -231,6 +231,10 @@
         }
       }
     }
+    // Owner pushes (LiveBody.events) reach hooks once the patch is in place.
+    for (const push of message.events || []) {
+      window.dispatchEvent(new CustomEvent(`bilibi:${push.name}`, {detail: push.detail}));
+    }
     entry?.onReply?.(message);
     loading();
   }
