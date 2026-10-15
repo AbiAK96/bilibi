@@ -193,12 +193,15 @@ impl<O: QueuedPdfOwner> PdfRenderHandler<O> {
         let Some(job) = Job::parse(&args) else {
             return Outcome::Cancel("pdf_args_refused");
         };
+        // PDF work is enqueued by a user; a system-principal job has no owner
+        // scope to authorize against and is refused, never retried.
+        let Some(scope) = execution.scope() else {
+            return Outcome::Cancel("pdf_forbidden");
+        };
         let Ok(mut client) = self.artifacts.db.get().await else {
             return Outcome::Retry("pdf_database_unavailable");
         };
-        let owned = self
-            .artifacts
-            .for_owner(execution.scope(), job.company, &*self.owner);
+        let owned = self.artifacts.for_owner(scope, job.company, &*self.owner);
         if let Err(error) = owned
             .authorize(&**client, Operation::Create, Some(&job.reference))
             .await
