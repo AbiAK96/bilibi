@@ -77,7 +77,8 @@ documents held for an operator (see Retention purge).
 Use `artifacts::pdf::render` for text and table documents rather than a
 module-local PDF serializer, and store through `Owned::generate_pdf` or
 `Owned::store_pdf` rather than calling `put` with unchecked bytes. HTML
-printing, signed render URLs, passwords and queued rendering are later slices.
+printing and signed render URLs are below (A4); passwords and queued rendering are
+later slices.
 
 Implement `PdfOwner` (an `Owner` extension) on the same trusted adapter. `generate_pdf`
 authorizes `Create` first, then calls `render_pdf(scope, company, reference,
@@ -187,6 +188,70 @@ now, and `resolve_purge` records bytes an operator removed out of band
 or while a hold or retain-until still protects the document. All three need
 `Purge`. The owning module wires `purge_expired` into its own schedule and
 alerting on `failed`; Base enumerates no companies.
+
+## HTML PDFs (A4)
+
+Use `Owned::render_inline` / `render_view` (`src/render.rs`) to print an owner's
+HTML template, rather than a module-local browser, `wkhtmltopdf` call or your
+own render route. `Owned::store_pdf` remains the only way to store bytes you made
+elsewhere. Implement `HtmlOwner` (an `Owner` extension) on the trusted adapter:
+`render_html(scope, company, reference, data)` selects only the data the actor may
+see and returns a complete HTML document. Styles, images and fonts must be
+embedded (`data:` URLs). Never print user-supplied HTML or URLs, and never log it.
+
+```rust,ignore
+let metadata = documents.render_inline(&mut client, reference, &json!({})).await?;
+let metadata = documents.render_view(&mut client, reference, &json!({})).await?;
+```
+
+Both authorize `Create` before the template runs, print with an isolated Chromium
+and store through `store_pdf` (validate, reserve, publish, reauthorize, audit). A
+refused or failed render stores nothing. `render_inline` gives the browser the HTML
+directly with no network at all. `render_view` has it fetch the page from this
+app's single-use signed route, `GET /pdf/render/{token}` (`RENDER_ROUTE`), so the
+template runs in the app process; that needs `pdf.render_origin`.
+
+Claims never leave the process. The token (`id.HMAC`, per-boot key, 24 random
+bytes) only names the waiting `render_view` call; the route takes no session,
+actor, template or data. The call reauthorizes the live actor, then runs the
+template. An unknown, forged, expired, replayed or refused token is an empty 404
+and a template failure an empty 500, always with `RENDER_HEADERS` (no-store,
+noindex, nosniff, a CSP that allows only embedded styles, images and fonts). The
+token is a transient capability, never a download link: do not log these paths at a
+proxy. Restart discards pending tokens; the caller retries with a fresh URL. In
+a multi-node deployment `/pdf/render/*` must reach the node that issued the token.
+The Web host mounts the route (`apps/web/src/pdf.rs`) and refuses modules that
+overlap it. Nothing else in a template can reach the route: it only answers once.
+
+Resource policy (`src/engine.rs`): the browser talks over a private DevTools pipe
+(no debugging port, Node or npm package), keeps its sandbox, runs with scripts and
+downloads disabled, and may make one network request, the signed document. Every
+other request (subresources, frames, redirects, `file:`, other hosts) is refused
+by a DevTools Fetch policy, name resolution is disabled except for the origin and
+all other traffic is sent to a dead proxy, so not even a speculative connection
+leaves. A template that navigates its own page away (meta refresh, redirect) fails
+the render instead of printing a blank page. Profiles and requests live in random
+0700 directories; the browser's process group is killed and the directory removed
+on success, failure, timeout and cancellation. Tool output is discarded and callers
+see only fixed errors (`PdfEngineUnavailable`, `PdfFailed`, `PdfTimeout`,
+`RenderOrigin`, `RenderTokensFull`). Crashes can leave `bilibi-pdf-*` temporary
+directories: include them in the host's private temp cleanup.
+
+Operator Settings (same capability as the artifact settings): `pdf.chromium.binary`
+(bare name searched on `PATH`, or absolute; default `chromium`), `pdf.render_origin`
+(http(s) origin the browser can reach, such as `http://127.0.0.1:3000`; empty
+disables signed-URL printing), `pdf.signed_url_ttl_seconds` (60),
+`pdf.render_timeout_seconds` (30), `pdf.max_render_tokens` (100),
+`pdf.paper.format` (`A4`) and `pdf.paper.print_background` (true). Rendered size is
+bounded by `artifacts.max_bytes`. The walkthrough ran with Google Chrome 154 and the
+Snap Chromium. Password protection (`qpdf`) and queued rendering are A5.
+
+`examples/html-pdf-walkthrough.rs` starts the real app on three local ports and
+real Chromium against a disposable database (see the variables above, plus
+`BILIBI_PDF_DEMO_OUT` and `BILIBI_PDF_CHROMIUM`). It prints both render modes, a
+hostile template whose every outside resource it counts at a probe port, replayed
+and altered tokens, expiry, permission revoked in flight and before publication,
+and each refusal. It writes `inline.pdf` and `view.pdf` for inspection.
 
 No unit tests. `examples/artifacts-walkthrough.rs` (A1) and
 `examples/retention-walkthrough.rs` (A2) are explicit disposable-DB walkthroughs

@@ -1,7 +1,9 @@
 //! Private business documents. Call outside an owner's transaction: durable
 //! reservations/tombstones must commit independently of filesystem work.
 mod contributions;
+mod engine;
 pub mod pdf;
+mod render;
 mod retention;
 mod storage;
 
@@ -12,6 +14,7 @@ use bilibi_module_registry::Service;
 use bilibi_party_ids::OrganisationId;
 use bilibi_settings::Settings;
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
+pub use render::{HtmlFuture, HtmlOwner, Served, RENDER_HEADERS, RENDER_ROUTE};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{any::type_name, future::Future, pin::Pin, sync::Arc};
@@ -38,6 +41,16 @@ pub enum Error {
     UnsupportedText,
     #[error("Not a structurally valid PDF")]
     InvalidPdf,
+    #[error("PDF engine unavailable; configure a Chromium executable in Settings")]
+    PdfEngineUnavailable,
+    #[error("PDF rendering failed")]
+    PdfFailed,
+    #[error("PDF rendering timed out")]
+    PdfTimeout,
+    #[error("Configure pdf.render_origin before printing through a signed render URL")]
+    RenderOrigin,
+    #[error("Too many pending render requests")]
+    RenderTokensFull,
     #[error("Artifact not found")]
     NotFound,
     #[error("Artifact integrity failure")]
@@ -83,6 +96,11 @@ impl Error {
             Self::AlreadyOnHold => "already_on_hold",
             Self::NotOnHold => "not_on_hold",
             Self::BytesPresent => "bytes_present",
+            Self::PdfEngineUnavailable => "pdf_engine_unavailable",
+            Self::PdfFailed => "pdf_failed",
+            Self::PdfTimeout => "pdf_timeout",
+            Self::RenderOrigin => "render_origin",
+            Self::RenderTokensFull => "render_tokens_full",
         }
     }
 }
@@ -224,6 +242,7 @@ pub struct Artifacts {
     boundary: Arc<MutationBoundary>,
     settings: Arc<Settings>,
     authentication: Arc<Authentication>,
+    tokens: render::Tokens,
 }
 impl Artifacts {
     pub fn for_owner<'a, O: Owner>(
@@ -268,8 +287,10 @@ impl<O: PdfOwner> Owned<'_, O> {
             .await?;
         self.store_pdf(client, reference, &bytes).await
     }
-    /// Store PDF bytes made elsewhere (for example by a later HTML engine)
-    /// after the same structural validation; `put` rechecks authority.
+}
+impl<O: Owner> Owned<'_, O> {
+    /// Store PDF bytes made elsewhere (for example by the HTML engine) after
+    /// the same structural validation; `put` rechecks authority.
     pub async fn store_pdf(
         &self,
         client: &mut Client,
@@ -619,6 +640,7 @@ inventory::submit! {
         migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql")),("base-artifacts-002",include_str!("../migrations/002-retention.sql"))],
         services:&[Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
             boundary:services.get("base/database.mutations")?, settings:services.get("base/settings.store")?, authentication:services.get("base/tenancy.authentication")?,
+            tokens:render::Tokens::new().map_err(|error| bilibi_module_registry::RegistryError::Contribution(error.to_string()))?,
         }))}],
     }
 }

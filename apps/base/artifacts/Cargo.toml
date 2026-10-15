@@ -21,8 +21,12 @@ thiserror.workspace = true
 inventory.workspace = true
 sha2 = "0.11.1"
 libc = "0.2.190"
+hmac = "0.13.0"
+getrandom = "0.4.3"
+base64 = "0.23.1"
 
 [dev-dependencies]
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }
 bilibi-web = { path = "../../web" }
+axum.workspace = true

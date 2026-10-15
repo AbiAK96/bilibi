@@ -1,6 +1,7 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
 mod live;
 mod media;
+mod pdf;
 mod routes;
 use askama::Template;
 use axum::{
@@ -95,6 +96,7 @@ pub fn router(app: App) -> Router {
         .route("/live", get(upgrade))
         .route(media::STREAM, get(media::stream))
         .route(media::ATTACHMENT, get(media::attachment))
+        .route(pdf::RENDER, get(pdf::render))
         .route("/fonts/{name}", get(font_asset))
         .route(
             "/assets/ui-specimen.html",

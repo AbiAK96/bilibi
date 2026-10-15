@@ -227,6 +227,8 @@ dependencies = [
 name = "bilibi-artifacts"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "base64 0.23.1",
  "bilibi-audit",
  "bilibi-authz",
  "bilibi-base",
@@ -237,6 +239,8 @@ dependencies = [
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-web",
+ "getrandom 0.4.3",
+ "hmac",
  "inventory",
  "libc",
  "serde_json",

@@ -43,6 +43,7 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             "/assets/{name}",
             crate::media::STREAM,
             crate::media::ATTACHMENT,
+            crate::pdf::RENDER,
         ] {
             if intersects(route.path, reserved) {
                 return Err(invalid(format!(
