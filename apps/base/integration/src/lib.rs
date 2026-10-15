@@ -632,7 +632,7 @@ async fn visible_tenant(
 
 inventory::submit! {
     Module { id: "base/integration", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid"],
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
@@ -647,6 +647,7 @@ inventory::submit! {
                 integration: services.get(SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                views: services.get::<bilibi_grid::PageViews>(bilibi_grid::PAGE_VIEWS)?,
             }))))
         } }, Service { id: reference_webhook::SERVICE, factory: |services| {
             Ok(reference_webhook::service(services.get::<Db>("base/database.pool")?.as_ref().clone()))

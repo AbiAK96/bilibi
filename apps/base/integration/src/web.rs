@@ -2,15 +2,16 @@
 //! `exchanges`) and `/system/api-exchanges/{id}` (`exchange`), ported from
 //! Bilimbi `apps/base/integration/lib/integration/web/{index,show}_live.ex`.
 //!
-//! The list is the shared flexible table over the built-in columns
-//! (`ListColumns`, no Grid catalog), bounded URL state (`ListState`), the
-//! direction tabs, the outcome select, one search and the period filter, whose
-//! calendar days follow the actor's display mode and, in local mode, the zone
-//! the `BrowserTimeZone` hook reports. Bilimbi persists the column arrangement
-//! per account through Grid `PageColumns`; until that lands the arrangement
-//! lives with the mounted page. The route guard checks the list capability on
-//! every request and live event; the operator scope sees every tenant and the
-//! system rows, with the same caution Bilimbi shows.
+//! The list is the shared flexible table over the built-in columns hosted by
+//! Grid `PageColumns` (the arrangement and row height are remembered per
+//! account and page, and an address that carries them wins), bounded URL state
+//! (`ListState`), the direction tabs, the outcome select, one search and the
+//! period filter, whose calendar days follow the actor's display mode and, in
+//! local mode, the zone the `BrowserTimeZone` hook reports. No Grid table is
+//! declared for exchanges, so the add box offers only removed built-ins, as
+//! Bilimbi's does. The route guard checks the list capability on every request
+//! and live event; the operator scope sees every tenant and the system rows,
+//! with the same caution Bilimbi shows.
 //!
 //! The detail page shows the metadata, inspects the retained payload only on
 //! an explicit click behind its own capability, and deletes through a confirm
@@ -22,6 +23,7 @@ use bilibi_datetime::{
     filter::{self as period, PeriodFilter},
     Clock, DisplayContext, DisplayPolicy, Format, Period, Precision,
 };
+use bilibi_grid::{Outcome as GridOutcome, PageColumns, PageViews};
 use bilibi_locale::Locales;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
@@ -32,8 +34,8 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, BuiltinColumn, ColumnType, ConfirmDialog, EmptyState, Fact, Facts, FilterToolbar,
-    FlashMap, FlexRow, FlexTable, Html, Instant, ListColumns, ListSpec, ListState, PageCounts,
-    Pagination, StatusKind, Tab, TableEmpty, Tabs, ToolbarControl, NO_FLASH,
+    FlashMap, FlexRow, Html, Instant, ListSpec, ListState, PageCounts, Pagination, RowMode,
+    StatusKind, Tab, TableEmpty, Tabs, ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -95,6 +97,7 @@ pub struct Pages {
     pub integration: Arc<Integration>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
+    pub views: Arc<PageViews>,
 }
 
 impl Pages {
@@ -226,7 +229,8 @@ struct Index {
     period: Option<Period>,
     filter: PeriodFilter,
     browser_zone: Option<String>,
-    columns: ListColumns,
+    /// The column arrangement, remembered per account (Bilimbi `PageColumns`).
+    columns: PageColumns,
     /// The rows changed since the column picker last saw them.
     reload: bool,
 }
@@ -238,6 +242,7 @@ impl Index {
         // until then the filter carries the UTC reading of the same keys.
         let clock = DisplayContext::anonymous().clock(None, Timestamp::now());
         let period = Period::parse(|key| period_params.get(key).cloned(), clock.today);
+        let views = pages.views.clone();
         Ok(Self {
             pages,
             list: parse(query)?,
@@ -245,10 +250,16 @@ impl Index {
             period: None,
             filter: PeriodFilter::new("exchange-period", period, &clock),
             browser_zone: None,
-            columns: ListColumns::mount("integration-exchanges", builtins())
+            columns: PageColumns::mount(views, "integration-exchanges", builtins())
                 .map_err(|_| Error::Internal)?,
             reload: true,
         })
+    }
+
+    /// The address the page opened with: the list state and, through
+    /// `PageColumns`, the arrangement it carries or the account's memory.
+    async fn open(&mut self, scope: &Scope, query: &HashMap<String, String>) -> Result<()> {
+        self.columns.from_params(scope, query).await
     }
 
     async fn clock(&self, scope: &Scope) -> Result<Clock> {
@@ -259,6 +270,7 @@ impl Index {
 
     fn query(&self) -> HashMap<String, String> {
         let mut query = self.list.to_params();
+        query.extend(self.columns.params());
         if let Some(period) = &self.period {
             query.extend(
                 period
@@ -278,8 +290,16 @@ impl Index {
     }
 
     fn row(&self, display: &DisplayContext, exchange: &Summary) -> Result<FlexRow> {
-        let compact = self.columns.mode() == bilibi_ui::RowMode::Compact;
-        let mut row = FlexRow::new(exchange.id.clone());
+        let compact = self.columns.mode() == RowMode::Compact;
+        // The projected row for this key, if the columns loaded one; the page
+        // fills its own slots beside any walked cells.
+        let mut row = self
+            .columns
+            .rows
+            .iter()
+            .find(|row| row.key == exchange.id)
+            .cloned()
+            .unwrap_or_else(|| FlexRow::new(exchange.id.clone()));
         row.dom_id = Some(format!("exchange-{}", exchange.id));
         row.slots.insert(
             "occurred_at".into(),
@@ -372,8 +392,8 @@ impl Index {
             Err(error) => return Err(error),
         };
         if self.reload {
-            self.columns
-                .load(&page.entries, |exchange| exchange.id.clone());
+            let keys: Vec<Value> = page.entries.iter().map(|row| json!(row.id)).collect();
+            self.columns.load(scope, &keys, &display).await?;
             self.reload = false;
         }
         let hrefs: Vec<(String, &str, &str)> = DIRECTIONS
@@ -422,10 +442,7 @@ impl Index {
         for exchange in &page.entries {
             rows.push(self.row(&display, exchange)?);
         }
-        let mut table = FlexTable::new("exchanges", self.columns.flex_columns(), rows);
-        table.zoom = self.columns.zoom;
-        table.suggestions = self.columns.flex_suggestions();
-        table.add_query = &self.columns.add_query;
+        let mut table = self.columns.flex_table("exchanges", rows);
         table.framed = false;
         table.caption = "API exchanges";
         table.empty = Some(TableEmpty::State(EmptyState::missing(
@@ -466,14 +483,17 @@ impl Index {
                 self.reload = true;
             }
             "grid" => {
-                let params: HashMap<String, String> = value
-                    .as_object()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
-                    .collect();
-                // No column sorts: the log stays newest first.
-                self.columns.handle(&params);
+                // No column sorts: the log stays newest first. A changed
+                // arrangement is already remembered; the rows load again
+                // under it.
+                match self
+                    .columns
+                    .handle(scope, &params::string_values(value))
+                    .await?
+                {
+                    GridOutcome::Patch => self.reload = true,
+                    GridOutcome::Update | GridOutcome::Noop | GridOutcome::Sort(_) => {}
+                }
             }
             "browser_timezone" => {
                 self.browser_zone = get("timezone")
@@ -510,6 +530,7 @@ impl LiveState<Scope, Error> for Index {
                 LiveInput::Params(values) => {
                     self.list = parse(values)?;
                     self.period_params = period_params(values);
+                    self.open(request.scope, values).await?;
                     self.reload = true;
                 }
                 LiveInput::Event(value) => self.event(request.scope, value).await?,
@@ -810,9 +831,9 @@ impl Page<Scope, Error> for Pages {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let html = match request.operation {
                 "exchanges" => {
-                    Index::new(self.clone(), request.query)?
-                        .render(scope)
-                        .await?
+                    let mut index = Index::new(self.clone(), request.query)?;
+                    index.open(scope, request.query).await?;
+                    index.render(scope).await?
                 }
                 "exchange" => {
                     Show::new(self.clone(), exchange_id(&request)?)
@@ -828,7 +849,12 @@ impl Page<Scope, Error> for Pages {
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
-                "exchanges" => Box::new(Index::new(self.clone(), request.query)?),
+                "exchanges" => {
+                    let scope = request.scope.ok_or(Error::Unauthorized)?;
+                    let mut index = Index::new(self.clone(), request.query)?;
+                    index.open(scope, request.query).await?;
+                    Box::new(index)
+                }
                 "exchange" => Box::new(Show::new(self.clone(), exchange_id(&request)?)),
                 _ => return Err(Error::NotFound),
             };

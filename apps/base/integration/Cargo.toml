@@ -11,6 +11,7 @@ bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-datetime = { path = "../datetime" }
+bilibi-grid = { path = "../grid" }
 bilibi-locale = { path = "../locale" }
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
