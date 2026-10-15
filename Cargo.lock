@@ -301,13 +301,18 @@ dependencies = [
 name = "bilibi-authz"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-audit",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
+ "jiff",
  "serde_json",
  "tokio-postgres",
 ]

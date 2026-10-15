@@ -1,8 +1,12 @@
 //! Live authorization, immutable contributed vocabulary, and field withholding.
+pub mod decision_logs;
 pub mod effective;
+pub mod field_catalog;
 pub mod fields;
 pub mod grants;
+pub mod restrictions;
 pub mod vocabulary;
+mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 pub use effective::effective_capabilities;
@@ -275,13 +279,49 @@ pub async fn restrictions_for(
 }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings"],
-    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql"))],
+    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime"],
+    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,
-    ))) }, bilibi_module_registry::Service { id:"base/authz.seeds", factory:|services| Ok(Arc::new(bilibi_database::seeds::SeedService(services.get::<grants::Grants>("base/authz.grants")?))) }],
+    ))) }, bilibi_module_registry::Service { id:"base/authz.seeds", factory:|services| Ok(Arc::new(bilibi_database::seeds::SeedService(services.get::<grants::Grants>("base/authz.grants")?))) },
+    bilibi_module_registry::Service {id:"base/authz.field_restrictions",factory:|services| Ok(Arc::new(restrictions::FieldRestrictions::new(
+        services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+        services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?,
+    ))) },
+    bilibi_module_registry::Service {id:"base/authz.pages",factory:|services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+        db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+        display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+    })))) }],
 } }
+
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/authz.decision-logs",
+        bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
+        &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
+            service:"base/authz.pages", operation:"decision-logs", access:bilibi_module_registry::contributions::Access::Capability(decision_logs::LIST), framed:true })
+}
+// Bilimbi's Authorization menu (`contributions.ex`): items join it as their
+// screens land; the container stays hidden until one is visible.
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::container("admin.authz", "Authorization")
+        .icon("shield-check")
+        .under("admin")
+        .order(20)
+);
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::page(
+        "admin.authz.decision-log",
+        "Decision Logs",
+        "/authz/decision-logs"
+    )
+    .icon("clipboard-document-list")
+    .under("admin.authz")
+    .requires(bilibi_menu::Requirement::Capability(decision_logs::LIST))
+    .order(50)
+);
 
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::SEEDS,

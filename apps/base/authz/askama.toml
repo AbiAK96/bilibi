@@ -1,0 +1,4 @@
+# Page fragments compose the shared Base UI macros (components.html) in place;
+# the typed models in bilibi_ui remain the alternative.
+[general]
+dirs = ["../ui/templates"]

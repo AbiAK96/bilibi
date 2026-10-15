@@ -84,6 +84,33 @@ pub fn validate_capabilities(
     Ok(())
 }
 
+/// Grid supplies Authz's protected-field catalog (`bilibi_authz::field_catalog`)
+/// as data: the restrictable fields of every installed table.
+fn restriction_snapshot(
+) -> std::result::Result<Vec<bilibi_authz::field_catalog::CatalogTable>, String> {
+    use bilibi_authz::field_catalog::{CatalogField, CatalogTable};
+    Ok(
+        restriction_catalog(installed().map_err(|error| error.to_string())?)
+            .into_iter()
+            .map(|entry| CatalogTable {
+                id: entry.table,
+                label: entry.label,
+                record_types: entry.record_types,
+                fields: entry
+                    .fields
+                    .into_iter()
+                    .map(|(id, label)| CatalogField { id, label })
+                    .collect(),
+            })
+            .collect(),
+    )
+}
+inventory::submit! {
+    Contribution::new(bilibi_authz::field_catalog::FIELD_CATALOG, "base/grid.restrictable",
+        Provenance { module: "base/grid", source: file!(), line: line!() },
+        &bilibi_authz::field_catalog::CatalogSource { snapshot: restriction_snapshot })
+}
+
 inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |entries| Installed::from_entries(entries).map(|_| ())) }
 inventory::submit! {
     Module {
