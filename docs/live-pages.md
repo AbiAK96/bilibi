@@ -121,7 +121,10 @@ send their `data-*` values (`data-page="3"` becomes `page: "3"`); only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
 their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape
 `{event, ...values}`, which becomes `{type: event, ...values}` aimed at the
-nearest `data-target` ancestor.
+nearest `data-target` ancestor. A controller that must know when its own
+intent is answered (the inline editors' "Saving…") adds `onReply`, a function
+that stays in the browser: it is called once, after that reply is patched, with
+the reply message, or with an `error` if the socket drops before the reply.
 
 ## Server-declared panels and background updates
 

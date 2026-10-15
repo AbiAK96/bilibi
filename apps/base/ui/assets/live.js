@@ -88,7 +88,10 @@
   function closed() {
     socket = null;
     if (stopped || !document.getElementById('app')) return;
-    for (const entry of inflight.values()) settle(entry);
+    for (const entry of inflight.values()) {
+      settle(entry);
+      entry.onReply?.({type: 'error', message: 'The connection dropped before this change was confirmed. The draft is kept; check the stored value before retrying.'});
+    }
     unconfirmed += inflight.size;
     inflight.clear();
     loading();
@@ -115,7 +118,7 @@
 
   function enqueue(intent, meta = {}) {
     const entry = {intent, source: meta.source || null, form: meta.form || null,
-      loading: !!meta.loading, navigation: !!meta.navigation};
+      loading: !!meta.loading, navigation: !!meta.navigation, onReply: meta.onReply};
     if (entry.source) busy(entry.source);
     queued.push(entry);
     flush();
@@ -226,6 +229,7 @@
         }
       }
     }
+    entry?.onReply?.(message);
     loading();
   }
 
@@ -541,13 +545,13 @@
     const detail = event.detail || {};
     let payload = detail.payload;
     if (!payload) {
-      const {event: type, target: _target, ...values} = detail;
+      const {event: type, target: _target, onReply: _onReply, ...values} = detail;
       if (!type) return;
       payload = {type, ...values};
     }
     const origin = event.target instanceof Element ? event.target : null;
     const owner = origin && origin.closest('[data-target]');
-    enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload});
+    enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload}, {onReply: typeof detail.onReply === 'function' ? detail.onReply : null});
   });
 
   connect();
