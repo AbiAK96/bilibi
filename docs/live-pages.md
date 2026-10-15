@@ -66,10 +66,53 @@ document.dispatchEvent(new CustomEvent('bilibi:navigate', {
 ```
 
 The socket processes events sequentially with a 16 KiB message/frame limit.
-F6 owns the full browser event queue, keyed DOM reconciliation, hook lifecycle,
-reconnect and focus/scroll/iframe retention; the current browser still permits
-only one outstanding intent. Panel fragments already target independent DOM
-roots; page fragments retain the existing whole-shell adapter until F6.
+
+## Browser adapter
+
+`apps/base/ui/assets/live.js` is the browser half. It owns four behaviours:
+
+- **Queue and request IDs.** Every intent is appended to a queue and sent in
+  order with the next `request_id`; nothing waits for or is dropped by an
+  in-flight round trip, because the server processes one socket sequentially
+  and echoes the ID on each reply. Intents raised before the socket is open or
+  while it is down are sent after the next mount. A reply or error whose
+  `request_id` matches acknowledges the intent before anything is patched.
+- **Keyed patch.** A `page` reply is reconciled into the existing `#app`, a
+  `fragment` into its panel root. Elements with an `id` keep their identity (a
+  keyed element found elsewhere under the root is moved, not recreated);
+  unkeyed siblings pair by position, and only attributes and text that differ
+  are written. The browser's own dirty flags keep typed values, so an unfinished
+  draft survives any patch, and the hidden inputs of a form holding a draft keep
+  their values (a record version still conflicts on save). The form whose
+  submission was accepted is reset to the stored values. On an existing element
+  the patcher leaves an iframe's `src`, a `<details>`/`<dialog>` `open` and a
+  `data-live-ignore` subtree (except its `data-*` attributes) alone, and never
+  descends into an iframe; a frame whose id and order are unchanged keeps its
+  document. Focus and selection are restored by id when the focused element was
+  replaced; scroll positions of `id`-bearing containers and the window are
+  restored except after a `navigate`/`mount`, which starts at the top. Hooks are
+  mounted and destroyed by the `ui.js` mutation observer; the patcher reports the
+  hooks whose attributes it rewrote through `BilibiUI.patched`, so each receives
+  one `updated` per patch.
+- **Busy state.** The control that raised an intent carries `aria-busy="true"`
+  and `data-live-busy` until its acknowledgement, and is not patched meanwhile;
+  a server-rendered `aria-busy` is never touched. `data-working` labels (see
+  `ui.js`) are restored at the same moment. Page-level round trips (mount,
+  navigate, params, Back) show the vendored topbar after 300ms.
+- **Reconnect.** A closed socket raises `bilibi:disconnected`, retries with
+  backoff (500ms doubling to 5s; `online` and window focus retry at once), then
+  remounts the current URL into the existing DOM and sends the intents raised
+  meanwhile. Intents that were in flight when the socket dropped cannot be
+  confirmed; the status region reports their count. Development reloads instead
+  so a rebuilt server serves fresh assets. A `clear` error on the page removes
+  `#app`, offers sign-in and stops reconnecting.
+
+Forms raise intent with `data-event`: `params` sends the form values as a
+params update, `save` the Company edit shape, and any other name an event of
+that type carrying the form values; `data-target` picks a mounted panel. A
+`bilibi:event` may carry `{target, payload}` or the controller shape
+`{event, ...values}`, which becomes `{type: event, ...values}` aimed at the
+nearest `data-target` ancestor.
 
 ## Server-declared panels and background updates
 
@@ -117,6 +160,14 @@ Company pages are served by the same app. This is a manual specimen command,
 not a test suite or a product route. Its two panels require `notifications.view`;
 the parent requires only sign-in, allowing independent revoke/restore and
 Company-denied socket demonstrations. The normal app does not register this route.
+
+The page also carries the browser-adapter checks: click Increment twenty times
+as fast as possible and the count reaches twenty; type in the scratch note
+without pressing Keep, announce or wait for the 15-second refresh, and the typed
+text, caret and focus stay; scroll the box and the scroll position stays through
+the same patches; increment inside the island iframe (`/live-reference/island`,
+its own live page) and its count survives every parent patch because the frame
+is keyed by id and never replaced.
 
 F5 runtime evidence lives outside the repository in the task evidence directory.
 Company list/filter/Back/save, targeted panel identity, subscription wakes,

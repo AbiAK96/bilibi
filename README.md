@@ -26,7 +26,9 @@ Changes under `apps/` (Rust, templates, CSS/JS, migrations and discovered module
 crates), workspace manifests/lockfile, and `scripts/` trigger a rebuild and app
 restart. In development, an open page shows “Rebuilding…” while the server is
 restarting, reconnects with backoff, then reloads the same URL automatically.
-Release builds keep the “Live connection closed. Reload to reconnect.” message.
+Release builds reconnect with the same backoff, remount the page in place so
+drafts survive, and say how many requests were in flight when the connection
+dropped.
 Restart `./scripts/start-app.sh` after changing startup environment variables
 such as `DATABASE_URL`, `APP_ORIGIN`, `BIND_ADDR`, `PG18_BIN`, or
 `BILIBI_DEV_PORT`; watched file changes do not reload the launcher's environment.
@@ -140,7 +142,8 @@ The stack is axum on Tokio, tokio-postgres with a bounded deadpool pool, embedde
 SQL migrations and Askama templates. Askama plus the browser's native WebSocket
 API was chosen because both are small, established tools: compiled templates
 escape data by default, and axum already provides socket support. A short shared
-browser adapter sends intent and replaces server-rendered HTML. There is no SPA
+browser adapter queues intent and patches server-rendered HTML into the page by
+element id. There is no SPA
 framework or client model. A pinned Tailwind build produces the committed CSS;
 Node is needed only to rebuild assets, not to run the Rust app. See the
 [UI asset contract](apps/base/ui/assets/README.md) for sources and licenses.
@@ -152,10 +155,12 @@ reload the rendered page, avoiding client-side permission logic. Notifications
 publish after commit; their recipient reloads through authorization. A 15-second
 refresh also catches account suspension, session expiry, logout, changed roles,
 and missed bell events. Denied access clears the displayed page and closes the
-socket. The browser preserves unfinished inline drafts across bell patches,
-retaining their version so concurrent changes still conflict. Reload to reconnect
-after a lost connection in production; development reconnects and reloads after
-the watcher restarts the server.
+socket. The browser patches replies into the existing DOM, so focus, scroll, unfinished
+drafts (with their version, so concurrent changes still conflict) and iframe
+documents survive bell and refresh patches; every intent is queued and
+acknowledged by request ID, so rapid input is never dropped. A lost connection
+reconnects with backoff and remounts the same URL; development reloads after the
+watcher restarts the server. See [docs/live-pages.md](docs/live-pages.md).
 
 ```text
 apps/base/            Base composition root

@@ -23,6 +23,12 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Pick a message kind by what it does: a completed write is `Success` (times out), a refusal or failure is `Error`, `Info` informs without confirming a write; only success carries auto-dismiss.
 - `/assets/ui-feedback.html` (`src/feedback_specimen.rs`) is the screenshot baseline for these; its `static/ui-feedback-demo.js` stands in for the server, so extend both when adding a variant.
 
+## Live pages (`assets/live.js`)
+
+- Raise intent with `data-event` (or a `bilibi:event`) and let the transport queue it: never keep a "pending" flag or drop input while a round trip is in flight. Every intent is sent in order with a `request_id` the server echoes; `docs/live-pages.md` is the contract. Use `data-working` for a busy label; the transport adds and lifts `aria-busy` itself.
+- Give a stable `id` to any repeated fragment that holds a draft, a hook or an `<iframe>` (Company's inline forms are `company-field-<key>`): a reply is patched by element id, and unkeyed siblings match by position, so a removed earlier sibling would otherwise hand a draft to the wrong form. Never rebuild `#app` or a panel with `innerHTML` from a page or hook; an iframe reloads whenever it is moved or replaced.
+- Mark a subtree the browser owns (a hook-filled status, a frame host's own text) `data-live-ignore`, the counterpart of Bilimbi's `phx-update="ignore"`: only its `data-*` attributes then follow the server. Do not fight the patcher from `updated()`; on an existing element it leaves `<details>`/`<dialog>` `open` and an iframe's `src` alone, and the browser's own dirty flags keep typed values.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
