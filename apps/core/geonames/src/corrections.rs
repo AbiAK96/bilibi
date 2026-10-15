@@ -354,6 +354,17 @@ impl Geonames {
         Ok(index)
     }
 
+    /// Checks a draft as `create_postcode` would, without writing: the
+    /// form's live validation (Bilimbi `change_postcode/1` under
+    /// `action: :validate`). Empty means the draft would be accepted.
+    pub async fn check_postcode(&self, draft: &PostcodeDraft) -> Result<Vec<FieldError>, Error> {
+        let client = self.db.get().await?;
+        Ok(validated(&**client, draft, None)
+            .await?
+            .err()
+            .unwrap_or_default())
+    }
+
     async fn index_row(
         &self,
         sql: &impl GenericClient,

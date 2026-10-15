@@ -512,7 +512,10 @@
 
   // A form names its event with data-event: `params` sends the list query,
   // `save` the Company edit shape, anything else an event of that name
-  // carrying the form's values. data-target picks a mounted panel.
+  // carrying the form's values. data-target picks a mounted panel. A
+  // data-change form submits as one more change, unless data-submit-event
+  // names the event its submission raises instead (Bilimbi's phx-submit
+  // beside phx-change: validate as values change, save on Enter or Save).
   function formValues(form) {
     const values = {};
     for (const [key, value] of new FormData(form)) {
@@ -525,11 +528,11 @@
     const form = event.target;
     if (!form.dataset.event) return;
     event.preventDefault();
-    if (form.hasAttribute('data-change')) return sendChange(form);
+    if (form.hasAttribute('data-change') && !form.dataset.submitEvent) return sendChange(form);
     const values = formValues(form);
     const target = form.dataset.target || 'page';
     const source = event.submitter || form;
-    const type = form.dataset.event;
+    const type = form.dataset.submitEvent || form.dataset.event;
     if (type === 'params') {
       enqueue({type: 'params', params: values}, {source, form, loading: true});
     } else if (type === 'save') {
