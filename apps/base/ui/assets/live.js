@@ -609,6 +609,16 @@
     enqueue({type: 'navigate', path: detail.path, params: detail.params || {}}, {loading: true, navigation: true});
   });
 
+  // The live page's own address with other params (Bilimbi's live patch): the
+  // page reads them in place, keeping its DOM and frames, and the address it
+  // answers with is pushed. A different page is a navigation instead.
+  document.addEventListener('bilibi:patch', (event) => {
+    const {path, params: values} = event.detail || {};
+    if (path !== livePath || !document.querySelector('#app[data-live]')) return;
+    event.preventDefault();
+    enqueue({type: 'params', params: values || {}}, {loading: true});
+  });
+
   // Component adapters send module intent through this bounded transport entry
   // point in either shape: {target, payload} or the ui.js controller shape
   // {event, ...values}, which becomes payload {type: event, ...values} aimed at

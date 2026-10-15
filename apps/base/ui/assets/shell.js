@@ -506,7 +506,7 @@
         return;
       }
       const tile = event.target.closest('[data-nav-tile]');
-      if (tile && this.root.contains(tile)) this.retargetTileLink(tile);
+      if (tile && this.root.contains(tile)) this.retargetTileLink(tile, event);
       if (!this.sidebar?.contains(event.target)) return;
       const toggle = event.target.closest('[data-nav-toggle]');
       if (toggle && this.sidebar.contains(toggle)) {
@@ -521,8 +521,12 @@
     // "Open in a tile": a plain link to the page, retargeted on a wide screen
     // to the workspace with the current page in `t` and the clicked one in
     // `open`, as Bilimbi does. Until the workspace route is served the link
-    // stays a plain link, so it never leads to a missing page.
-    retargetTileLink(link) {
+    // stays a plain link, so it never leads to a missing page. From the
+    // workspace it is a patch of its own address (live.js `bilibi:patch`), so
+    // the tiles on screen keep their frames; from a page it opens the
+    // workspace. The tree is never built here: `t` is only ever the current
+    // address, and the server does the splitting.
+    retargetTileLink(link, event) {
       const page = link.dataset.navTile;
       if (!page || !this.desktop() || !this.isServedUrl(WORKSPACE)) return;
       const {pathname, search} = window.location;
@@ -532,6 +536,9 @@
         : new URLSearchParams({t: leaf(pathname + search), inplace: '1'});
       params.set('open', page);
       link.setAttribute('href', `${workspace ? pathname : WORKSPACE}?${params}`);
+      if (!workspace || event?.defaultPrevented || event?.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const patch = new CustomEvent('bilibi:patch', {cancelable: true, detail: {path: pathname, params: Object.fromEntries(params)}});
+      if (!document.dispatchEvent(patch)) event.preventDefault();
     },
 
     toggleNavBranch(branch) {
