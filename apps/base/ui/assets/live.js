@@ -370,6 +370,8 @@
     const olds = [...from.childNodes];
     const siblings = new Map();
     for (const node of olds) if (keyed(node)) siblings.set(key(node), node);
+    const kept = new Set();
+    for (const node of to.childNodes) if (keyed(node)) kept.add(key(node));
     let cursor = from.firstChild;
     for (const next of [...to.childNodes]) {
       let match = null;
@@ -380,8 +382,9 @@
         if (candidate && candidate.isConnected && candidate.tagName === next.tagName
           && !context.consumed.has(candidate) && !candidate.contains(from)) {
           match = candidate;
-          if (match !== cursor) from.insertBefore(match, cursor);
-          else cursor = cursor.nextSibling;
+          if (match === cursor) cursor = cursor.nextSibling;
+          else if (departing(cursor, match, kept, context)) cursor = match.nextSibling;
+          else from.insertBefore(match, cursor);
         }
       } else {
         // Unkeyed nodes pair by position with the next unkeyed, unconsumed old
@@ -405,6 +408,20 @@
         node.remove();
       }
     }
+  }
+
+  // Whether everything from `cursor` up to `match`, a later sibling, is leaving
+  // anyway: keyed elements the reply no longer has, and text or comments. The
+  // match then stays where it is and they are removed after the pass. Moving
+  // the match instead would reload an <iframe> inside it, so closing the first
+  // of several tiles would reload every other.
+  function departing(cursor, match, kept, context) {
+    for (let node = cursor; node; node = node.nextSibling) {
+      if (node === match) return true;
+      if (context.consumed.has(node)) continue;
+      if (keyed(node) ? kept.has(key(node)) : node.nodeType === Node.ELEMENT_NODE) return false;
+    }
+    return false;
   }
 
   // ---- Focus and scroll retention -------------------------------------------

@@ -94,7 +94,8 @@ The socket processes events sequentially with a 16 KiB message/frame limit.
   the patcher leaves an iframe's `src`, a `<details>`/`<dialog>` `open` and a
   `data-live-ignore` subtree (except its `data-*` attributes) alone, and never
   descends into an iframe; a frame whose id and order are unchanged keeps its
-  document. Focus and selection are restored by id when the focused element was
+  document, including when keyed siblings before it leave (they are removed
+  around it rather than it being moved, since a moved frame reloads). Focus and selection are restored by id when the focused element was
   replaced; scroll positions of `id`-bearing containers and the window are
   restored except after a `navigate`/`mount`, which starts at the top. Hooks are
   mounted and destroyed by the `ui.js` mutation observer; the patcher reports the
