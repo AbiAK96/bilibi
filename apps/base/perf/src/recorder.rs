@@ -5,7 +5,7 @@
 //! connections with its own timeouts.
 use crate::{
     runtime,
-    sample::{Kind, Sample},
+    sample::{Kind, Process, Sample},
 };
 use bilibi_database::{Db, Error, Result};
 use bilibi_settings::Settings;
@@ -161,6 +161,10 @@ impl Recorder {
                 Submit::Dropped
             }
         }
+    }
+    /// Current facts about this process: what each runtime sample records.
+    pub async fn process(&self) -> Process {
+        runtime::snapshot(&self.db).await
     }
     /// Whether recording is currently on, as last read from settings.
     pub fn recording(&self) -> bool {
@@ -330,7 +334,7 @@ impl Recorder {
                     _ => self.refresh_policy().await,
                 },
                 _ = process.tick() => {
-                    let facts = runtime::snapshot(&self.db).await;
+                    let facts = self.process().await;
                     self.submit(Sample::runtime(facts));
                 }
             }
