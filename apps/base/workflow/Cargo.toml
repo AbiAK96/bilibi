@@ -14,6 +14,11 @@ bilibi-tenancy = { path = "../tenancy" }
 bilibi-queue = { path = "../queue" }
 bilibi-schedule = { path = "../schedule" }
 bilibi-settings = { path = "../settings" }
+bilibi-ui.workspace = true
+bilibi-datetime = { path = "../datetime" }
+bilibi-locale = { path = "../locale" }
+askama.workspace = true
+jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true

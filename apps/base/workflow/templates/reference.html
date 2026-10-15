@@ -1,0 +1,34 @@
+{#- The Workflow reference page (Bilimbi
+    apps/base/workflow/lib/workflow/web/reference_live.html.heex): ids,
+    classes and sections mirror the pinned source. Each offered action is a
+    form that echoes the request fields the kernel gate expects (Bilimbi's
+    phx-value-action/work_item_id), plus the idempotency key this rendering
+    issued; src/web.rs owns every value. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="workflow-reference-page", variant=bilibi_ui::PageVariant::Detail) %}
+{% call ui::header(subtitle="A generic review subject exercises status, durable work, human actions and history.") %}Workflow reference{% endcall %}
+<section id="workflow-reference-actions" class="mt-6">
+{% call ui::section_heading(id="workflow-reference-actions-heading", title="Available actions") %}{% endcall %}
+{% if let Some(failure) = failure %}{% call feedback::panel_notice(id="workflow-reference-failure", kind=bilibi_ui::NoticeKind::Error, dismiss_event="clear_failure", class="mb-4") %}{{ failure }}{% endcall %}{% endif %}
+{% if actions.is_empty() && failure.is_none() %}{% call lists::empty_state(e=no_actions) %}{% endcall %}{% endif %}
+{% for action in actions %}
+<div id="workflow-action-{{ loop.index0 }}" class="flex items-center justify-between gap-4 border-b border-line py-3">
+<div><p class="font-medium text-ink">{{ action.entry.label }}</p>{% if let Some(work) = action.entry.work_item_id %}<p class="text-sm text-ink-muted">Review work item {{ work }}</p>{% endif %}</div>
+<form id="workflow-action-{{ loop.index0 }}-form" data-event="execute"><input type="hidden" name="action" value="{{ action.entry.key }}" />{% if let Some(work) = action.entry.work_item_id %}<input type="hidden" name="work_item_id" value="{{ work }}" />{% endif %}<input type="hidden" name="idempotency_key" value="{{ action.idempotency_key }}" />{% call ui::button(id="execute-workflow-action-{}"|format(loop.index0), variant=bilibi_ui::ButtonVariant::Primary, button_type="submit") %}{{ action.entry.label }}{% endcall %}</form>
+</div>
+{% endfor %}
+</section>
+<section id="workflow-reference-work" class="mt-8">
+{% call ui::section_heading(id="workflow-reference-work-heading", title="Pending work", count=Some(work_count)) %}{% endcall %}
+{{ work_table }}
+</section>
+<section id="workflow-reference-history" class="mt-8">
+{% call ui::section_heading(id="workflow-reference-history-heading", title="History") %}{% endcall %}
+{{ history_table }}
+</section>
+{% endcall %}
+</div>

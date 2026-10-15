@@ -11,6 +11,7 @@ pub mod outbox;
 pub mod pending;
 pub mod process;
 pub mod runs;
+pub mod web;
 use bilibi_database::{Change, Result};
 use bilibi_tenancy::Scope;
 pub use definitions::{
@@ -121,7 +122,7 @@ pub trait SubjectAdapter: Send + Sync {
 
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/workflow",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/database","base/audit","base/authz","base/tenancy","base/queue","base/schedule","base/settings"],
+    dependencies:&["base/module_registry","base/database","base/audit","base/authz","base/tenancy","base/queue","base/schedule","base/settings","base/ui","base/locale","base/datetime"],
     migrations:&[("workflow-001-status-kernel",include_str!("../migrations/001-status.sql")),
         ("workflow-002-process-graphs",include_str!("../migrations/002-process.sql")),
         ("workflow-003-human-actions",include_str!("../migrations/003-human-actions.sql")),
@@ -141,11 +142,25 @@ inventory::submit! { bilibi_module_registry::Module {
             engine: services.get("base/workflow.engine")?, schedule: services.get("base/schedule.store")?,
             settings: services.get("base/settings.store")?,
         }))))
+    }}, bilibi_module_registry::Service {id:"base/workflow.pages",factory:|services| {
+        Ok(Arc::new(bilibi_ui::page::PageService::<Scope, bilibi_database::Error>(Arc::new(web::Pages {
+            engine: services.get("base/workflow.engine")?,
+            db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+            display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+        }))))
     }}],
 } }
+
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/workflow.reference",
+        bilibi_module_registry::Provenance {module:"base/workflow",source:file!(),line:line!()},
+        &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/workflow/reference/{id}",
+            service:"base/workflow.pages", operation:"reference", access:bilibi_module_registry::contributions::Access::Capability(web::APPROVE), framed:true })
+}
 
 inventory::submit! { bilibi_module_registry::Contribution::new(
 bilibi_authz::VOCABULARY,"workflow.vocabulary",bilibi_module_registry::Provenance {module:"base/workflow",source:file!(),line:line!()},
 &bilibi_authz::VocabularyContribution {domains:&["workflow"],verbs:&[],
-    capabilities:&[bilibi_authz::CapabilityDefinition::platform("admin.workflow.definition.manage")],
+    capabilities:&[bilibi_authz::CapabilityDefinition::platform("admin.workflow.definition.manage"),
+        bilibi_authz::CapabilityDefinition::tenant(web::APPROVE)],
     roles:&[],system_principals:&[]}) }

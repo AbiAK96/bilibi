@@ -1,0 +1,5 @@
+# The reference page composes the shared Base UI macros (components.html,
+# feedback.html, lists.html) in place; the typed models in bilibi_ui remain the
+# alternative.
+[general]
+dirs = ["templates", "../ui/templates"]
