@@ -1,11 +1,11 @@
 # Workflow status kernel
 
-Workflow owns status configuration, edges, subject bindings and append-only
-history. Its facade accepts a sealed `bilibi_tenancy::Scope`, a subject kind
-(public key or alias) and the owner's record ID. It never queries an owner's
-table: the owner proves identity, tenant and current status through its
-`SubjectAdapter`. This slice is the status kernel; versioned process graphs,
-leases, human-action replay and durable transition delivery are later slices.
+Workflow owns status configuration, edges, subject bindings, append-only
+history, and immutable versioned process runs. Its facade accepts a sealed
+`bilibi_tenancy::Scope`, a subject kind (public key or alias) and the owner's
+record ID. It never queries an owner's table: the owner proves identity, tenant
+and current status through its `SubjectAdapter`. Worker leases, human-action
+replay and durable transition delivery are later slices.
 
 ## Contributions
 
@@ -25,6 +25,39 @@ a flow whose subject belongs to another module, two flows on one subject, edges
 whose statuses are missing, whose `settings`/`metadata` are not JSON objects,
 whose capability is not in the Authz vocabulary, or whose guard/action is not
 owned by the same module. Contributions perform no I/O.
+
+## Versioned processes
+
+`Process { key, version, subject, adapter, steps }` contributes a durable run
+graph for one registered subject type. Versions are positive integers, step
+keys are unique, dependencies must name a step in the same graph, and cycles
+are rejected at registry build time. Each process key keeps one owner and
+subject across its installed versions.
+
+The registry compiles every contribution into an immutable definition and a
+SHA-256 fingerprint over its key, version and ordered step contracts. Step
+field order is fixed, object keys in input and metadata are sorted recursively,
+and array order is preserved. Floating-point values are rejected so a
+serializer change cannot silently alter the fingerprint. Change the version
+when changing any step contract, and retain old versions while their runs need
+them.
+
+The first authorized start inserts the key/version fingerprint into
+`base_workflow_process_versions`; a database trigger refuses updates and
+deletes. `Engine::start_run` and `start_run_in` ask both the subject adapter
+and process adapter to authorize `StartRun` inside the audited transaction.
+They namespace the caller's idempotency key by tenant and definition, create
+the run, materialize its complete graph and append its initial events
+atomically. Repeating a start returns the same run and work-item IDs when the
+subject, version, fingerprint, input, priority and correlation key match; a
+changed request conflicts.
+
+`Engine::get_run` and `run_events` re-authenticate the scope, prove the live
+subject, ask both adapters to authorize `ReadRun`, then check the saved
+fingerprint and every persisted step and dependency before returning anything.
+Reads take no row locks and graph reads are bounded by the installed definition
+size. A changed contribution under a saved version conflicts; a malformed
+saved graph is refused.
 
 `Engine::initialize` is the explicit insert-only seed for flows, statuses and
 edges, run by a trusted admin or seed adapter holding
@@ -100,7 +133,30 @@ cargo run -p bilibi-workflow --example owner -- approve 4 1
 cargo run -p bilibi-workflow --example owner -- history 4 1
 ```
 
+To demonstrate versioned starts and reads in the same fresh disposable
+database, run the process commands in order:
+
+```sh
+cargo run -p bilibi-workflow --example owner -- init
+cargo run -p bilibi-workflow --example owner -- start-v1 4 1
+cargo run -p bilibi-workflow --example owner -- start-v1 4 1
+cargo run -p bilibi-workflow --example owner -- drift 4 1
+cargo run -p bilibi-workflow --example owner -- run-drift 4 1
+cargo run -p bilibi-workflow --example owner -- start 4 1
+cargo run -p bilibi-workflow --example owner -- start-changed 4 1
+cargo run -p bilibi-workflow --example owner -- run 4 3
+cargo run -p bilibi-workflow --example owner -- events 4 3
+```
+
+The first repeated v1 start returns the same run and work IDs. `drift` and
+`run-drift` refuse the changed graph under saved v1, and `start-changed`
+refuses a changed input under the v2 idempotency key. A fresh database assigns
+the v1 and v2 run IDs `1` and `3` in this sequence because the replay consumes
+an unused database sequence value; use IDs printed by `start` if other runs
+already exist.
+
 Arguments are `command [user-id] [record-id]`; user 4 is the seeded admin.
+For `run`, `run-drift` and `events`, the final argument is a process run ID.
 `init` first marks tenant 1 as the platform operator in that disposable
 database, because `Engine::initialize` requires the platform capability
 `admin.workflow.definition.manage`; production operator bootstrap is K17.
