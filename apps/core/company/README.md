@@ -135,7 +135,9 @@ An explicit operator identity or admin grant does not bypass tenant scope,
 standing checks, field restrictions, or the final archive state. Archive
 and suspend refuse the tenant's primary company and the actor's own company.
 The primary assignment and lifecycle commands both lock the tenant before
-the company, so the standing check is atomic with primary transfer.
+the company, so the standing check is atomic with primary transfer. Tenant
+locks use `FOR NO KEY UPDATE`, compatible with the `KEY SHARE` needed by a
+child insert's tenant foreign key while it already holds the company lock.
 
 An optional reason is trimmed, blank becomes absent, and the limit is 500
 Unicode characters. A version conflict is `WriteError::Stale`; a disallowed

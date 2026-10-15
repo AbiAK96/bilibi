@@ -90,7 +90,7 @@ pub async fn assign(
 ) -> std::result::Result<AssignmentStatus, AssignmentError> {
     let sql = tx.sql();
     sql.query_opt(
-        "SELECT id FROM tenants WHERE id=$1 AND deleted_at IS NULL FOR UPDATE",
+        "SELECT id FROM tenants WHERE id=$1 AND deleted_at IS NULL FOR NO KEY UPDATE",
         &[&tenant],
     )
     .await

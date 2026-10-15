@@ -1,7 +1,9 @@
 //! Company status is a business event, never an editable attribute. All
 //! transitions and owned writes serialize on the company row. Lock the tenant
 //! before that row here, matching `primary::assign`, so a concurrent primary
-//! transfer cannot race an archive/suspension or deadlock it.
+//! transfer cannot race an archive/suspension or deadlock it. The tenant lock
+//! is NO KEY UPDATE: child inserts may already hold the company lock and need
+//! KEY SHARE on their tenant foreign key; those locks must remain compatible.
 use crate::{organisation, Company, CompanyService, FieldError, WriteError, UPDATE};
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Error, MutationTransaction};
@@ -107,7 +109,7 @@ pub async fn apply(
     }
     tx.sql()
         .query_one(
-            "SELECT id FROM tenants WHERE id=$1 FOR UPDATE",
+            "SELECT id FROM tenants WHERE id=$1 FOR NO KEY UPDATE",
             &[&scope.tenant()],
         )
         .await
