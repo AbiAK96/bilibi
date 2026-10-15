@@ -723,6 +723,7 @@ dependencies = [
  "bilibi-party-ids",
  "inventory",
  "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]

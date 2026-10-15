@@ -66,12 +66,29 @@ impl Actor {
         self.affiliation
     }
 }
+/// The OAuth grant a request authenticated with, sealed by the host's bearer
+/// edge after live actor proof. It narrows the account; it never widens it.
+#[derive(Clone, Debug)]
+pub struct AgentFacet {
+    connection: i64,
+    trace: String,
+}
+impl AgentFacet {
+    pub fn connection(&self) -> i64 {
+        self.connection
+    }
+    /// One request's correlation ID: audit trace and exchange log share it.
+    pub fn trace(&self) -> &str {
+        &self.trace
+    }
+}
 /// Private tenant + actor cannot be spliced, constructed, or deserialized by callers.
 /// Display fields are compatibility data and never authority.
 #[derive(Clone, Debug)]
 pub struct Scope {
     tenant: i64,
     actor: Actor,
+    agent: Option<AgentFacet>,
     pub tenant_name: String,
     pub user_name: String,
     pub email: String,
@@ -87,8 +104,27 @@ impl Scope {
     pub fn actor(&self) -> &Actor {
         &self.actor
     }
+    /// Present only on a bearer request; self-service account and grant
+    /// management refuse a scope that carries it.
+    pub fn agent(&self) -> Option<&AgentFacet> {
+        self.agent.as_ref()
+    }
+    /// Seals the grant onto a scope its owner just proved live for that grant's
+    /// tenant and account. Only adds a restriction, so no new authority follows;
+    /// the browser CSRF value is replaced so no form check can match.
+    pub fn for_agent(self, connection: i64, trace: String) -> Self {
+        Self {
+            agent: Some(AgentFacet { connection, trace }),
+            csrf: uuid::Uuid::new_v4().simple().to_string(),
+            ..self
+        }
+    }
     pub fn mutation_context(&self, action: impl Into<String>) -> Context {
-        Context::user(self.tenant, self.user(), action)
+        let mut context = Context::user(self.tenant, self.user(), action);
+        if let Some(agent) = &self.agent {
+            context.trace_id.clone_from(&agent.trace);
+        }
+        context
     }
 }
 
@@ -146,6 +182,7 @@ impl Authentication {
                 organisation: identity.organisation,
                 affiliation: identity.affiliation,
             },
+            agent: None,
             tenant_name: row.get(0),
             user_name: identity.name,
             email: identity.email,

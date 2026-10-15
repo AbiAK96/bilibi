@@ -191,7 +191,7 @@ struct Connection {
     expires_at: SystemTime,
     live: bool,
 }
-const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,expires_at,revoked_at IS NULL AND expires_at>now() AS live";
+const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,expires_at,revoked_at IS NULL AND expires_at>clock_timestamp() AS live";
 impl Connection {
     fn from_row(row: &Row) -> Self {
         Self {
@@ -244,9 +244,12 @@ pub fn valid_label(label: &str) -> bool {
         && !label.chars().any(char::is_control)
 }
 /// Bilimbi refuses impersonated sessions and agent facets from managing
-/// connections. The Bilibi scope carries neither yet (K14 and E5 add them);
-/// extend this one gate when they land rather than each caller.
-fn self_service(_scope: &Scope) -> std::result::Result<(), OAuthError> {
+/// connections. A bearer request carries the agent facet; impersonation is
+/// added here when K14 gives the scope that facet, rather than at each caller.
+fn self_service(scope: &Scope) -> std::result::Result<(), OAuthError> {
+    if scope.agent().is_some() {
+        return Err(OAuthError::AccessDenied);
+    }
     Ok(())
 }
 fn future(expires_at: SystemTime) -> std::result::Result<(), OAuthError> {
@@ -772,6 +775,43 @@ impl AgentAccess {
             person,
         })
     }
+    /// Live actor proof for one bearer request: the grant named by the claims
+    /// must still be live in their tenant and account, the account must still
+    /// authenticate and each recorded party facet must still be proven, all on
+    /// the caller's transaction. Returns that fresh scope sealed with the agent
+    /// facet. `lock` holds the grant row until the caller's commit, so a plan
+    /// commit cannot race revocation. Expiry is read against the wall clock.
+    pub async fn prove(
+        &self,
+        tx: &Transaction<'_>,
+        claims: &AgentClaims,
+        lock: bool,
+        trace: &str,
+    ) -> std::result::Result<Scope, OAuthError> {
+        let unproven = |error| match error {
+            OAuthError::InvalidGrant => OAuthError::InvalidToken,
+            other => other,
+        };
+        let connection = self
+            .own_connection(tx, claims, lock)
+            .await
+            .map_err(unproven)?;
+        let scope = self.live(tx, &connection).await.map_err(unproven)?;
+        Ok(scope.for_agent(connection.id, trace.to_owned()))
+    }
+    /// `prove` in its own read transaction, for a request with no other work
+    /// to share it with.
+    pub async fn seal(
+        &self,
+        claims: &AgentClaims,
+        trace: &str,
+    ) -> std::result::Result<Scope, OAuthError> {
+        let mut client = self.db.get().await?;
+        let tx = client.transaction().await?;
+        let scope = self.prove(&tx, claims, false, trace).await?;
+        tx.commit().await?;
+        Ok(scope)
+    }
     /// Records the identity an authenticated agent request stated for its
     /// claims. A request that stated none is recorded as `(not stated)`. A
     /// changed identity is flagged, never refused; only the newest
@@ -935,7 +975,7 @@ impl AgentAccess {
         &self,
         client: &Transaction<'_>,
         connection: &Connection,
-    ) -> std::result::Result<(), OAuthError> {
+    ) -> std::result::Result<Scope, OAuthError> {
         if !connection.live {
             return Err(OAuthError::InvalidGrant);
         }
@@ -969,7 +1009,7 @@ impl AgentAccess {
                 .await
                 .map_err(refused)?;
         }
-        Ok(())
+        Ok(scope)
     }
     async fn revoke_connection(
         tx: &mut MutationTransaction<'_>,

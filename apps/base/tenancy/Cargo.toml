@@ -11,3 +11,4 @@ tokio-postgres.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-party-ids = { path = "../party_ids" }
+uuid.workspace = true
