@@ -374,6 +374,7 @@ version = "0.1.0"
 dependencies = [
  "bilibi-agent-access",
  "bilibi-company",
+ "bilibi-geonames",
  "bilibi-party",
  "bilibi-user",
 ]
@@ -433,6 +434,21 @@ version = "0.1.0"
 [[package]]
 name = "bilibi-extensions"
 version = "0.1.0"
+
+[[package]]
+name = "bilibi-geonames"
+version = "0.1.0"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-grid",
+ "bilibi-module-registry",
+ "inventory",
+ "tokio",
+ "tokio-postgres",
+]
 
 [[package]]
 name = "bilibi-grid"

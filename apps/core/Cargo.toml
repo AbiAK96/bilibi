@@ -9,5 +9,6 @@ license.workspace = true
 [dependencies]
 bilibi-agent-access = { path = "agent_access" }
 bilibi-company = { path = "company" }
+bilibi-geonames = { path = "geonames" }
 bilibi-party = { path = "party" }
 bilibi-user = { path = "user" }
