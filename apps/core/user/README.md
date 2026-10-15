@@ -118,3 +118,55 @@ disposable database after `migrate` and `seed` (set
 `BILIBI_DISPOSABLE_CREDENTIALS_DEMO=yes`, `BILIBI_MAIL_DIR` and
 `BILIBI_USER_SIGNING_KEY`). It prints every outcome above and reads the dev
 mailbox to follow the links.
+
+## Saved database queries (C9; pages follow in C10)
+
+Resolve `database_queries::QueryService` as `core/user.database_queries`. Use
+`list`, `get(QueryKey::Id|Slug)`, `create`, `update`, `delete`, `duplicate` and
+`execute` from [src/database_queries.rs](src/database_queries.rs), rather than
+running editor SQL or writing `user_database_queries` directly. Each call
+revalidates the account and explicit platform-operator identity. Reading and
+executing require `admin.system.database-table.list`; saving, duplicating and
+deleting require `admin.system.database-table.edit`. Admin grants alone do not
+make a tenant the operator. The UI must also gate routes and events (C10).
+
+Saved records belong to `(tenant_id, user_id)` on every operation, including
+integer IDs; a foreign owner's record is never returned. `QueryInput` contains
+name (required, 150 characters), SQL (required, 100,000 characters), optional
+slug, description, prompt and icon. A missing slug generates a unique readable
+slug on creation and preserves the slug on update. Creation/duplication slug
+selection is serialized per owner. Updates/deletes require the returned
+`version` and refuse stale drafts with `Error::Conflict`. All saved-query
+writes use the mutation boundary, so audit refusal rolls back the data. List
+search/sort/page are SQL operations; page sizes are bounded to 300.
+
+`execute` accepts `ConsoleRequest` (SQL, display name, page, per-page) and
+`ConsoleOptions` (named parameters, optional output-column sort and direction).
+Use `extract_named_parameters` to build the editor's parameter fields. It skips
+quoted strings/identifiers, escaped strings, dollar quotes, casts and comments.
+Named `:value` parameters bind once by name in PostgreSQL's inferred text input
+format, so `:id::bigint`, `:active::boolean`, dates and text work without SQL
+interpolation. An absent/None parameter binds NULL. Parameter values never enter
+the audit payload. `ConsoleAnswer` has the outcome, optional result and durable
+action ID; a refused/failed command has no result. The editor passes unsaved SQL
+and retains its draft across result paging. Output sorting is accepted only for
+an exact returned column, and duplicate column names retain separate values.
+
+The executor uses PostgreSQL `READ ONLY` with a 10-second statement timeout,
+repeatable-read count/page snapshot, at most 1,000 result rows per page and
+explicit rollback. Text guards are advisory; a function that tries a hidden
+write is refused by PostgreSQL with SQLSTATE 25006. Every execution success,
+refusal (including authorization) and failure is recorded before an answer;
+audit failure returns no rows. Audit contains bounded SQL/name, status, guard
+and count, never result rows or raw database error details (which could quote
+data or parameter values). It cannot record during a total database outage and
+therefore fails closed. Error details remain available in the operator's answer.
+
+Run `cargo run -p bilibi-user --example database-queries-walkthrough` against a
+**disposable** migrated/seeded database with `DATABASE_URL` and
+`BILIBI_DISPOSABLE_QUERY_DEMO=yes`. This opt-in manual fixture prints CRUD,
+concurrent slug creation, stale refusal, owner/tenant isolation, parameters,
+column preservation, pagination, SQL/DB refusals, timeout, audit rollback and
+private-result exclusion; it is not a unit-test suite. It explicitly makes
+fixture tenant 1 the operator, grants fixture capabilities and installs private
+fixture functions/triggers. Never run it against normal data.
