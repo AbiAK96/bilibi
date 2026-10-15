@@ -325,6 +325,7 @@
     if (!hook) return;
     const instance = Object.create(hook);
     instance.el = el;
+    instance.hookName = el.dataset.hook;
     instance.emit = (event, detail) => emit(el, event, detail);
     instances.set(el, instance);
     if (fresh) fresh.add(el);
@@ -343,7 +344,8 @@
 
   function sweep() {
     for (const [el, instance] of instances) {
-      if (el.isConnected) continue;
+      // A patch can also drop or rename an element's data-hook in place.
+      if (el.isConnected && el.dataset.hook === instance.hookName) continue;
       instances.delete(el);
       if (instance.destroyed) instance.destroyed();
     }
@@ -364,7 +366,10 @@
       const hooked = owner && owner.closest('[data-hook]');
       if (hooked) patched.add(hooked);
     }
-    if (removed) sweep();
+    if (removed || touched.length || touched.size) sweep();
+    // A patch can add data-hook to an element already on the page (a secret
+    // becoming stored); the patcher reports it, and it mounts here.
+    for (const el of patched) if (!instances.has(el) && el.isConnected) mount(el, fresh);
     for (const el of patched) {
       if (fresh.has(el)) continue;
       const instance = instances.get(el);
