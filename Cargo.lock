@@ -204,6 +204,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-address"
+version = "0.1.0"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-company",
+ "bilibi-database",
+ "bilibi-geonames",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-module-registry",
+ "bilibi-party",
+ "bilibi-person",
+ "bilibi-tenancy",
+ "bilibi-web",
+ "inventory",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-affiliation"
 version = "0.1.0"
 dependencies = [
@@ -437,6 +460,7 @@ dependencies = [
 name = "bilibi-core"
 version = "0.1.0"
 dependencies = [
+ "bilibi-address",
  "bilibi-affiliation",
  "bilibi-agent-access",
  "bilibi-company",

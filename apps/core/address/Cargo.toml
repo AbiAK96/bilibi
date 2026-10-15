@@ -1,0 +1,27 @@
+[package]
+name = "bilibi-address"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-authz = { path = "../../base/authz" }
+bilibi-company.workspace = true
+bilibi-database.workspace = true
+bilibi-geonames = { path = "../geonames" }
+bilibi-grid = { path = "../../base/grid" }
+bilibi-locale = { path = "../../base/locale" }
+bilibi-module-registry.workspace = true
+bilibi-party = { path = "../party" }
+bilibi-person = { path = "../person" }
+bilibi-tenancy = { path = "../../base/tenancy" }
+inventory.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-web = { path = "../../web" }
