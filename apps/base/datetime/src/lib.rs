@@ -8,8 +8,17 @@
 //! public Settings API. `ui.timezone.mode` is the actor's own preference.
 //! Nothing is process-global: the request edge builds one `DisplayContext`
 //! from the sealed actor and carries it explicitly.
+//!
+//! `filter` is the compact period filter component a list page renders beside
+//! its toolbar; its browser halves (`DateTime`, `BrowserTimeZone`) live in
+//! `base/ui` `assets/datetime.js`.
+// Lets the filter template name this crate's items as `bilibi_datetime::...`.
+extern crate self as bilibi_datetime;
+
+pub mod filter;
 mod period;
 
+pub use filter::PeriodFilter;
 pub use period::{Clock, Period, Preset, BACKWARDS, INVALID_DATES, UNRESOLVABLE};
 
 use bilibi_database::{Error, MutationTransaction, Result};
@@ -294,7 +303,7 @@ inventory::submit! {
     Module {
         id: "base/datetime",
         layer: Layer::Base,
-        dependencies: &["base/locale", "base/settings"],
+        dependencies: &["base/locale", "base/settings", "base/ui"],
         migrations: &[],
         services: &[Service { id: "base/datetime.display", factory: |services| {
             Ok(Arc::new(DisplayPolicy::new(services.get::<Settings>("base/settings.store")?)))

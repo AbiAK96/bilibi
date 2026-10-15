@@ -30,6 +30,26 @@ definitions and the request-scoped display context presentation renders with.
   instant, a fold at the earlier). `Clock::resolve` picks the zone for "today"
   from the mode; the browser zone is accepted only in `Local`, validated, and
   otherwise UTC.
+- `PeriodFilter` (`filter.rs`, `templates/period_filter.html`) is the compact
+  period control a list page renders beside its toolbar, the counterpart of
+  Bilimbi's `<.period_filter>`: a preset select that applies at once and a
+  compact modal whose custom dates stay a draft until Apply range succeeds.
+  The page keeps the applied `Period` in its URL and owns the component's
+  transient state: build it with `PeriodFilter::new(id, period, &clock)`,
+  call `set` after re-reading the URL or clock, hand every live event to
+  `event(kind, payload, &clock)` and act on `filter::Outcome::Applied`
+  (replace the URL period, reset the page) or `Update` (re-render). Use it
+  instead of bare date inputs or a hand-written range. Its event names are
+  fixed (`period_select`, `period_apply`, `period_cancel`), one filter per
+  page; `/system/api-exchanges` is the first host.
+- The browser halves live in `base/ui` `assets/datetime.js`, served inside
+  `/assets/hooks.js`: `DateTime` keeps every `<time data-hook="DateTime">`
+  (the `instant` macro of `flex_table.html`, or the same attributes) on the
+  shell's live display mode, copying the server's company/UTC text and
+  formatting only `local`; `BrowserTimeZone`, mounted on the region holding a
+  page's date filters, reports the `browser_timezone` event (`timezone`) on
+  mount and on every mode change, so local-mode calendar days follow the
+  browser zone without a reload. A page validates it through `Clock::resolve`.
 
 Run `BILIBI_DISPOSABLE_P4_DEMO=yes cargo run -p bilibi-web --example
 p4-locale-datetime` against a migrated, seeded disposable database (it appoints

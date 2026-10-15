@@ -443,12 +443,14 @@ dependencies = [
 name = "bilibi-datetime"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-database",
  "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "jiff",
  "serde_json",
@@ -505,20 +507,26 @@ dependencies = [
 name = "bilibi-integration"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "axum",
  "bilibi-audit",
  "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-queue",
  "bilibi-schedule",
  "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "data-encoding",
  "hmac",
  "inventory",
+ "jiff",
  "reqwest",
  "rustls",
  "serde_json",

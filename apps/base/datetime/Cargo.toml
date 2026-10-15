@@ -6,11 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+askama.workspace = true
 bilibi-database.workspace = true
 bilibi-locale = { path = "../locale" }
 bilibi-module-registry.workspace = true
 bilibi-settings = { path = "../settings" }
 bilibi-tenancy = { path = "../tenancy" }
+bilibi-ui.workspace = true
 inventory.workspace = true
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 serde_json.workspace = true
