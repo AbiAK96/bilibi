@@ -83,7 +83,9 @@ pub const JS: &str = include_str!("../assets/live.js");
 /// The hook controllers of the feedback, dialog and tab components.
 pub const SHELL_JS: &str = include_str!("../assets/shell.js");
 pub const UI_JS: &str = include_str!("../assets/ui.js");
-/// The `data-hook` browser behaviour of the shared form controls.
+/// The `data-hook` browser behaviour of the shared form controls, the inline
+/// editors, tiling, the flexible table and timestamp display (`DateTime`,
+/// `BrowserTimeZone`).
 pub const HOOKS_JS: &str = concat!(
     include_str!("../assets/hooks.js"),
     // Both files are semicolon-free IIFEs; without this the second calls the first.
@@ -92,7 +94,9 @@ pub const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/tiling.js"),
     "\n;\n",
-    include_str!("../assets/flex_table.js")
+    include_str!("../assets/flex_table.js"),
+    "\n;\n",
+    include_str!("../assets/datetime.js")
 );
 /// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
