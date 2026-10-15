@@ -45,6 +45,10 @@ pub enum BadgeKind {
     Success,
     Warning,
     Danger,
+    /// The pill with no colour: the source's `badge` paints only the four
+    /// kinds above, and a kind outside them (Audit's `:info` for an updated
+    /// record) renders the bare pill. Parity keeps that rendering.
+    Plain,
 }
 
 impl BadgeKind {
@@ -54,6 +58,7 @@ impl BadgeKind {
             Self::Success => "bg-success-surface text-success-ink",
             Self::Warning => "bg-warning-surface text-warning-ink",
             Self::Danger => "bg-danger-surface text-danger-ink",
+            Self::Plain => "",
         }
     }
 }

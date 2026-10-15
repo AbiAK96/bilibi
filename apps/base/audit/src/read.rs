@@ -8,7 +8,7 @@
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use serde_json::Value;
-use std::time::SystemTime;
+use std::{collections::HashSet, time::SystemTime};
 use tokio_postgres::{types::ToSql, GenericClient, Transaction};
 
 /// Free-text search is bounded before it reaches SQL.
@@ -296,5 +296,247 @@ pub async fn recent_mutations(
             auditable_type: row.get(2),
             occurred_at: row.get(3),
         })
+        .collect())
+}
+
+/// Sortable mutation columns (Bilimbi `@mutation_sort_fields`). Every order is
+/// followed by `id` in the same direction, so equal values page stably.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationSort {
+    OccurredAt,
+    ActorType,
+    Event,
+    AuditableType,
+    TraceId,
+}
+impl MutationSort {
+    pub fn parse(key: &str) -> Option<Self> {
+        Some(match key {
+            "occurred_at" => Self::OccurredAt,
+            "actor_type" => Self::ActorType,
+            "event" => Self::Event,
+            "auditable_type" => Self::AuditableType,
+            "trace_id" => Self::TraceId,
+            _ => return None,
+        })
+    }
+    fn column(self) -> &'static str {
+        match self {
+            Self::OccurredAt => "m.occurred_at",
+            Self::ActorType => "m.actor_type",
+            Self::Event => "m.event",
+            Self::AuditableType => "m.auditable_type",
+            Self::TraceId => "m.trace_id",
+        }
+    }
+}
+
+/// What the Data Mutations screen asks for. Empty strings mean "any".
+#[derive(Clone, Debug)]
+pub struct MutationQuery {
+    pub search: String,
+    /// `created`, `updated`, `deleted`, or empty.
+    pub event: String,
+    pub sort: MutationSort,
+    pub descending: bool,
+    /// One-based.
+    pub page: u64,
+    pub page_size: u64,
+}
+impl Default for MutationQuery {
+    fn default() -> Self {
+        Self {
+            search: String::new(),
+            event: String::new(),
+            sort: MutationSort::OccurredAt,
+            descending: true,
+            page: 1,
+            page_size: 25,
+        }
+    }
+}
+
+/// One recorded mutation as the Audit screens read it. Values are stored as
+/// captured; `withheld` names the changed fields whose values
+/// [`MutationEntry::withhold`] took out for this reader, so the reader still
+/// sees that the record changed.
+#[derive(Clone, Debug)]
+pub struct MutationEntry {
+    pub id: i64,
+    pub actor_type: String,
+    pub actor_id: i64,
+    pub actor_role: Option<String>,
+    pub impersonator_id: Option<i64>,
+    pub system_principal: Option<String>,
+    pub auditable_type: String,
+    pub auditable_id: String,
+    pub subject_name: Option<String>,
+    pub subject_id: Option<String>,
+    pub subject_identifier: Option<String>,
+    pub source: String,
+    pub event: String,
+    pub old_values: Value,
+    pub new_values: Value,
+    pub trace_id: Option<String>,
+    pub occurred_at: SystemTime,
+    pub withheld: Vec<String>,
+}
+pub struct MutationPage {
+    pub entries: Vec<MutationEntry>,
+    pub total_entries: u64,
+}
+
+impl MutationEntry {
+    fn from_row(row: &tokio_postgres::Row) -> Self {
+        Self {
+            id: row.get(0),
+            actor_type: row.get(1),
+            actor_id: row.get(2),
+            actor_role: row.get(3),
+            impersonator_id: row.get(4),
+            system_principal: row.get(5),
+            auditable_type: row.get(6),
+            auditable_id: row.get(7),
+            subject_name: row.get(8),
+            subject_id: row.get(9),
+            subject_identifier: row.get(10),
+            source: row.get(11),
+            event: row.get(12),
+            old_values: row.get(13),
+            new_values: row.get(14),
+            trace_id: row.get(15),
+            occurred_at: row.get(16),
+            withheld: Vec::new(),
+        }
+    }
+
+    /// Takes the values of `fields` out of the entry (Bilimbi
+    /// `Mutation.withhold/2`). A field the change touched is named in
+    /// `withheld` instead, so a reader still sees that it changed; a field the
+    /// change left alone is simply gone. The caller decides the fields from the
+    /// record owner's policy; this crate sits below Authz and cannot ask.
+    pub fn withhold(&mut self, fields: &HashSet<String>) {
+        if fields.is_empty() {
+            return;
+        }
+        let mut withheld: Vec<String> = fields
+            .iter()
+            .filter(|field| {
+                let old = self.old_values.get(field.as_str());
+                let new = self.new_values.get(field.as_str());
+                (old.is_some() || new.is_some()) && (self.event != "updated" || old != new)
+            })
+            .cloned()
+            .collect();
+        withheld.sort();
+        for values in [&mut self.old_values, &mut self.new_values] {
+            if let Value::Object(object) = values {
+                for field in fields {
+                    object.remove(field);
+                }
+            }
+        }
+        self.withheld = withheld;
+    }
+}
+
+const MUTATION_COLUMNS: &str =
+    "m.id,m.actor_type,m.actor_id,m.actor_role,m.impersonator_id,m.system_principal,\
+ m.auditable_type,m.auditable_id,m.subject_name,m.subject_id,m.subject_identifier,m.source,m.event,\
+ coalesce(m.old_values,'{}'::jsonb),coalesce(m.new_values,'{}'::jsonb),m.trace_id,m.occurred_at";
+
+/// One page of the tenant's mutations (Bilimbi `Audit.list_mutations/2`). An
+/// out-of-range page returns no entries with the real total.
+pub async fn list_mutations(
+    client: &impl GenericClient,
+    scope: &Scope,
+    query: &MutationQuery,
+) -> Result<MutationPage> {
+    let search = query.search.trim();
+    if search.len() > MAX_SEARCH
+        || query.page == 0
+        || query.page_size == 0
+        || query.page_size > MAX_PAGE_SIZE
+    {
+        return Err(Error::Invalid);
+    }
+    let tenant = scope.tenant();
+    let pattern = format!("%{}%", escape_like(search));
+    let mut filters = vec!["m.tenant_id=$1".to_owned()];
+    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&tenant];
+    if !search.is_empty() {
+        params.push(&pattern);
+        let n = params.len();
+        filters.push(format!(
+            "(m.auditable_type ILIKE ${n} OR m.event ILIKE ${n} OR coalesce(m.subject_name,'') ILIKE ${n} \
+              OR coalesce(m.subject_identifier,'') ILIKE ${n} OR m.auditable_id ILIKE ${n} \
+              OR coalesce(m.subject_id,'') ILIKE ${n} OR coalesce(m.trace_id,'') ILIKE ${n} \
+              OR coalesce(m.actor_role,'') ILIKE ${n} OR m.actor_type ILIKE ${n})"
+        ));
+    }
+    if !query.event.is_empty() {
+        params.push(&query.event);
+        filters.push(format!("m.event=${}", params.len()));
+    }
+    let filter = filters.join(" AND ");
+    let total: i64 = client
+        .query_one(
+            &format!("SELECT count(*) FROM base_audit_mutations m WHERE {filter}"),
+            &params,
+        )
+        .await?
+        .get(0);
+    let direction = if query.descending { "DESC" } else { "ASC" };
+    let limit = i64::try_from(query.page_size).map_err(|_| Error::Invalid)?;
+    let offset = i64::try_from((query.page - 1).saturating_mul(query.page_size))
+        .map_err(|_| Error::Invalid)?;
+    params.push(&limit);
+    params.push(&offset);
+    let rows = client
+        .query(
+            &format!(
+                "SELECT {MUTATION_COLUMNS} FROM base_audit_mutations m WHERE {filter} \
+                 ORDER BY {column} {direction}, m.id {direction} LIMIT ${l} OFFSET ${o}",
+                column = query.sort.column(),
+                l = params.len() - 1,
+                o = params.len(),
+            ),
+            &params,
+        )
+        .await?;
+    Ok(MutationPage {
+        entries: rows.iter().map(MutationEntry::from_row).collect(),
+        total_entries: u64::try_from(total).unwrap_or(0),
+    })
+}
+
+/// The latest mutations of one record, newest first (Bilimbi
+/// `Audit.list_subject_mutations/4`). A record may be known under several
+/// kinds (its current one and a legacy one), so `kinds` is a list.
+pub async fn subject_history(
+    client: &impl GenericClient,
+    scope: &Scope,
+    kinds: &[String],
+    id: &str,
+    limit: i64,
+) -> Result<Vec<MutationEntry>> {
+    if kinds.is_empty() || kinds.iter().any(String::is_empty) || id.is_empty() {
+        return Err(Error::Invalid);
+    }
+    if !(1..=200).contains(&limit) {
+        return Err(Error::Invalid);
+    }
+    Ok(client
+        .query(
+            &format!(
+                "SELECT {MUTATION_COLUMNS} FROM base_audit_mutations m \
+                 WHERE m.tenant_id=$1 AND m.auditable_type=ANY($2) AND m.auditable_id=$3 \
+                 ORDER BY m.occurred_at DESC, m.id DESC LIMIT $4"
+            ),
+            &[&scope.tenant(), &kinds, &id, &limit],
+        )
+        .await?
+        .iter()
+        .map(MutationEntry::from_row)
         .collect())
 }

@@ -19,6 +19,39 @@ pub async fn restricted(
     }
     Ok(result)
 }
+/// The fields of each audit record type the scope may not see, keyed by the
+/// names a recorded value uses (Bilimbi `Authz.withheld_fields_by_type/2`). A
+/// restriction is declared on a catalog table; the table's `record_types` are
+/// the audit kinds its rows are recorded under, so the audit screens withhold
+/// what the record's own page withholds. A type with nothing withheld is
+/// absent; a table outside the catalog reaches no audit kind.
+pub async fn withheld_by_record_type(
+    client: &impl GenericClient,
+    scope: &Scope,
+    types: &[&str],
+) -> Result<BTreeMap<String, HashSet<String>>> {
+    let restricted = restricted(client, scope).await?;
+    let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+    if restricted.is_empty() || types.is_empty() {
+        return Ok(result);
+    }
+    for table in crate::field_catalog::field_catalog()?.tables() {
+        let Some(fields) = restricted.get(table.id).filter(|fields| !fields.is_empty()) else {
+            continue;
+        };
+        for kind in table
+            .record_types
+            .iter()
+            .filter(|kind| types.contains(kind))
+        {
+            result
+                .entry((*kind).to_owned())
+                .or_default()
+                .extend(fields.iter().cloned());
+        }
+    }
+    Ok(result)
+}
 /// Remove withheld fields before serializing a record, array of records, audit
 /// old/new values, or API projection. Presentational markers belong to UI.
 pub fn mask(value: &mut Value, fields: &HashSet<String>) {

@@ -3,8 +3,9 @@
 pub mod console;
 mod read;
 pub use read::{
-    list_actions, recent_mutations, toggle_retained, ActionEntry, ActionPage, ActionQuery,
-    ActionSort, RecentMutation, EVENT_FAMILIES, MAX_PAGE_SIZE, MAX_SEARCH,
+    list_actions, list_mutations, recent_mutations, subject_history, toggle_retained, ActionEntry,
+    ActionPage, ActionQuery, ActionSort, MutationEntry, MutationPage, MutationQuery, MutationSort,
+    RecentMutation, EVENT_FAMILIES, MAX_PAGE_SIZE, MAX_SEARCH,
 };
 
 use bilibi_database::{Capture, CaptureFuture, Change, Context, Db, Error, Result};
