@@ -102,7 +102,10 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         match api::authenticate(&app, &headers, &trace, Some(&api::mcp_resource(&app))).await {
             Ok(agent) => agent,
             Err(refusal) => {
-                let mut response = challenge(&app, refusal.into_response());
+                let mut response = refusal.into_response();
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    response = challenge(&app, response);
+                }
                 response.extensions_mut().insert(Exchange {
                     scope: None,
                     operation: Some(operation),

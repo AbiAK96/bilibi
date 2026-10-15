@@ -118,6 +118,7 @@ pub async fn dispatch(
                 match invoke(registry, plans, session, name, arguments).await {
                     Ok(value) => result(id, tool_result(value, false)),
                     Err(Invoke::Protocol(code, message)) => error(id, code, message),
+                    Err(Invoke::Refusal(body)) => result(id, tool_result(body, true)),
                     Err(Invoke::Failed(Error::Backend(bilibi_database::Error::Unauthorized))) => {
                         Outcome::Unauthorized
                     }
@@ -160,6 +161,8 @@ fn initialize(id: Value, params: &Map<String, Value>) -> Outcome {
 enum Invoke {
     Protocol(i64, &'static str),
     Failed(Error),
+    /// A ready tool failure body with no Agent API error behind it.
+    Refusal(Value),
 }
 impl From<Error> for Invoke {
     fn from(error: Error) -> Self {
@@ -183,7 +186,7 @@ async fn invoke(
     arguments: Value,
 ) -> Result<Value, Invoke> {
     let Some(session) = session else {
-        return Ok(json!({"error": "authentication_required"}));
+        return Err(Invoke::Refusal(json!({"error": "authentication_required"})));
     };
     let Value::Object(mut args) = arguments else {
         return Err(Invoke::Protocol(-32_602, "Arguments must be an object"));
