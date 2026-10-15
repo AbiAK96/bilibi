@@ -178,8 +178,12 @@
         button.setAttribute('aria-pressed', String(button.dataset.preferenceValue === current));
       }
       const label = MODE_LABELS[mode];
+      // Text writes are child-list mutations, which ui.js reports back as
+      // `updated`; writing only on change keeps that from looping.
       if (label) {
-        this.root.querySelectorAll('[data-mode-label]').forEach((el) => { el.textContent = label; });
+        this.root.querySelectorAll('[data-mode-label]').forEach((el) => {
+          if (el.textContent !== label) el.textContent = label;
+        });
         this.root.querySelector('[data-timezone-toggle]')?.setAttribute('title', `Time display: ${label}`);
       }
       for (const panel of this.panels()) {
@@ -190,7 +194,7 @@
       const region = this.root.querySelector('#app-preference-feedback');
       if (region) {
         region.hidden = this.message === null;
-        region.textContent = this.message ?? '';
+        if (region.textContent !== (this.message ?? '')) region.textContent = this.message ?? '';
         region.classList.toggle('text-danger', this.messageError);
       }
     }
@@ -674,6 +678,27 @@
     renderPinnedItems() {
       if (!this.pinned || !this.pinnedItems) return;
       const items = this.pinnedEntries.map((item) => this.resolvePinnedItem(item)).filter(Boolean);
+      // Rebuilding is a child-list mutation that ui.js reports as `updated`,
+      // which calls back here: rebuild only when the drawn pins change.
+      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url}) => [key, label, url])]);
+      if (drawn !== this.drawnPins || this.pinnedItems.childElementCount !== items.length) {
+        this.drawnPins = drawn;
+        this.rebuildPinnedItems(items);
+      }
+      for (const pin of this.root.querySelectorAll('[data-nav-pin]')) {
+        const url = this.pinnedUrl(this.normalizePinnedItem(pin.dataset.navPin));
+        const pinned = this.pinnedEntries.some((item) => url && this.pinnedUrl(item) === url);
+        pin.disabled = this.impersonating;
+        pin.setAttribute('aria-disabled', String(this.impersonating));
+        pin.dataset.pinned = String(pinned);
+        pin.setAttribute('aria-pressed', String(pinned));
+        pin.title = `${pinned ? 'Unpin' : 'Pin'} ${pin.getAttribute('aria-label')?.replace(/^(Pin|Unpin) /, '')}`;
+      }
+      this.pinned.hidden = items.length === 0;
+      if (items.length === 0) this.setPinnedMenu(false);
+    },
+
+    rebuildPinnedItems(items) {
       this.pinnedItems.replaceChildren();
       for (const {key, item, label: pinLabel, url} of items) {
         const row = document.createElement('div');
@@ -716,17 +741,6 @@
         row.append(link, tile, unpin);
         this.pinnedItems.append(row);
       }
-      for (const pin of this.root.querySelectorAll('[data-nav-pin]')) {
-        const url = this.pinnedUrl(this.normalizePinnedItem(pin.dataset.navPin));
-        const pinned = this.pinnedEntries.some((item) => url && this.pinnedUrl(item) === url);
-        pin.disabled = this.impersonating;
-        pin.setAttribute('aria-disabled', String(this.impersonating));
-        pin.dataset.pinned = String(pinned);
-        pin.setAttribute('aria-pressed', String(pinned));
-        pin.title = `${pinned ? 'Unpin' : 'Pin'} ${pin.getAttribute('aria-label')?.replace(/^(Pin|Unpin) /, '')}`;
-      }
-      this.pinned.hidden = items.length === 0;
-      if (items.length === 0) this.setPinnedMenu(false);
     },
 
     focusable() {

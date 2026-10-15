@@ -23,6 +23,11 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Pick a message kind by what it does: a completed write is `Success` (times out), a refusal or failure is `Error`, `Info` informs without confirming a write; only success carries auto-dismiss.
 - `/assets/ui-feedback.html` (`src/feedback_specimen.rs`) is the screenshot baseline for these; its `static/ui-feedback-demo.js` stands in for the server, so extend both when adding a variant.
 
+## Shell (`templates/shell.html`, `framed.html`, `assets/shell.js`)
+
+- Pages never render chrome: the host wraps every discovered page through `apps/web/src/shell.rs`, which builds `ShellContext` (`src/shell.rs`) from the sealed scope (menu via effective capabilities, operator standing via `tenancy::prove_operator`). Core contributes into the `notifications` slot (`bilibi_user::web::bell`); Base UI never imports Core.
+- A hook's `apply()`/`updated()` must write the DOM only on change: `ui.js` reports any child-list mutation inside a hooked element as `updated`, so an unconditional `replaceChildren` or `textContent` write there loops forever and hangs the tab (see `renderPinnedItems` in `assets/shell.js`).
+
 ## Live pages (`assets/live.js`)
 
 - Raise intent with `data-event` (or a `bilibi:event`) and let the transport queue it: never keep a "pending" flag or drop input while a round trip is in flight. Every intent is sent in order with a `request_id` the server echoes; `docs/live-pages.md` is the contract. Use `data-working` for a busy label; the transport adds and lifts `aria-busy` itself.

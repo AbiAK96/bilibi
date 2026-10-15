@@ -19,7 +19,6 @@ pub mod icons;
 mod shell;
 mod specimen;
 pub use shell::{navigation, AppShell, DisplayPreferences, Framed, NavNode, ShellContext};
-pub type Shell<'a> = AppShell<'a>;
 
 pub use auth::{
     AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, ResetForm, ResetPasswordPage,
