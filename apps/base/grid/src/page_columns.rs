@@ -198,7 +198,6 @@ impl PageColumns {
         keys: &[Value],
         display: &DisplayContext,
     ) -> Result<()> {
-        self.clear_suggestions();
         let catalog = {
             let client = self.views.db().get().await?;
             Catalog::for_scope(&**client, scope).await?
@@ -371,9 +370,12 @@ impl PageColumns {
             self.view.columns.clone_from(&builtin_ids);
         }
         let outcome = match get("op") {
+            // Against the spelled columns, so a built-in the page already
+            // draws is not offered as something to add.
             "suggest" => {
                 let text = typed(get("add"));
                 self.suggest(&text);
+                self.unspell(&builtin_ids);
                 return Ok(Outcome::Update);
             }
             "add" if !spec.is_empty() => {
@@ -437,11 +439,7 @@ impl PageColumns {
             // Rollup expansion needs a Grid read this port does not have yet.
             _ => false,
         };
-        // The page's own order with nothing walked is the default, which
-        // neither the URL nor the account's memory spells out.
-        if self.view.columns == builtin_ids {
-            self.view.columns.clear();
-        }
+        self.unspell(&builtin_ids);
         if !outcome {
             return Ok(Outcome::Noop);
         }
@@ -450,6 +448,14 @@ impl PageColumns {
         // the store refused costs the memory of it, not the arrangement.
         let _ = self.views.remember(scope, &self.view).await;
         Ok(Outcome::Patch)
+    }
+
+    /// The page's own order with nothing walked is the default, which
+    /// neither the URL nor the account's memory spells out.
+    fn unspell(&mut self, builtin_ids: &[String]) {
+        if self.view.columns == builtin_ids {
+            self.view.columns.clear();
+        }
     }
 
     /// A removed built-in comes first, by its label: it is the page's own

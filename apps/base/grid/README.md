@@ -1,11 +1,13 @@
-# Grid catalog, page projections and lenses (G1–G3)
+# Grid catalog, page projections, lenses and page columns (G1–G4)
 
 Grid owns flexible columns on list pages: the catalog every module declares its
 tables into, the paths a person walks through it to pick columns without writing
-a join, and the one projection statement that answers them for the rows a
-list already shows. It has no page of its own. G1 is the catalog, the scoped view
-of it, and the bounded column-path parser. Query/rollups are implemented by G2, lenses by G3;
-per-page arrangement (G4, including the `ui.grid.page_columns` setting) builds on these contracts.
+a join, the one projection statement that answers them for the rows a list
+already shows, and what each account last arranged on each list. It has no page
+of its own. G1 is the catalog, the scoped view of it, and the bounded
+column-path parser. Query/rollups are implemented by G2, lenses by G3, and the
+per-page arrangement a list page hosts (`PageColumns`, `View`, `PageViews` and
+the `ui.grid.page_columns` setting) by G4.
 
 ## Contributing a table
 
@@ -201,3 +203,77 @@ column's lens from its chip, set the change-since date, step the row height and
 flip the timestamp clock; each reply re-projects for the signed-in scope.
 `G3_DUMP=<file>` first writes every cell through every lens it allows, with
 its inputs, as JSON lines for comparison against Bilimbi's `Lens.cell`.
+
+## Page columns (G4)
+
+`PageColumns` is the host a list page composes, as Bilimbi's
+`Grid.Web.PageColumns` is: the page keeps its own query, filters, sort and
+pagination, declares the columns it draws itself as `BuiltinColumn`s, and
+`PageColumns` adds the walked columns for exactly the rows the page listed.
+Do not host walked columns through `ListColumns` plus your own projection:
+`PageColumns` owns the catalog pruning, the memory and the URL shape.
+
+The page holds one `PageColumns` in its live state and:
+
+1. builds it at mount with `PageColumns::mount(views, table, builtins)`,
+   where `views` is the `base/grid.page_views` service (`PAGE_VIEWS`) and
+   `table` the catalog table its rows come from (the page's name in memory);
+2. calls `from_params(scope, query)` on render, mount and every params
+   update, and merges `params()` into the query it returns as
+   `LiveBody.query`, so the address carries what is shown;
+3. after paging its own rows, calls `load(scope, keys, display)` with the
+   rows' keys as JSON scalars and the request's `DisplayContext`;
+4. renders `flex_table(id, rows)` over `rows` (a clone of
+   `PageColumns::rows`, each row's slots filled for the built-in ids);
+5. delegates its `grid` event to `handle(scope, values)`: after
+   `Outcome::Patch` it loads again and returns the merged query; `Sort(key)`
+   is a built-in's sort for the page's `ListState`; `Update` re-renders.
+
+`View` is what a person arranged, as one value that round-trips through the
+URL (`cols`, `lens`, `z`, `since`; defaults left out) and the stored JSON
+(`columns`, `lenses`, `zoom`, `since`). An address that carries any of those
+keys wins over memory, so a shared link shows what its sender saw and changes
+nobody's memory until the reader arranges something. An address that carries
+none opens the page the way the account left it (`PageViews::fetch`, read
+afresh every time, never from a copy held in the page), and as the page's own
+columns when the account arranged nothing.
+
+`PageViews` keeps the arrangement per account and per page in the
+user-scoped `ui.grid.page_columns` setting, one `{page, view}` entry per
+page, written through the shared mutation boundary (audited like any other
+write) on every change and only when it differs from what is stored. A view
+that is the page's own is not kept: the reset op returns the page to its own
+columns and rows and forgets what was kept. A write the store refused costs
+the memory of the arrangement, not the arrangement.
+
+`load` resolves the view's specs against a fresh catalog for the scope: a
+field an operator restricted since, a table the account may no longer read
+or a spec no catalog knows is pruned from the table, the address and the
+suggestions, and leaves the memory on the next arrangement. A lens named
+for a column that is not shown is dropped rather than carried. A page whose
+table is not in the account's catalog still works: the built-ins render and
+the add box offers only the page's removed built-ins, which it offers first
+by their label beside the catalog's columns. Rollup expansion in place
+(`expand`/`collapse`) is accepted and ignored until Grid has an expansion
+read; a rollup cell still shows its aggregate through every lens.
+
+Run the live page against a **disposable** migrated/seeded database (sign in
+as a seeded manager after the example reconciles roles):
+
+```sh
+BILIBI_GRID_DEMO=disposable DATABASE_URL=... APP_ORIGIN=... BIND_ADDR=... \
+  cargo run -p bilibi-web --example g4-page-columns
+```
+
+It replaces the reference fixture (`reference::DEMO_FIXTURE`, shared with
+`g3-lenses`) and serves `/g4-page-columns`: the tenant's reference items as the
+page's own list (search, category, sort, two pages) with Name, Category and
+Quantity drawn by the page. Open the notch, add `group.name`,
+`movements:count`, `movements.delta:sum` or `unit_cost`, switch lenses,
+reorder and change the row height: the address updates, and a reload or a
+later visit without an address shows the same arrangement. Paste the address
+into another account's browser to see the sender's view leave that account's
+memory alone. Reset forgets the page. The restriction switch restricts
+`unit_cost` for the signed-in account's roles and lifts it again, so a walked
+`unit_cost` column disappears from the table, the address and the add box
+while restricted.

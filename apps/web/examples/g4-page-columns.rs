@@ -57,6 +57,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         ]),
         default_sort: Some("name".into()),
         page_sizes: PAGE_SIZES.to_vec(),
+        default_page_size: PAGE_SIZES[0],
         page_size_param: "per_page".into(),
         filters: BTreeMap::from([(
             "category".into(),
@@ -172,7 +173,7 @@ impl State {
                 id: row.get(0),
                 name: row.get(1),
                 category: row.get(2),
-                quantity: row.get(3),
+                quantity: i64::from(row.get::<_, i32>(3)),
             })
             .filter(|item| category == "all" || item.category == category)
             .filter(|item| needle.is_empty() || item.name.to_lowercase().contains(&needle))
@@ -413,6 +414,7 @@ impl LiveState<Scope, Error> for State {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope;
+            let mut reload = true;
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
@@ -428,7 +430,9 @@ impl LiveState<Scope, Error> for State {
                                     return Err(Error::Invalid);
                                 }
                             }
-                            Outcome::Patch | Outcome::Update | Outcome::Noop => {}
+                            // Only the add box changed: the rows stay.
+                            Outcome::Update => reload = false,
+                            Outcome::Patch | Outcome::Noop => {}
                         },
                         Some("filters") => self
                             .list
@@ -448,7 +452,9 @@ impl LiveState<Scope, Error> for State {
                     }
                 }
             }
-            self.load(scope).await?;
+            if reload {
+                self.load(scope).await?;
+            }
             Ok(LiveBody {
                 html: self.body()?,
                 query: self.query(),
