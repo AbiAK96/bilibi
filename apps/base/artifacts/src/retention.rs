@@ -292,8 +292,8 @@ impl<O: Owner> Owned<'_, O> {
             Ok(()) => return Ok(()),
             Err(error) => error,
         };
-        // A failure to record stays visible next run: the row is still eligible.
-        let _ = self.record_purge_failure(client, id, &error, max).await;
+        // Unrecorded attempts would never reach the hold: surface that instead.
+        self.record_purge_failure(client, id, &error, max).await?;
         Err(error)
     }
     async fn record_purge_failure(
@@ -310,7 +310,7 @@ impl<O: Owner> Owned<'_, O> {
             return Ok(());
         }
         let attempts = i64::from(row.attempts) + 1;
-        tx.sql().execute("UPDATE base_artifacts SET purge_attempts=$2,purge_last_error=$3,purge_attempted_at=clock_timestamp(),purge_held_at=CASE WHEN $2 >= $4 THEN clock_timestamp() END WHERE id=$1",
+        tx.sql().execute("UPDATE base_artifacts SET purge_attempts=$2::integer,purge_last_error=$3,purge_attempted_at=clock_timestamp(),purge_held_at=CASE WHEN $2::integer >= $4::bigint THEN clock_timestamp() END WHERE id=$1",
             &[&row.key,&(attempts as i32),&error.code(),&max]).await?;
         let next = self.fetch(&tx, id).await?;
         tx.record(Change {

@@ -70,7 +70,9 @@ impl Error {
             Self::Storage(_) | Self::CleanupPending => "storage",
             Self::UnsafeRoot => "unsafe_root",
             Self::Policy => "policy",
-            Self::Invalid => "invalid",
+            Self::Invalid | Self::InvalidDocument | Self::UnsupportedText | Self::InvalidPdf => {
+                "invalid"
+            }
             Self::NotFound => "not_found",
             Self::Integrity => "integrity",
             Self::LegalHold => "legal_hold",

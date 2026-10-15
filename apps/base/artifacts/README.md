@@ -1,4 +1,4 @@
-# Private artifacts (A1)
+# Private artifacts (A1, A2)
 
 Use `base/artifacts.store` and `Artifacts::for_owner(scope, company, &ConcreteOwner)`
 for sensitive uploaded/generated documents. Implement `Owner` in the business
@@ -11,7 +11,7 @@ Every callback must prove a live company in the tenant, current actor authority,
 and the live subject for that operation. `Purge` has no reference and requires
 company maintenance access. Base reauthenticates the sealed account on every
 operation and refuses changed party facets or a different bound company.
-`Operation::Retain` is reserved for A2. The owner validates upload MIME/content
+The owner validates upload MIME/content
 and scanning policy; `content_type` is descriptive metadata only.
 
 ```rust,ignore
@@ -39,6 +39,8 @@ Operator Settings owns these installation values, gated by
 - `artifacts.storage_root`: existing absolute private directory, initially empty.
 - `artifacts.retention_days`: required positive integer, initially unset.
 - `artifacts.max_bytes`: initially 10 MiB, maximum 512 MiB.
+- `artifacts.purge_batch_size` (100), `artifacts.purge_retry_minutes` (60) and
+  `artifacts.purge_max_attempts` (5): retention purge pacing, see below.
 
 Provision the directory with 0700 mode. Files use exclusive random UUID names,
 0600 mode and `O_NOFOLLOW`. Root components cannot be symlinks or named
@@ -67,8 +69,8 @@ candidate selection. Filesystem operations are synchronous and bounded while
 that lock is held: cancellation cannot leave a background writer creating bytes
 after recovery releases the reservation. Tokio multithread runtimes use `block_in_place` to let other tasks run; use
 a dedicated worker/runtime thread when using a single-thread runtime. Recovery reports individual errors and keeps failed
-rows eligible; callers own retry pacing and operational alerts. A2 will add
-records-grade retention, expiry purge, hold/retry evidence and scheduling policy.
+rows eligible; callers own retry pacing and operational alerts. `recover` skips
+documents held for an operator (see Retention purge).
 
 ## Simple PDFs (A3)
 
@@ -124,9 +126,72 @@ object. It is not a complete validator; the producing renderer owns content. Siz
 and retention policy are the existing `artifacts.max_bytes` and
 `artifacts.retention_days` settings.
 
-No unit tests. `examples/artifacts-walkthrough.rs` is an explicit disposable-DB
-walkthrough of real facade calls and injected DB/filesystem outages, with output
-for manual inspection. It does not run assertions or use a test harness.
+
+## Records-grade retention and legal hold (A2)
+
+Documents a law requires the business to keep (statements, invoice scans,
+contracts) are stored with a retain-until instead of an expiry. The owner derives
+the time from its own obligation; Base never guesses a period. Every call below
+needs an owner `Operation::Retain` grant, except `retention_history`, which needs
+`Read`. Retention is irreversible, so grant it to people trusted with that
+commitment.
+
+```rust,ignore
+let metadata = documents.put_retained(&mut client, reference, &bytes, "application/pdf",
+    Retention { retain_until, legal_hold: false, reason: Some("Income Tax Act 1967 s.82".into()) }).await?;
+documents.retain(&mut client, &id, later, Some("contract renewed")).await?;
+documents.place_hold(&mut client, &id, Some("case 12")).await?;
+documents.release_hold(&mut client, &id, None).await?;
+let events = documents.retention_history(&client, &id).await?; // oldest first
+```
+
+A records-grade document has `expires_at: None`; reads keep working before and
+after retain-until, and `purge_expired` never selects it. `delete` answers
+`Error::LegalHold` while a hold stands and `Error::Retained` before retain-until
+(each refusal commits an `artifacts.delete_refused` audit action); after
+retain-until an explicit, `Delete`-authorized call deletes it and nothing deletes
+it automatically. `retain` makes an ordinary document records-grade (its expiry is
+gone for good, even if already expired but not yet purged) or moves retain-until
+later: equal or earlier is `RetentionNotExtended`. Retain-until is a `SystemTime`
+that must lie in the future (at most 200 years) and a reason is at most 255
+characters and never document content, else `InvalidRetention`. A hold needs a
+retained document (`NotRetained`); placing one twice is `AlreadyOnHold` and
+releasing a missing one is `NotOnHold`. Retention at creation is applied in the
+publication transaction, so a failed upload stays an ordinary reservation that
+`recover` can tombstone.
+
+The database guards the same rules for any client (`base_artifacts_retention_guard`,
+`migrations/002-retention.sql`): retain-until cannot be cleared or moved earlier, a
+retained row cannot be tombstoned, purged or removed while on hold or before
+retain-until, exactly one of expiry and retain-until is set, and a hold needs
+retain-until. Each change writes one row to `base_artifact_retention_events`
+(`retained`, `retention_extended`, `hold_placed`, `hold_released`) with the
+retain-until and hold state after it, the reason, and the attributed actor (user,
+agent or system principal, plus any impersonator). PostgreSQL stamps `recorded_at`;
+updates, deletes and truncates are refused, so history survives tombstones. The
+change is also an `artifacts.<event>` audit action and a refused audit log refuses
+the change.
+
+### Retention purge
+
+`purge_expired` authorizes `Purge` (nil reference), then considers an ordered
+batch of this owner/company's expired ordinary documents and unfinished deletes,
+rechecking `Delete` per document. A failed or refused purge records its attempt
+count, last error code and time (`artifacts.purge_failed`); retention skips that
+document until `artifacts.purge_retry_minutes` passes, so later expired documents
+are still reached. At `artifacts.purge_max_attempts` it records
+`artifacts.purge_held` and the batch excludes it. `list_purge_holds` lists held
+documents; `retry_purge` releases the hold (`artifacts.purge_released`) and purges
+now, and `resolve_purge` records bytes an operator removed out of band
+(`artifacts.purge_resolved`), refusing with `BytesPresent` while the file exists
+or while a hold or retain-until still protects the document. All three need
+`Purge`. The owning module wires `purge_expired` into its own schedule and
+alerting on `failed`; Base enumerates no companies.
+
+No unit tests. `examples/artifacts-walkthrough.rs` (A1) and
+`examples/retention-walkthrough.rs` (A2) are explicit disposable-DB walkthroughs
+of real facade calls, raw-SQL guard attempts and injected DB/filesystem outages,
+with output for manual inspection. They run no assertions and use no test harness.
 
 Run the walkthrough after migrating and seeding an isolated database:
 
@@ -150,3 +215,14 @@ prints the renderer refusals (`-- fixtures`); with the disposable-DB variables
 above it also generates, stores and reads back an owner-selected PDF and shows
 unauthorized, cross-tenant, non-PDF and truncated-output refusals leaving no
 artifact behind.
+
+Run the retention walkthrough the same way. It publishes records-grade documents,
+exercises holds and refusals, tries raw SQL against the guards, then breaks and
+restores storage to show purge retries, an operator hold and recovery. It waits
+about 14 seconds for a short retain-until to pass. `report` prints the durable
+ledger and retention events from a fresh process:
+
+```sh
+cargo run -p bilibi-artifacts --example retention-walkthrough
+cargo run -p bilibi-artifacts --example retention-walkthrough -- report
+```
