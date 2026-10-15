@@ -302,6 +302,7 @@ dependencies = [
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
+ "bilibi-workflow",
 ]
 
 [[package]]
@@ -644,6 +645,25 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-workflow"
+version = "0.1.0"
+dependencies = [
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-queue",
+ "bilibi-tenancy",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

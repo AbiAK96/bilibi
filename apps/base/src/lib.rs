@@ -21,4 +21,5 @@ pub use bilibi_session as session;
 pub use bilibi_settings as settings;
 pub use bilibi_tenancy as tenancy;
 pub use bilibi_ui as ui;
+pub use bilibi_workflow as workflow;
 pub fn link() {}

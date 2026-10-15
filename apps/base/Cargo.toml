@@ -29,3 +29,4 @@ bilibi-session = { path = "session" }
 bilibi-settings = { path = "settings" }
 bilibi-tenancy = { path = "tenancy" }
 bilibi-ui = { path = "ui" }
+bilibi-workflow = { path = "workflow" }
