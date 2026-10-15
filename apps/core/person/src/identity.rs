@@ -298,7 +298,28 @@ pub async fn ensure_platform_orchestrator(
     check_context(tx, scope)?;
     authorize_key(tx.sql(), scope, SYSTEM_MANAGE).await?;
     bilibi_tenancy::prove_operator(tx.sql(), scope).await?;
-    tx.sql().execute("SELECT pg_advisory_xact_lock(hashtextextended('person-platform-orchestrator-' || $1::text,0))", &[&scope.tenant().to_string()]).await.map_err(Error::from)?;
+    tx.sql()
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('person-platform-orchestrator',0))",
+            &[],
+        )
+        .await
+        .map_err(Error::from)?;
+    // Moving the operator marker does not manufacture a replacement identity.
+    // An explicit reconciliation must move the original with its references.
+    if let Some(row) = tx
+        .sql()
+        .query_opt(
+            "SELECT tenant_id FROM persons WHERE system_key=$1",
+            &[&SYSTEM_KEY],
+        )
+        .await
+        .map_err(Error::from)?
+    {
+        if row.get::<_, i64>(0) != scope.tenant() {
+            return Err(WriteError::SystemIdentity);
+        }
+    }
     let masked = fields(tx.sql(), scope).await?;
     if let Some(row) = tx
         .sql()

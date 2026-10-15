@@ -13,7 +13,7 @@ CREATE TABLE persons (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, id),
-    UNIQUE (tenant_id, system_key),
+    UNIQUE (system_key),
     CHECK (system_key IS NULL OR (kind = 'agent' AND retired_at IS NULL))
 );
 -- Deliberately non-unique: contacts with the same email/name are candidates,
