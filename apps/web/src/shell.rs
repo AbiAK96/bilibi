@@ -105,6 +105,9 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
+    if platform_operator {
+        adopt_installation_locale(app, scope).await;
+    }
     // The company the account signs in under, through its affiliation
     // (Bilimbi `company_name_for`): display only, so a company the directory
     // cannot name never blocks an otherwise proven session.
@@ -495,5 +498,54 @@ pub async fn reorder_pins(
             Ok(json_response(StatusCode::OK, json!({"pins": pins})))
         }
         Err(error) => refusal(error, "invalid_parameters"),
+    }
+}
+
+/// Once an installation locale is stored it stands; until then it is inferred
+/// from the operator's primary company address on every resolve.
+static LOCALE_ADOPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Bilimbi persists the inferred installation locale the first time a
+/// signed-in request resolves it from the operator's address facts. Here the
+/// write needs operator proof, so the first operator page that finds facts
+/// and no stored locale adopts them (`Locales::adopt_inferred`), attributed
+/// to that operator. Display path: any refusal or failure leaves the locale
+/// inferred and is tried again on a later page.
+async fn adopt_installation_locale(app: &App, scope: &Scope) {
+    use std::sync::atomic::Ordering;
+    if LOCALE_ADOPTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let adopt = async {
+        let locales = app
+            .services
+            .get::<bilibi_base::locale::Locales>("base/locale.locales")?;
+        let mut client = app.db.get().await?;
+        if locales
+            .resolve_global(&**client, scope, None)
+            .await?
+            .persisted
+        {
+            return Ok::<bool, Error>(true);
+        }
+        let Some(facts) = app
+            .services
+            .get::<bilibi_core::address::AddressService>(bilibi_core::address::SERVICE)?
+            .platform_operator_bootstrap()
+            .await?
+        else {
+            return Ok(false);
+        };
+        let mut tx = app
+            .services
+            .get::<bilibi_database::MutationBoundary>("base/database.mutations")?
+            .begin(&mut client, scope.mutation_context("locale.adopt"))
+            .await?;
+        let adopted = locales.adopt_inferred(&mut tx, scope, &facts).await?;
+        tx.commit().await?;
+        Ok(adopted.is_some())
+    };
+    if let Ok(true) = adopt.await {
+        LOCALE_ADOPTED.store(true, Ordering::Relaxed);
     }
 }
