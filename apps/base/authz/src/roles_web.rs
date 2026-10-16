@@ -240,7 +240,6 @@ impl Pages {
                 ..IconButton::new("bilimbi-pin", "Pin Roles to sidebar")
             })?,
             actions,
-            ..Header::default()
         })?;
         let form = state.filters_form();
         let mut toolbar = FilterToolbar::new(
