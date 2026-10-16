@@ -1328,5 +1328,10 @@
     "vendor/product-icons/text-indent-left.svg": "1b202a0e4d4b857a9960681eda617f1aea326245e038c666f63b04164b088a8e",
     "vendor/product-icons/text-indent-right.svg": "77a8cf495f87a0ffd31b6dfe60491d80e197b2c87fa7d0bf95b7f8f958eb920a",
     "static/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03"
+  },
+  "domain_sources": {
+    "supply_chain": "4b4f95c8effbd719077b35b9f792f3de413d8dba",
+    "finance": "4abfaf829321f8540581d833752a086b21b45ba9",
+    "factory": "f39ed3dcf2ce2694d30c2b88e82212780f4f3b98"
   }
 }

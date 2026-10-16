@@ -6,11 +6,17 @@
  * package trees below, so do not add an env-pinned `_build` glob for them. */
 @import "tailwindcss" source(none);
 /* Scan every module's Rust, Askama, CSS and browser adapter sources.
- * Keep the pinned Bilimbi candidates until all parity components are ported. */
+ * Keep the pinned Bilimbi candidates until all parity components are ported.
+ * `domain-candidates.txt` pins the Supply Chain, Finance and Factory classes so
+ * mounting a Domain container adds no CSS. */
 @source "../css";
 @source "../reference-candidates.txt";
+@source "../domain-candidates.txt";
 @source "../vendor/icon-candidates.txt";
 @source "../../../..";
+/* Mounted Domain and Extension checkouts are gitignored, which Tailwind
+ * honours even under a listed directory; build.cjs adds an explicit @source for
+ * each mounted container instead. */
 /* Menu contributions provide bare icon names at runtime. Keep the generated
  * Heroicon utilities available for their icon rendering. */
 @source inline("hero-{building-library,building-office-2,chart-bar,circle-stack,clipboard-document-list,cog-6-tooth,flag,globe-alt,information-circle,lock-closed,map,map-pin,magnifying-glass,paint-brush,puzzle-piece,shield-check,squares-2x2,user-group,users}");

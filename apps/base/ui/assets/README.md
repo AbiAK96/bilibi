@@ -15,7 +15,15 @@ constructing them from pieces. For finite dynamic variants, use a mapping of ful
 class strings or `@source inline(...)` in the CSS entrypoint. The source snapshot
 in `reference-candidates.txt` keeps Bilimbi classes available while components
 are translated. To recapture it from the exact pinned checkout, run
-`node apps/base/ui/assets/capture-reference.cjs /path/to/bilimbi`. `vendor/icon-candidates.txt` includes all four Heroicons sizes,
+`node apps/base/ui/assets/capture-reference.cjs /path/to/bilimbi`.
+`domain-candidates.txt` is the same kind of snapshot for the Supply Chain, Finance
+and Factory sources at the HEADs in `provenance.json` (`domain_sources`), so
+mounting those Domains changes no CSS. Recapture it from clean pinned checkouts with
+`node apps/base/ui/assets/capture-domains.cjs supply_chain=<dir> finance=<dir> factory=<dir>`.
+Mounted Domain and Extension checkouts are gitignored, which Tailwind honours, so
+`build.cjs` adds an explicit `@source` for each mounted container (one holding
+`bilibi.container.toml`); a class that only a mounted Domain uses then fails
+`--check` instead of rendering unstyled. `vendor/icon-candidates.txt` includes all four Heroicons sizes,
 because runtime menu/action contributions carry bare names.
 
 `css/legacy-compat.css` temporarily styles the untranslated legacy pages inside the

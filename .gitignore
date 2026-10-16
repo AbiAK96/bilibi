@@ -13,3 +13,4 @@ __pycache__/
 !/apps/extensions/Cargo.toml
 !/apps/extensions/src/
 !/apps/extensions/AGENTS.md
+/apps/base/ui/assets/css/.mounted-*.css
