@@ -32,9 +32,10 @@ descending, and an out-of-range page keeps the real total.
 One facade call is one PostgreSQL statement: a CTE pipeline of tenant
 companies, filtered users, the count, the ordered bounded page and
 page-only role aggregation (`src/query.rs`). The application never receives an
-unbounded tenant collection. Every tenant role is visible on a row until K15
-binds custom roles to an owning company; Bilimbi's company-visibility rule
-then narrows nothing yet.
+unbounded tenant collection. A row's roles follow Bilimbi's
+`company_visibility`: system roles (unowned) and the custom roles owned by a
+company the actor may see (`Grants::visible_companies`, the same list
+`bilibi_authz::roles::list` takes); the Roles filter offers the same roles.
 
 ## The page (`src/web.rs`)
 

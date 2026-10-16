@@ -78,6 +78,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
 pub struct Pages {
     pub db: Db,
     pub users: Arc<UserService>,
+    pub grants: Arc<bilibi_authz::grants::Grants>,
     pub views: Arc<PageViews>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
@@ -403,11 +404,22 @@ impl Index {
             company_view: self.pages.allowed(scope, COMPANY_VIEW).await?,
         })
     }
-    async fn role_options(&self, scope: &Scope) -> Result<Vec<bilibi_authz::roles::RoleSummary>> {
+    /// The companies whose custom roles the actor may see, beside the
+    /// system roles (Bilimbi `company_visibility`).
+    async fn visible_companies(&self, scope: &Scope) -> Result<Vec<i64>> {
+        let client = self.pages.db.get().await?;
+        self.pages.grants.visible_companies(&**client, scope).await
+    }
+    async fn role_options(
+        &self,
+        scope: &Scope,
+        companies: &[i64],
+    ) -> Result<Vec<bilibi_authz::roles::RoleSummary>> {
         let client = self.pages.db.get().await?;
         Ok(bilibi_authz::roles::list(
             &**client,
             scope,
+            companies,
             &bilibi_authz::roles::Query {
                 search: String::new(),
                 sort: bilibi_authz::roles::Sort::Name,
@@ -496,14 +508,15 @@ impl Index {
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let grants = self.grants(scope).await?;
+        let companies = self.visible_companies(scope).await?;
         let mut page = {
             let client = self.pages.db.get().await?;
-            list_users(&**client, scope, &self.options()).await?
+            list_users(&**client, scope, &companies, &self.options()).await?
         };
         let total_pages = page.total_entries.div_ceil(self.list.page_size);
         if self.list.clamp_to_last_page(total_pages, true) {
             let client = self.pages.db.get().await?;
-            page = list_users(&**client, scope, &self.options()).await?;
+            page = list_users(&**client, scope, &companies, &self.options()).await?;
         }
         let display = self.pages.display(scope).await?;
         let keys: Vec<Value> = page.entries.iter().map(|e| json!(e.id)).collect();
@@ -617,7 +630,7 @@ impl Index {
             actions,
         })?;
         let form = self.list.filters_form();
-        let roles = self.role_options(scope).await?;
+        let roles = self.role_options(scope, &companies).await?;
         let toolbar = render(&FilterToolbar::new(
             "users-filters",
             vec![

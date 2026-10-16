@@ -56,6 +56,7 @@ const STATEMENT: &str = "WITH tenant_companies AS (
          array_agg(r.is_system ORDER BY r.name, r.code, r.id) AS role_system
   FROM principal_roles pr JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
   WHERE pr.tenant_id = $1 AND pr.user_id IN (SELECT id FROM page_users)
+    AND (r.company_id IS NULL OR r.company_id = ANY($6))
   GROUP BY pr.user_id
 )
 SELECT t.total, p.id, p.name, p.email, p.created_at, p.company_id, p.company_name, p.company_archived, p.company_deleted,
@@ -66,8 +67,16 @@ LEFT JOIN page_roles g ON g.user_id = p.id
 ORDER BY {final_order}";
 
 /// One page under the caller's already-proven `admin.user.list`; the scope's
-/// tenant is the only predicate. An out-of-range page keeps the real total.
-pub async fn list(client: &impl GenericClient, scope: &Scope, options: &Options) -> Result<Page> {
+/// tenant is the only account predicate, and a row's roles are those unowned
+/// or owned by one of `companies` (Bilimbi's `company_visibility`, the same
+/// rule `bilibi_authz::roles::list` applies). An out-of-range page keeps the
+/// real total.
+pub async fn list(
+    client: &impl GenericClient,
+    scope: &Scope,
+    companies: &[i64],
+    options: &Options,
+) -> Result<Page> {
     let tenant = scope.tenant();
     let pattern = options
         .search
@@ -76,7 +85,14 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, options: &Options)
     let limit = i64::try_from(options.page_size).map_err(|_| Error::Invalid)?;
     let offset = i64::try_from((options.page - 1).saturating_mul(options.page_size))
         .map_err(|_| Error::Invalid)?;
-    let params: [&(dyn ToSql + Sync); 5] = [&tenant, &pattern, &options.role_ids, &limit, &offset];
+    let params: [&(dyn ToSql + Sync); 6] = [
+        &tenant,
+        &pattern,
+        &options.role_ids,
+        &limit,
+        &offset,
+        &companies,
+    ];
     let statement = STATEMENT
         .replacen("{order}", &order(options.sort, options.descending, ""), 1)
         .replacen(

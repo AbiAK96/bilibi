@@ -94,10 +94,14 @@ pub struct Page {
 
 /// One statement, one page. Authorizes `admin.user.list` for the scope first;
 /// the page's route guard has checked the same key, and a live event is
-/// checked again here.
+/// checked again here. `companies` are the companies the actor may see
+/// (`bilibi_authz::grants::Grants::visible_companies`): a row shows its
+/// system roles and the custom roles those companies own, as
+/// `bilibi_authz::roles::list` does.
 pub async fn list_users(
     client: &impl GenericClient,
     scope: &Scope,
+    companies: &[i64],
     options: &Options,
 ) -> Result<Page> {
     if options
@@ -113,7 +117,7 @@ pub async fn list_users(
         return Err(Error::Invalid);
     }
     bilibi_authz::authorize_key(client, scope, bilibi_user::contributions::LIST).await?;
-    query::list(client, scope, options).await
+    query::list(client, scope, companies, options).await
 }
 
 inventory::submit! {
@@ -125,6 +129,7 @@ inventory::submit! {
             Ok(std::sync::Arc::new(bilibi_ui::page::PageService::<Scope, Error>(std::sync::Arc::new(web::Pages {
                 db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
                 users: services.get("core/user.accounts")?,
+                grants: services.get("base/authz.grants")?,
                 views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
