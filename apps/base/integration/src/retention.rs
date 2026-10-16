@@ -33,7 +33,7 @@ fn no_arguments(args: Value) -> Result<Value> {
 }
 inventory::submit! { Contribution::new(WORKERS, WORKER, provenance!(), &Worker { max_attempts: 5, validate: |args| worker::validate(args, no_arguments) }) }
 inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &HandlerBinding { service: "base/integration.retention", capability: EXECUTE }) }
-inventory::submit! { Contribution::new(DEFINITIONS, "base/integration.payload-retention", provenance!(), &Definition {
+inventory::submit! { Contribution::new(DEFINITIONS, "base/integration-payload-retention", provenance!(), &Definition {
     name: "Prune API exchange payloads", expression: "17 3 * * *", timezone: "Etc/UTC",
     task_name: "Base Integration payload retention", worker: WORKER, args: || json!({}),
     overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,

@@ -34,7 +34,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/session-expiry", provenance!(), &Definition {
     name: "Prune expired sessions", expression: "*/5 * * * *", timezone: "Etc/UTC",
     task_name: "Base Session expiry", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: Some(crate::contributions::PATH),
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
 }) }
 
 pub(crate) struct Expiry {

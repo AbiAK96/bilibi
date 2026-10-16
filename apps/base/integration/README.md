@@ -87,7 +87,7 @@ status, user and agent ids, exact status, actor, UTC `since` and exclusive
 Recording and pruning are machine measurements on their own pooled connection,
 outside the caller's transaction and outside mutation capture. The global
 operator setting `integration.payload_retention_days` (default 30) drives the
-contributed daily schedule `base/integration.payload-retention` (03:17 UTC,
+contributed daily schedule `base/integration-payload-retention` (03:17 UTC,
 forbid overlap), which clears previews and keeps metadata. Like every
 contributed recurrence it runs nothing until an operator enables it on
 `/system/schedule`.

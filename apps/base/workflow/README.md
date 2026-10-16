@@ -507,7 +507,7 @@ The immediate job needs `workflow.transition.deliver` (contributed to manager;
 admin grant-all also permits it). Reconcile role contributions through the
 normal explicit seed path when upgrading.
 
-`base/workflow.maintenance` appears on `/system/schedule` with a once-per-minute
+`base/workflow-maintenance` appears on `/system/schedule` with a once-per-minute
 UTC recurrence, coalesced downtime and forbidden overlap. It stays unreviewed
 and disabled until an operator enables it. The handler uses Schedule's
 execution metadata/review gate; it does not accept unscheduled arguments.

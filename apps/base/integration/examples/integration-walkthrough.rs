@@ -483,7 +483,7 @@ async fn main() -> DbResult<()> {
                 .map(|s| (s.operation, s.response_status)),
         );
     }
-    let registered = schedule.definition("base/integration.payload-retention");
+    let registered = schedule.definition("base/integration-payload-retention");
     println!(
         "schedule definition: {:?}",
         registered.map(|r| (

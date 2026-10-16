@@ -163,7 +163,7 @@ async fn main() -> Result<()> {
             println!(
                 "schedule claim={:?}",
                 schedule
-                    .run_now(&mut client, &scope, "base/workflow.maintenance", now)
+                    .run_now(&mut client, &scope, "base/workflow-maintenance", now)
                     .await?
             );
         }
