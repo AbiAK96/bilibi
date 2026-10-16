@@ -25,7 +25,8 @@
 
 {#- A control with the ledger geometry; a link when href is set (busy ignored).
     working names the label the browser shows, disabled and aria-busy, from the
-    click until the server replies (Bilimbi phx-disable-with). -#}
+    click until the server replies (Bilimbi phx-disable-with). aria_busy announces
+    an in-flight disabled control without busy's spinner and progress styling. -#}
 {% macro button(variant=bilibi_ui::ButtonVariant::Secondary, class="", href="", id="", button_type="", name="", value="", disabled=false, busy=false, aria_busy=false, event="", working="") %}
 {%- if !href.is_empty() -%}
 <a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 {{ variant.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</a>
