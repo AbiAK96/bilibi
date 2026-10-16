@@ -207,16 +207,19 @@ dependencies = [
 name = "bilibi-address"
 version = "0.1.0"
 dependencies = [
+ "askama",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
  "bilibi-geonames",
  "bilibi-grid",
  "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party",
  "bilibi-person",
  "bilibi-tenancy",
+ "bilibi-ui",
  "bilibi-web",
  "inventory",
  "serde",

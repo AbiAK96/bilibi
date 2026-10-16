@@ -1,0 +1,2 @@
+{%- import "forms.html" as forms -%}
+<form id="kinds-form-{{ id }}" data-event="save_address_kinds" class="space-y-1"><input type="hidden" name="address_id" value="{{ id }}" />{% for field in kinds %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}<div class="flex items-center gap-1 pt-1">{{ save|safe }}{{ cancel|safe }}</div></form>

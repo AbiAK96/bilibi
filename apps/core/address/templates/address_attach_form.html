@@ -1,0 +1,8 @@
+{%- import "forms.html" as forms -%}
+{{ notice|safe }}<form id="attach-address-modal-form" data-event="attach_address" class="mt-4 space-y-4" novalidate>
+{% call forms::input(field=address) %}{% endcall %}
+<fieldset><legend class="mb-1 block text-xs font-semibold uppercase tracking-wider text-ink-subtle">Kind</legend><div class="flex flex-wrap gap-x-4 gap-y-2">{% for field in kinds %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}</div></fieldset>
+{% call forms::input(field=primary) %}{% endcall %}
+{% call forms::input(field=priority) %}{% endcall %}
+<div class="flex items-center justify-end gap-2 border-t border-line pt-2">{{ cancel|safe }}{{ submit|safe }}</div>
+</form>

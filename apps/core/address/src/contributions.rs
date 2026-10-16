@@ -59,3 +59,47 @@ static GRID: GridContribution = GridContribution {
     ],
 };
 bilibi_grid::contribute!("core/address", "address.grid", &GRID);
+
+// Bilimbi `priv/web_routes.exs`: the administration pages, each behind its
+// capability. The host checks the route's capability; every write asks again.
+macro_rules! page {
+    ($id:literal, $path:literal, $operation:literal, $cap:expr) => {
+        inventory::submit! { Contribution::new(
+        bilibi_module_registry::contributions::ROUTES, $id,
+        Provenance { module: "core/address", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Route {
+            method: bilibi_module_registry::contributions::Method::Get,
+            path: $path, service: crate::web::SERVICE, operation: $operation,
+            access: bilibi_module_registry::contributions::Access::Capability($cap), framed: true,
+        }) }
+    };
+}
+page!("address.list", "/addresses", "list", LIST);
+page!("address.create", "/addresses/create", "create", CREATE);
+page!("address.detail", "/addresses/{id}", "detail", VIEW);
+bilibi_menu::contribute!(
+    "core/address",
+    bilibi_menu::MenuItem::page("admin.address", "Addresses", "/addresses")
+        .under("admin")
+        .icon("map-pin")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(40)
+);
+
+// The owner panels (Bilimbi `company.addresses`/`employee.addresses`). Company
+// and Person detail discover them by record kind and pass the owner's ID as
+// `company_id` or `person_id`; neither owner imports Address.
+macro_rules! panel {
+    ($id:literal, $kind:literal) => {
+        inventory::submit! { Contribution::new(
+        bilibi_module_registry::contributions::EMBEDS, $id,
+        Provenance { module: "core/address", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Embed {
+            slot: $id, context: bilibi_module_registry::contributions::EmbedContext::Record { kind: $kind },
+            service: crate::web::SERVICE, operation: "addresses",
+            access: bilibi_module_registry::contributions::Access::Capability(VIEW),
+        }) }
+    };
+}
+panel!("company.addresses", "core/company");
+panel!("person.addresses", "core/person");

@@ -1,0 +1,13 @@
+{#- One address, read first (Bilimbi `Address.Web.ShowLive`). src/web/detail.rs
+    renders each card through the shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "workspace.html" as workspace -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="address-show-page", variant=bilibi_ui::PageVariant::Detail) %}
+{% call workspace::announce(kind="core/address", record_id=address_id) %}{% endcall %}
+{{ header|safe }}
+<div class="space-y-6">{{ details|safe }}{{ location|safe }}{{ provenance|safe }}{{ linked|safe }}</div>
+{% endcall %}
+</div>

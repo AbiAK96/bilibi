@@ -5,6 +5,7 @@ pub mod contributions;
 pub mod location;
 pub mod model;
 pub mod store;
+pub mod web;
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_geonames::Geonames;
 use bilibi_locale::Bootstrap;
@@ -273,7 +274,7 @@ impl AddressService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/address", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "core/party", "core/company", "core/person", "core/geonames"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "core/party", "core/company", "core/person", "core/geonames"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;
@@ -283,6 +284,11 @@ inventory::submit! {
                 authentication: services.get("base/tenancy.authentication")?,
                 geonames: services.get(bilibi_geonames::SERVICE)?,
             }))
+        }}, bilibi_module_registry::Service { id: web::SERVICE, factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                addresses: services.get(SERVICE)?,
+            }))))
         }}],
     }
 }

@@ -1,0 +1,11 @@
+{%- import "forms.html" as forms -%}
+{{ notice|safe }}<form id="create-attach-address-form" data-event="validate_create_address" data-change data-submit-event="save_create_address" class="mt-4 space-y-4" novalidate>
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">{% for field in contact %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}{% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}</div>
+{% for field in lines %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}
+{{ location|safe }}
+<div class="border-t border-line pt-4"><h4 class="mb-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">Link Settings</h4><div class="space-y-3">
+<fieldset><legend class="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-subtle">Kind</legend><div class="flex flex-wrap gap-4">{% for field in kinds %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}</div></fieldset>
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">{% call forms::input(field=primary) %}{% endcall %}{% call forms::input(field=priority) %}{% endcall %}</div>
+</div></div>
+<div class="flex items-center justify-end gap-3 border-t border-line pt-4">{{ cancel|safe }}{{ submit|safe }}</div>
+</form>
