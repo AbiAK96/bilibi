@@ -60,6 +60,42 @@ pub struct Pages {
     pub views: Arc<PageViews>,
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
+    pub record_panels: Vec<RecordPanel>,
+}
+/// A panel another module contributes for a company record (Address's
+/// `company.addresses`), discovered so Company imports none of them.
+#[derive(Clone)]
+pub struct RecordPanel {
+    anchor: String,
+    embed: &'static str,
+    access: bilibi_module_registry::contributions::Access,
+}
+/// Embeds whose context is `Record { kind: "core/company" }`. The host
+/// reauthorizes each on mount, event and refresh; this only decides whether
+/// to place its anchor.
+pub fn record_panels() -> bilibi_module_registry::Result<Vec<RecordPanel>> {
+    use bilibi_module_registry::contributions::{Embed, EmbedContext, EMBEDS};
+    let mut panels = Vec::new();
+    for entry in inventory::iter::<bilibi_module_registry::Contribution>
+        .into_iter()
+        .filter(|entry| entry.consumer == EMBEDS)
+    {
+        let embed = entry.get::<Embed>()?;
+        if matches!(
+            embed.context,
+            EmbedContext::Record {
+                kind: "core/company"
+            }
+        ) {
+            panels.push(RecordPanel {
+                anchor: format!("company-panel-{}", entry.id.replace(['.', '/'], "-")),
+                embed: entry.id,
+                access: embed.access,
+            });
+        }
+    }
+    panels.sort_by(|a, b| a.embed.cmp(b.embed));
+    Ok(panels)
 }
 fn record_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
     request
@@ -128,6 +164,8 @@ impl Pages {
             pending: None,
             pending_activity: None,
             history: false,
+            record_panels: self.record_panels.clone(),
+            active_panels: Vec::new(),
             notice: String::new(),
         })
     }
@@ -261,9 +299,49 @@ struct CompanyPage {
     pending: Option<Pending>,
     pending_activity: Option<(String, i64)>,
     history: bool,
+    record_panels: Vec<RecordPanel>,
+    active_panels: Vec<PanelSpec>,
     notice: String,
 }
 impl CompanyPage {
+    /// The contributed record panels this reader may mount.
+    async fn allowed_panels(
+        &self,
+        client: &impl tokio_postgres::GenericClient,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<Vec<PanelSpec>> {
+        use bilibi_module_registry::contributions::Access;
+        let mut active = Vec::new();
+        for panel in &self.record_panels {
+            let allowed = match panel.access {
+                Access::Capability(key) => {
+                    match bilibi_authz::authorize_key(client, scope, key).await {
+                        Ok(()) => true,
+                        Err(Error::Forbidden) => false,
+                        Err(error) => return Err(error),
+                    }
+                }
+                Access::SignedIn => true,
+                _ => false,
+            };
+            if allowed {
+                active.push(PanelSpec {
+                    id: panel.anchor.clone(),
+                    embed: panel.embed.into(),
+                    path: [
+                        ("panel".into(), panel.anchor.clone()),
+                        ("id".into(), id.to_string()),
+                        ("company_id".into(), id.to_string()),
+                        ("kinds".into(), "company".into()),
+                    ]
+                    .into(),
+                    query: HashMap::new(),
+                });
+            }
+        }
+        Ok(active)
+    }
     fn query(&self) -> HashMap<String, String> {
         let mut values = self.params.to_params();
         values.extend(self.columns.params());
@@ -333,16 +411,21 @@ impl CompanyPage {
                         Err(Error::Forbidden) => false,
                         Err(error) => return Err(error),
                     };
+                let id = self.id.ok_or(Error::Invalid)?;
+                self.active_panels = self.allowed_panels(&**client, scope, id).await?;
+                let anchors: Vec<String> =
+                    self.active_panels.iter().map(|p| p.id.clone()).collect();
                 views::detail(
                     &**client,
                     scope,
-                    self.id.ok_or(Error::Invalid)?,
+                    id,
                     views::DetailState {
                         statuses: &self.statuses,
                         pending: self.pending.as_ref(),
                         notice: &self.notice,
                         pending_activity: self.pending_activity.as_ref(),
                         departments_columns: &mut self.departments_columns,
+                        panels: &anchors,
                     },
                 )
                 .await?
@@ -601,23 +684,27 @@ impl LiveState<Scope, Error> for CompanyPage {
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
+        let mut panels = self.active_panels.clone();
         if !self.history {
-            return Vec::new();
+            return panels;
         }
-        self.id
-            .map(|id| {
-                vec![PanelSpec {
-                    id: "company-record-history".into(),
-                    embed: "audit.record-history".into(),
-                    path: [
-                        ("panel".into(), "company-record-history".into()),
-                        ("kinds".into(), "company".into()),
-                        ("id".into(), id.to_string()),
-                    ]
-                    .into(),
-                    query: HashMap::new(),
-                }]
-            })
-            .unwrap_or_default()
+        panels.extend(
+            self.id
+                .map(|id| {
+                    vec![PanelSpec {
+                        id: "company-record-history".into(),
+                        embed: "audit.record-history".into(),
+                        path: [
+                            ("panel".into(), "company-record-history".into()),
+                            ("kinds".into(), "company".into()),
+                            ("id".into(), id.to_string()),
+                        ]
+                        .into(),
+                        query: HashMap::new(),
+                    }]
+                })
+                .unwrap_or_default(),
+        );
+        panels
     }
 }

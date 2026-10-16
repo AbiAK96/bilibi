@@ -407,8 +407,9 @@ fn choice(
 }
 #[derive(Template)]
 #[template(path = "detail.html")]
-struct DetailBody {
+struct DetailBody<'a> {
     id: i64,
+    panels: &'a [String],
     header: Html,
     notice: Html,
     card: Html,
@@ -438,6 +439,8 @@ pub(super) struct DetailState<'a> {
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
     pub departments_columns: &'a mut ListColumns,
+    /// Anchors of the contributed record panels the reader may mount.
+    pub panels: &'a [String],
 }
 pub(super) async fn detail(
     client: &(impl GenericClient + Sync),
@@ -451,6 +454,7 @@ pub(super) async fn detail(
         notice,
         pending_activity,
         departments_columns,
+        panels,
     } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
     let editable = allowed(client, scope, crate::UPDATE).await? && !company.archived();
@@ -842,6 +846,7 @@ pub(super) async fn detail(
         PageVariant::Detail,
         render(&DetailBody {
             id,
+            panels,
             header,
             notice: notices,
             card: content,
