@@ -60,11 +60,12 @@ async fn main() -> Result<()> {
             let origin =
                 std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
             let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
-            let listener = tokio::net::TcpListener::bind(bind)
+            let listener = tokio::net::TcpListener::bind(&bind)
                 .await
                 .map_err(|_| Error::Internal)?;
             println!("Bilibi listening at {origin}");
-            let app = bilibi_web::App::new(db, &origin)?;
+            let mut app = bilibi_web::App::new(db, &origin)?;
+            app.listen_address = Some(listen_host(&bind).into());
             let executor = bilibi_base::queue::execution::Executor::from_services(
                 &app.services,
                 bilibi_base::queue::execution::Config::default(),
@@ -99,4 +100,13 @@ async fn main() -> Result<()> {
         _ => return Err(Error::Invalid),
     }
     Ok(())
+}
+
+/// The host part of a bind address (`127.0.0.1:3000` is `127.0.0.1`,
+/// `[::1]:3000` is `::1`), the "dev" status bar's listen address.
+fn listen_host(bind: &str) -> &str {
+    let host = bind.rsplit_once(':').map_or(bind, |(host, _)| host);
+    host.strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
 }

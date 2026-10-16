@@ -77,6 +77,7 @@ impl Page<Scope, Error> for Reference {
                     .body(request.scope.ok_or(Error::Invalid)?.tenant())
                     .await?,
                 live: true,
+                title: None,
             })
         })
     }

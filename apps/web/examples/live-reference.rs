@@ -79,6 +79,7 @@ impl Page<Scope, Error> for Reference {
             Ok(PageBody {
                 html: body(kind, 0, ""),
                 live: true,
+                title: None,
             })
         })
     }

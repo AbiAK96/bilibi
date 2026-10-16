@@ -157,6 +157,7 @@ impl Page<Scope, Error> for Pages {
                 return Ok(PageBody {
                     html: body.html,
                     live: true,
+                    title: None,
                 });
             }
             let mut state = self.state(&request).await?;
@@ -166,6 +167,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title: None,
             })
         })
     }

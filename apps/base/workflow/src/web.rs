@@ -426,6 +426,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: state.body(scope).await?,
                 live: true,
+                title: None,
             })
         })
     }

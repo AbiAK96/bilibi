@@ -254,6 +254,7 @@ async fn dispatch(
         framed,
         page.live,
         &page.html,
+        topbar_actions(&bound, framed),
     )
     .await?;
     if let (Some(credential), Some(_)) = (credential, scope) {
@@ -263,16 +264,12 @@ async fn dispatch(
             .activity(&**client, &credential)
             .await?;
     }
-    let mut response = crate::document_themed(
-        bound
-            .page
-            .0
-            .title(bound.route.operation)
-            .unwrap_or("Bilibi"),
-        &shell.html,
-        shell.theme,
-    )?
-    .into_response();
+    let title = page
+        .title
+        .as_deref()
+        .or_else(|| bound.page.0.title(bound.route.operation))
+        .unwrap_or("Bilibi");
+    let mut response = crate::document_themed(title, &shell.html, shell.theme)?.into_response();
     if framed {
         response.headers_mut().insert(
             header::HeaderName::from_static("x-bilibi-framed"),
@@ -350,4 +347,16 @@ fn decode_segment(segment: &str) -> Result<String> {
         return Err(Error::Invalid);
     }
     Ok(value)
+}
+
+/// The page's top-bar controls for the shell; a framed render has no top bar.
+pub fn topbar_actions(bound: &BoundRoute, framed: bool) -> bilibi_ui::Html {
+    if framed {
+        return bilibi_ui::Html::default();
+    }
+    bound
+        .page
+        .0
+        .topbar_actions(bound.route.operation)
+        .unwrap_or_default()
 }

@@ -36,6 +36,7 @@ impl Page<Scope, Error> for Library {
                 return Ok(PageBody {
                     html: String::new(),
                     live: false,
+                    title: None,
                 });
             }
             Ok(PageBody {
@@ -43,6 +44,7 @@ impl Page<Scope, Error> for Library {
                     .body()
                     .map_err(|_| Error::Internal)?,
                 live: true,
+                title: None,
             })
         })
     }

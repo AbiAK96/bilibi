@@ -297,7 +297,11 @@ impl Page<Scope, Error> for Reference {
                 "forbidden" => forbidden()?,
                 _ => body(&mut parse(request.query)?)?,
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

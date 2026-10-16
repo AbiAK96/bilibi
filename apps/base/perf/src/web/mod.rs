@@ -193,6 +193,9 @@ fn parse(query: &HashMap<String, String>) -> Result<ListState> {
     Ok(state)
 }
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "index").then_some("Performance")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             if request.operation != "index" {
@@ -205,6 +208,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: index.body()?,
                 live: true,
+                title: None,
             })
         })
     }

@@ -116,7 +116,13 @@ pub struct ShellContext<'a> {
     /// limited to pages this deployment serves.
     pub pins: String,
     pub development: bool,
+    /// The host the development server listens on, shown after "dev" in the
+    /// status bar as Bilimbi's `listen_address`; `None` outside development.
+    pub listen_address: Option<&'a str>,
     pub version: &'a str,
+    /// The open page's controls in the top bar, left of the bell (Bilimbi's
+    /// `topbar_actions` slot), from `Page::topbar_actions`.
+    pub topbar_actions: Html,
 }
 impl ShellContext<'_> {
     pub fn initials(&self) -> String {

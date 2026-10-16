@@ -23,7 +23,6 @@ use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
-const TITLE_SUFFIX: &str = " · Business application platform";
 const BLANK: &str = "can't be blank";
 const EMAIL_FORMAT: &str = "must be a valid email address";
 const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
@@ -103,7 +102,7 @@ fn card<T: Template>(
     }
     .render()
     .map_err(|_| Error::Internal)?;
-    let mut response = document_titled(&format!("{title}{TITLE_SUFFIX}"), &body)?.into_response();
+    let mut response = document_titled(title, &body)?.into_response();
     *response.status_mut() = status;
     Ok(response)
 }
@@ -230,10 +229,10 @@ pub async fn login(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let mut form = LoginForm {
+        email: bounded(&submission.email),
         // A rejected attempt re-renders the card at the address it was posted
         // from, password kept, as Bilimbi's live form does.
         password: submission.password.clone(),
-        email: bounded(&submission.email),
         ..LoginForm::default()
     };
     form.email_errors = validate_email(&form.email);

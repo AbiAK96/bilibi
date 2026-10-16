@@ -322,10 +322,19 @@ impl Session {
         Ok(vec![fragment(target, body)])
     }
     async fn page_message(&mut self, app: &App, scope: &Scope, body: LiveBody) -> Result<Value> {
-        let html =
-            crate::shell::render(app, Some(scope), &self.path, self.framed, true, &body.html)
-                .await?
-                .html;
+        let topbar_actions =
+            routes::topbar_actions(&routes::resolve(app, &self.path)?.0, self.framed);
+        let html = crate::shell::render(
+            app,
+            Some(scope),
+            &self.path,
+            self.framed,
+            true,
+            &body.html,
+            topbar_actions,
+        )
+        .await?
+        .html;
         let mut pairs: Vec<_> = body.query.iter().collect();
         pairs.sort_by_key(|(key, _)| *key);
         let query = pairs

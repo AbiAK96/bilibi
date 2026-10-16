@@ -17,11 +17,23 @@ pub struct PageRequest<'a, Context> {
 pub struct PageBody {
     pub html: String,
     pub live: bool,
+    /// The document title when it names the record shown (a role's name, a
+    /// query's name); `None` defers to `Page::title` for the operation. The
+    /// host appends the product suffix, so a title never carries it.
+    pub title: Option<String>,
 }
 pub trait Page<Context, Error>: Send + Sync {
     fn render<'a>(&'a self, request: PageRequest<'a, Context>) -> PageFuture<'a, Error>;
-    /// The document title for a discovered page, when its owner supplies one.
+    /// The document title for a discovered page, when its owner supplies one:
+    /// the page name alone (`"Roles"`), as Bilimbi's `page_title`; the host adds
+    /// " · Business application platform" and falls back to the product name.
     fn title(&self, _operation: &str) -> Option<&'static str> {
+        None
+    }
+    /// Controls the shell shows in its top bar, left of the bell, while this
+    /// page is open (Bilimbi's `topbar_actions` slot). Buttons raise events to
+    /// the page with `data-event`; the shell omits them from a framed render.
+    fn topbar_actions(&self, _operation: &str) -> Option<crate::Html> {
         None
     }
     /// An owner may finish an authorized HTTP action with a 303 redirect.

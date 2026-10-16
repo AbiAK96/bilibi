@@ -485,6 +485,9 @@ fn render(
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "index").then_some("Dashboard")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             if request.operation != "index" || !request.query.is_empty() {
@@ -495,6 +498,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: render(scope, false, None, &arrangement)?,
                 live: true,
+                title: None,
             })
         })
     }

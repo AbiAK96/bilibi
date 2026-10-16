@@ -1642,6 +1642,10 @@ struct WorkspaceView<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "workspace_actions.html")]
+struct WorkspaceActions;
+
+#[derive(Template)]
 #[template(path = "workspace_framed.html")]
 struct FramedView<'a> {
     flash: FlashMap<'a>,
@@ -1690,6 +1694,18 @@ struct Mounted {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(match operation {
+            "index" => "Workspace",
+            "shared_layouts" => "Shared workspaces",
+            _ => return None,
+        })
+    }
+    fn topbar_actions(&self, operation: &str) -> Option<Html> {
+        (operation == "index")
+            .then(|| Html::render(&WorkspaceActions).ok())
+            .flatten()
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -1701,6 +1717,7 @@ impl Page<Scope, Error> for Pages {
                     Ok(PageBody {
                         html: workspace.render(&self.0, &standing)?,
                         live: true,
+                        title: None,
                     })
                 }
                 "shared_layouts" => {
@@ -1709,6 +1726,7 @@ impl Page<Scope, Error> for Pages {
                     Ok(PageBody {
                         html: page.render()?,
                         live: true,
+                        title: None,
                     })
                 }
                 _ => Err(Error::NotFound),

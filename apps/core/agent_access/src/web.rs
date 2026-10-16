@@ -79,7 +79,11 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

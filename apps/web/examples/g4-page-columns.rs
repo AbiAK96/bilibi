@@ -395,6 +395,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: state.body()?,
                 live: true,
+                title: None,
             })
         })
     }

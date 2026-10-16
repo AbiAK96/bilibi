@@ -38,6 +38,7 @@ pub async fn render(
     framed: bool,
     live: bool,
     body: &str,
+    topbar_actions: Html,
 ) -> Result<Rendered> {
     let presentation = match scope {
         Some(scope) => Some(app.user.presentation(scope).await?),
@@ -57,7 +58,7 @@ pub async fn render(
         }
         .render()
     } else if let Some(scope) = scope {
-        let context = context(app, scope, path, preferences).await?;
+        let context = context(app, scope, path, preferences, topbar_actions).await?;
         AppShell {
             context: &context,
             live,
@@ -87,10 +88,11 @@ fn preferences(presentation: &Presentation) -> DisplayPreferences {
 }
 
 async fn context<'a>(
-    app: &App,
+    app: &'a App,
     scope: &'a Scope,
     path: &str,
     preferences: DisplayPreferences,
+    topbar_actions: Html,
 ) -> Result<ShellContext<'a>> {
     let client = app.db.get().await?;
     let capabilities = authz::effective_capabilities(&**client, scope).await?;
@@ -141,7 +143,13 @@ async fn context<'a>(
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
         development: cfg!(debug_assertions),
+        listen_address: if cfg!(debug_assertions) {
+            app.listen_address.as_deref()
+        } else {
+            None
+        },
         version: env!("CARGO_PKG_VERSION"),
+        topbar_actions,
     })
 }
 

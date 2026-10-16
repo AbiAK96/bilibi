@@ -391,9 +391,21 @@ fn role_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(match operation {
+            "decision-logs" => "Decision Logs",
+            "capabilities" => "Capabilities",
+            "roles" => "Roles",
+            "role-create" => "Create Role",
+            restrictions_web::OPERATION => "Field Restrictions",
+            // A role page is titled by the role's name (PageBody.title).
+            _ => return None,
+        })
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
+            let mut title = None;
             let html = match request.operation {
                 "decision-logs" => {
                     self.view(scope, &mut parse(request.query)?, &columns())
@@ -413,12 +425,15 @@ impl Page<Scope, Error> for Pages {
                 }
                 "role-create" => crate::roles_web::create_view()?,
                 "role" => {
-                    self.role_view(
-                        scope,
-                        role_id(&request)?,
-                        &crate::roles_web::principal_columns(),
-                    )
-                    .await?
+                    let (html, name) = self
+                        .role_view(
+                            scope,
+                            role_id(&request)?,
+                            &crate::roles_web::principal_columns(),
+                        )
+                        .await?;
+                    title = Some(name);
+                    html
                 }
                 restrictions_web::OPERATION => {
                     restrictions_web::Screen::mount(self, scope)
@@ -428,7 +443,11 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

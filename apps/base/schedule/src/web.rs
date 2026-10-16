@@ -1293,6 +1293,9 @@ fn render(fragment: impl Template) -> Result<Html> {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "board").then_some("Schedule")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             if request.operation != "board" {
@@ -1303,6 +1306,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: board.render(scope).await?,
                 live: true,
+                title: None,
             })
         })
     }

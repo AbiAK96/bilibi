@@ -16,12 +16,6 @@
 {%- import "forms.html" as form -%}
 <div data-shared-ui class="flex h-full min-h-0 flex-col">
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{#- Bilimbi puts these in the shell's top bar (`topbar_actions`); Bilibi's
-    shell has no such slot yet, so they head the workspace instead. -#}
-<div id="workspace-actions" class="flex shrink-0 items-center justify-end gap-1">
-{% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
-{% call ui::icon_button(icon="retain", label="Saved layouts", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
-</div>
 <div id="workspace" data-hook="Tiling" data-history="params" data-focused="{{ focused }}" data-follows="{{ follows }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
 {%- if !tiles.is_empty() %}
 {% call tabstrip::tabs(id="workspace-tabs", items=tabs, label="Tiles", class="shrink-0 lg:hidden") %}{% endcall %}

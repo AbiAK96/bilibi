@@ -270,7 +270,11 @@ impl Page<Scope, Error> for Lenses3 {
             let html = LensState::new(DB.get().ok_or(Error::Internal)?.clone())
                 .body(scope)
                 .await?;
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
 

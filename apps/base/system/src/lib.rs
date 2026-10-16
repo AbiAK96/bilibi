@@ -44,6 +44,14 @@ fn render(template: impl askama::Template) -> Result<Html> {
     Html::render(&template).map_err(|_| Error::Internal)
 }
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(match operation {
+            "info" => "System Info",
+            "localization" => "Language & Region",
+            "inspector" => "Menu Inspector",
+            _ => return None,
+        })
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -64,7 +72,11 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

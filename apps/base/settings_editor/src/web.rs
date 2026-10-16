@@ -609,6 +609,9 @@ fn render(fragment: impl Template) -> Result<Html> {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "global").then_some("Operator Settings")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             if request.operation != "global" {
@@ -618,6 +621,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: Editor::new(self.0.clone()).render(scope).await?,
                 live: true,
+                title: None,
             })
         })
     }

@@ -54,32 +54,47 @@ impl Pages {
             .await?
             .allowed)
     }
+    /// The mounted state and, for a query page, its document title: "New
+    /// Query" for `_new` and the saved query's name otherwise, as Bilimbi's
+    /// `page_title`.
     async fn state(
         &self,
         request: PageRequest<'_, Scope>,
-    ) -> Result<Box<dyn LiveState<Scope, Error>>> {
+    ) -> Result<(Box<dyn LiveState<Scope, Error>>, Option<String>)> {
         let scope = request.scope.ok_or(Error::Unauthorized)?;
         self.editor(scope).await?;
         match request.operation {
-            "index" => Ok(Box::new(index::Index::new(self.clone(), request.query)?)),
-            "detail" => Ok(Box::new(
-                detail::Detail::load(
+            "index" => Ok((
+                Box::new(index::Index::new(self.clone(), request.query)?),
+                None,
+            )),
+            "detail" => {
+                let detail = detail::Detail::load(
                     self.clone(),
                     scope,
                     request.path.get("slug").ok_or(Error::NotFound)?,
                     request.query,
                 )
-                .await?,
-            )),
+                .await?;
+                let title = match &detail.saved {
+                    Some(saved) => saved.name.clone(),
+                    None => "New Query".into(),
+                };
+                Ok((Box::new(detail), Some(title)))
+            }
             _ => Err(Error::NotFound),
         }
     }
 }
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        // A query page is titled "New Query" or the query's name (PageBody.title).
+        (operation == "index").then_some("Database Queries")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut state = self.state(request).await?;
+            let (mut state, title) = self.state(request).await?;
             let body = state
                 .update(bilibi_ui::page::LiveRequest {
                     scope,
@@ -90,11 +105,12 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title,
             })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
-        Box::pin(async move { Ok(Some(self.state(request).await?)) })
+        Box::pin(async move { Ok(Some(self.state(request).await?.0)) })
     }
 }
 fn fragment<T: askama::Template>(value: &T) -> Result<Html> {

@@ -291,7 +291,11 @@ impl Page<Scope, Error> for Reference {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let html = ReferenceState::new(request.query)?.body()?;
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
 

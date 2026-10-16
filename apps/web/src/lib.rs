@@ -28,6 +28,9 @@ pub struct App {
     routes: Arc<Vec<routes::BoundRoute>>,
     pub db: Db,
     pub origin: Arc<str>,
+    /// The host the server listens on, for the development status bar only;
+    /// the serving command sets it from `BIND_ADDR`.
+    pub listen_address: Option<Arc<str>>,
     pub services: Arc<bilibi_module_registry::Services>,
     pub company: Arc<bilibi_company::CompanyService>,
     pub user: Arc<bilibi_user::UserService>,
@@ -65,6 +68,7 @@ impl App {
             routes,
             db,
             origin: origin.into(),
+            listen_address: None,
             company,
             user,
             security,

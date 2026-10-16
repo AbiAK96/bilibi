@@ -503,6 +503,9 @@ fn row(display: &DisplayContext, can_manage: bool, action: &ActionEntry) -> Resu
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "actions").then_some("Audit Actions")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             if request.operation != "actions" {
@@ -512,7 +515,11 @@ impl Page<Scope, Error> for Pages {
             let html = Actions::new(self.clone(), request.query)?
                 .view(scope, true)
                 .await?;
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

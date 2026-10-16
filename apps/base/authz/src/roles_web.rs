@@ -305,13 +305,13 @@ impl Pages {
         scope: &Scope,
         id: i64,
         columns: &ListColumns,
-    ) -> Result<String> {
+    ) -> Result<(String, String)> {
         let client = self.db.get().await?;
         // Another tenant's id and a missing id are the same answer.
         let details = roles::get(&**client, scope, id)
             .await?
             .ok_or(Error::NotFound)?;
-        render_role(&details, columns)
+        Ok((render_role(&details, columns)?, details.role.name))
     }
 }
 
@@ -615,11 +615,12 @@ impl LiveState<Scope, Error> for RoleShow {
                     self.columns.handle(&values);
                 }
             }
+            let (html, _name) = self
+                .pages
+                .role_view(request.scope, self.id, &self.columns)
+                .await?;
             Ok(LiveBody {
-                html: self
-                    .pages
-                    .role_view(request.scope, self.id, &self.columns)
-                    .await?,
+                html,
                 ..LiveBody::default()
             })
         })

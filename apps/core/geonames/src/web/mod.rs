@@ -253,6 +253,14 @@ pub(crate) fn query(state: &ListState, extra: BTreeMap<String, String>) -> HashM
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(match operation {
+            "countries" => "Countries",
+            "admin1" => "Admin1 Divisions",
+            "postcodes" => "Geonames Postcodes",
+            _ => return None,
+        })
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -274,7 +282,11 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {

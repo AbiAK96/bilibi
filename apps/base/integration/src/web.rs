@@ -826,6 +826,13 @@ fn exchange_id(request: &PageRequest<'_, Scope>) -> Result<String> {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(match operation {
+            "exchanges" => "API Exchanges",
+            "exchange" => "API Exchange",
+            _ => return None,
+        })
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -842,7 +849,11 @@ impl Page<Scope, Error> for Pages {
                 }
                 _ => return Err(Error::NotFound),
             };
-            Ok(PageBody { html, live: true })
+            Ok(PageBody {
+                html,
+                live: true,
+                title: None,
+            })
         })
     }
 

@@ -1,0 +1,8 @@
+{#- The workspace's top-bar controls (Bilimbi `WorkspaceLive` `topbar_actions`
+    slot): the shell renders them left of the bell while the workspace is
+    open, and their events reach the workspace page as any page button's do. -#}
+{%- import "components.html" as ui -%}
+<div id="workspace-actions" class="flex items-center gap-1">
+{% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
+{% call ui::icon_button(icon="retain", label="Saved layouts", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
+</div>

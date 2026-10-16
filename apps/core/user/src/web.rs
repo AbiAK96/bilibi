@@ -145,6 +145,10 @@ pub struct Pages {
 }
 
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        // The password and appearance pages carry no name in Bilimbi either.
+        (operation == "notifications").then_some("Notifications")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -152,12 +156,14 @@ impl Page<Scope, Error> for Pages {
                 "password" if request.query.is_empty() => Ok(PageBody {
                     html: PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?,
                     live: true,
+                    title: None,
                 }),
                 "appearance" if request.query.is_empty() => {
                     let stored = Stored::load(&self.users, scope).await?;
                     Ok(PageBody {
                         html: appearance::render(&stored, FlashMap::default())?,
                         live: true,
+                        title: None,
                     })
                 }
                 "notifications" => crate::inbox::render_page(self, scope, request.query).await,

@@ -94,6 +94,7 @@ pub(crate) async fn render_bell(pages: &Pages, scope: &Scope) -> Result<PageBody
     Ok(PageBody {
         html: bell_html(&**client, scope).await?,
         live: true,
+        title: None,
     })
 }
 
@@ -296,6 +297,7 @@ pub(crate) async fn render_page(
     Ok(PageBody {
         html: render_inbox(pages, scope, &mut list, FlashMap::default()).await?,
         live: true,
+        title: None,
     })
 }
 

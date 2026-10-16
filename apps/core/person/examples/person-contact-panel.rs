@@ -43,6 +43,7 @@ impl Page<Scope, Error> for Host {
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title: None,
             })
         })
     }
