@@ -20,8 +20,10 @@ pages belong to the Web host, as Bilimbi's do.
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
-| `account(scope, user)` | One account of the tenant with its `AccountLinks`; `admin.user.view` |
+| `account(scope, user)` | One account of the tenant with its `AccountLinks`, version and timestamps; `admin.user.view` |
 | `link_person(scope, user, person)` / `link_affiliation(scope, user, affiliation)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
+| `create_account` / `update_account` / `set_password` / `delete_account` | Account administration (`src/accounts.rs`): `admin.user.create`, `.update`, `.update`, `.delete`. See "Account administration" |
+| `update_profile(token, csrf, name, email)` / `landing_pages` / `landing_choice` / `save_landing` / `landing_route` | The signed-in account's own profile and landing page; no capability |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
 
 Refusals are `CredentialError` variants a page maps to a field error or flash
@@ -130,8 +132,8 @@ Bilimbi, archive offers no restore or move, so the account stays frozen in
 place. A change of organisation ends the account's sessions (announced after
 commit), as Bilimbi's reassignment does. Each command is audited as kind `user`
 with the old and new link ids. Authorization is tenant-scoped until K15 binds
-company resource ownership; K16 composes the account page and its link controls
-from `account` and these commands.
+company resource ownership; the account page (below) composes its link
+controls from `account` and these commands.
 
 Run the walkthrough against a fresh disposable migrated database (it installs
 the walkthrough fixture):
@@ -149,18 +151,89 @@ working database.
 
 ## Pages (`core/user.pages`)
 
-`/settings/password` (`src/web.rs`, `templates/password.html`) and
-`/settings/appearance` are the signed-in
-account's password change inside the shell, on the settings layout of
-`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`); later
-settings pages (profile, appearance) render through the same macro and are
-shown as unavailable until they land. Agent connections links to
-`core/agent_access`'s own page, as in Bilimbi. The page is live: the form
+`/settings/profile`, `/settings/password` (`src/web.rs`,
+`templates/password.html`) and `/settings/appearance` are the signed-in
+account's own settings inside the shell, on the settings layout of
+`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`).
+Agent connections links to `core/agent_access`'s own page, as in Bilimbi.
+The password page is live: the form
 submits as the `change-password` event carrying its field values, the state
 keeps the field errors of the last attempt (`can't be blank`, the password
 policy, `does not match password`, `is incorrect`), and a success or failure
 is a flash in the page until dismissed. The route needs a session and no
 capability; the current password proves the holder inside `change_password`.
+
+`/settings/profile` (`src/account_ui/profile.rs`, Bilimbi `ProfileLive`) is
+the account's own name, email and landing page. The account is the
+session's, never a submitted id; `update_profile` normalizes the email,
+refuses a taken one (`has already been taken`) and leaves a changed address
+unverified, which the saved flash says. The landing page is the user-scope
+setting `ui.landing_menu_id` (`accounts::LANDING_KEY`, contributed in
+`contributions.rs`): the select offers exactly the menu pages the account can
+open (`landing_pages`, the menu contributions read through the account's
+effective capabilities), `save_landing` refuses any other value, and the
+Web host's sign-in asks `landing_route` for where to go, falling back to the
+workspace when the choice is unset or no longer reachable.
+
+## Account administration (K16; `src/accounts.rs`, `src/account_ui/`)
+
+`/users/new` (`admin.user.create`; Bilimbi `FormLive`) creates an account
+from the trusted administrator form: name, email, a plaintext password the
+service hashes, and the optional party links of the approved model. The
+Person select offers the live Persons the actor may list
+(`admin.person.list`); once one is chosen the form offers that Person's
+current affiliations (`admin.affiliation.list`) as "Signs in under", labelled
+by company and title. `create_account` validates as Bilimbi's changeset does
+(`can't be blank`, `must be an email address`, the password policy, `has
+already been taken` for the platform-wide unique email), proves and locks the
+links through their owners in the global order Company → Person →
+Affiliation, and refuses an affiliation of another Person
+(`AccountError::PersonMismatch`). Creation redirects to the account's page.
+The tenant-wide `/users` index the Back link names is User Administration's
+(K13).
+
+`/users/{id}` (`admin.user.view`; Bilimbi `ShowLive`) is the read-first
+page: the account as facts, each editing in place through the shared inline
+editors for an actor holding `admin.user.update`.
+
+- Name and email commit through `update_account`, which carries the row's
+  `version` (migration `008-accounts.sql`): a stale draft is refused rather
+  than applied over another operator's save, and a changed email is
+  unverified again. The refusal is worded on the fact.
+- Person and Company are choice facts (Bilimbi's company select) written
+  through the account binder's commands: choosing a Person calls
+  `link_person`, "None" calls `unlink`, and the Company select offers the
+  Person's affiliations and calls `link_affiliation`; a note beside it says
+  the change signs the account out of every session, as the binder does. The
+  binder's refusals land on the fact (an affiliation of another Person, an
+  archived company). A reader who may not list people or affiliations sees
+  the facts read-only, with links to the records they may open.
+- Roles & Permissions is Bilimbi's `UserAccessPanel` over Authz: assigned
+  roles as chips, a Roles picker filtered by the escalation guard (a role is
+  grantable only by an actor holding everything it grants;
+  `bilibi_authz::roles::grants_of`), the Effective Permissions disclosure
+  (`effective_capabilities_of`, grouped by domain; blue for a direct grant,
+  red for a deny rule) with deny/remove controls and the Add Capabilities
+  picker. Writes go through `Grants::assign_role` and `set_direct`, which
+  authorize themselves; a change to the acting account's own access confirms
+  first through the shared dialog. Each absent control states its reason
+  where it would be.
+- Change Password (`set_password`) needs no current password, ends every
+  session of the account and audits a marker, never a hash.
+- Affiliations lists the linked Person's current affiliations on the shared
+  FlexTable (column settings, sort, row height), badges the one the account
+  signs in under, and offers Unlink person behind the confirm dialog.
+- Delete (`admin.user.delete`, `delete_account`) confirms through the shared
+  dialog, never the actor's own account; the row is retired (`deleted_at`,
+  status `deleted`) so audit history keeps its subject, the email is free
+  again and the account's sessions end. The page returns to `/users`.
+- An archived company makes the page read-only in every section, as
+  Bilimbi's does: one warning under the header says why, and every write
+  still re-proves the company through the binder's locks.
+
+The header carries the record-history panel (`audit.record-history`, kind
+`user`) and the pin control. Every command re-proves the actor, authorizes
+inside its `MutationTransaction`, and is audited as kind `user`.
 
 ## Audit
 
