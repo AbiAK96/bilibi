@@ -111,10 +111,14 @@
   // aria-busy, from the click until the server replies (Bilimbi
   // phx-disable-with). Deferred one task so the transport and a form submit
   // still see the enabled control; settle() restores it when a reply patches
-  // the control in place.
+  // the control in place. A submit button whose form fails the browser's own
+  // constraint validation raises no submit and gets no reply, so it stays
+  // enabled, as phx-disable-with only acts on a submit that happens.
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-working]');
     if (!button || button.disabled) return;
+    const form = button.form;
+    if (form && button.type === 'submit' && !form.noValidate && !form.checkValidity()) return;
     setTimeout(() => {
       if (!button.isConnected || button.disabled) return;
       button.dataset.workingFrom = button.textContent;
