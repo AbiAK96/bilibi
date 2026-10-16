@@ -43,6 +43,22 @@ impl Grants {
     pub fn vocabulary(&self) -> &Vocabulary {
         &self.vocabulary
     }
+    /// The company ids Tenancy's organisation directory names for this actor:
+    /// the `companies` argument of `roles::list`/`get`, which decides which
+    /// custom roles are visible (Bilimbi `company_visibility/2`).
+    pub async fn visible_companies(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Vec<i64>> {
+        Ok(self
+            .parties
+            .organisations_in_scope(client, scope)
+            .await?
+            .into_iter()
+            .map(|company| company.id.get())
+            .collect())
+    }
     fn known(&self, key: &str) -> Result<()> {
         if self.vocabulary.capabilities.contains_key(key) {
             Ok(())

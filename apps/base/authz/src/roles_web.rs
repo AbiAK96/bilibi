@@ -330,20 +330,12 @@ impl Pages {
             details.role.name,
         ))
     }
-    /// The company ids the directory names for this actor, which decide
-    /// which custom roles are visible (Bilimbi `company_visibility/2`).
     async fn visible_companies(
         &self,
         client: &tokio_postgres::Client,
         scope: &Scope,
     ) -> Result<Vec<i64>> {
-        Ok(self
-            .parties
-            .organisations_in_scope(client, scope)
-            .await?
-            .into_iter()
-            .map(|company| company.id.get())
-            .collect())
+        self.grants.visible_companies(client, scope).await
     }
 }
 

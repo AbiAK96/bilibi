@@ -1,9 +1,10 @@
-//! Manual K15 walkthrough against an explicitly disposable, migrated and
-//! seeded database: the Core bindings behind Base's company picker, locale
+//! Manual K15 walkthrough against an explicitly disposable, freshly migrated
+//! database: the Core bindings behind Base's company picker, locale
 //! bootstrap, company-owned roles and private files. Real app services and
-//! demo sessions, no assertions: it prints each outcome for inspection. It
-//! archives company 4, files a walkthrough address and stores files under
-//! `BILIBI_K15_DEMO_ROOT`, so never point it at a shared database.
+//! walkthrough-fixture sessions, no assertions: it prints each outcome for
+//! inspection. It installs the fixture, archives company 4, files a
+//! walkthrough address and stores files under `BILIBI_K15_DEMO_ROOT`, so
+//! never point it at a shared database.
 //!
 //! ```sh
 //! BILIBI_COMPANY_DEMO=disposable BILIBI_K15_DEMO_ROOT=/tmp/k15-files \
@@ -24,6 +25,8 @@ use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{PartyProofs, Scope};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Error = Box<dyn std::error::Error>;
 
@@ -53,6 +56,7 @@ async fn main() -> Result<(), Error> {
     std::fs::create_dir_all(&root)?;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35573")?;
     let companies = app.services.get::<CompanyService>(SERVICE)?;
     let parties = app.services.get::<PartyProofs>("base/tenancy.parties")?;
@@ -67,7 +71,7 @@ async fn main() -> Result<(), Error> {
     async fn login(app: &bilibi_web::App, email: &str) -> Result<Scope, Error> {
         let login = app
             .user
-            .login(email, bilibi_web::seed::DEMO_PASSWORD)
+            .login(email, bilibi_walkthrough_fixture::PASSWORD)
             .await?;
         Ok(app.security.guard(&login.token).await?)
     }
@@ -75,8 +79,7 @@ async fn main() -> Result<(), Error> {
     let manager = login(&app, "manager@example.test").await?;
     let viewer = login(&app, "viewer@example.test").await?;
     let other = login(&app, "manager@other.example.test").await?;
-    // The demo seed grants company capabilities only; reconciliation gives
-    // the seeded roles the Person capabilities Core contributes to them.
+    // Reconciliation gives the fixture roles their declared module grants.
     grants.reconcile().await?;
     let mut client = db.get().await?;
     // Re-runs start from the seeded state.
@@ -338,7 +341,7 @@ async fn main() -> Result<(), Error> {
         .map(|p| p.total_entries),
     );
     show(
-        "legacy seeded custom roles stay visible as unowned",
+        "fixture roles after reconciliation: (name, is_system, company_id)",
         roles::list(
             sql,
             &admin,

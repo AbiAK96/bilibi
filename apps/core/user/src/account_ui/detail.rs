@@ -623,9 +623,15 @@ impl Detail {
             bilibi_authz::effective_capabilities_of(&**client, scope, user).await?;
         let assigned = bilibi_authz::roles::assigned(&**client, scope, user).await?;
         let actor = bilibi_authz::effective_capabilities_of(&**client, scope, scope.user()).await?;
+        let companies = self
+            .pages
+            .grants
+            .visible_companies(&**client, scope)
+            .await?;
         let all_roles = bilibi_authz::roles::list(
             &**client,
             scope,
+            &companies,
             &bilibi_authz::roles::Query {
                 search: String::new(),
                 sort: bilibi_authz::roles::Sort::Name,
