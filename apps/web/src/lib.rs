@@ -102,13 +102,19 @@ pub fn modules() -> Result<Vec<&'static bilibi_module_registry::Module>> {
     Ok(bilibi_module_registry::discover()?)
 }
 
-pub async fn migrate(db: &Db) -> Result<()> {
-    let modules = modules()?;
-    let migrations: Vec<_> = modules
-        .iter()
-        .flat_map(|module| module.migrations.iter().copied())
-        .collect();
-    bilibi_database::migrate(db, &migrations).await
+/// The product binary's boot check: the linked Domain and Extension descriptors
+/// must be exactly the mounted crates discovery found. Examples that link their
+/// own reference Extensions call `modules` instead.
+pub fn verify_composition() -> Result<()> {
+    Ok(bilibi_module_registry::verify_composition(
+        &modules()?,
+        bilibi_domains::MODULES,
+        bilibi_extensions::MODULES,
+    )?)
+}
+
+pub async fn migrate(db: &Db) -> Result<bilibi_database::Migrated> {
+    bilibi_database::migrate(db, &modules()?).await
 }
 
 /// `tenant-provision` and `platform-provision` commands (Bilimbi

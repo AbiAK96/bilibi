@@ -6,7 +6,10 @@ pub use transaction::{
     Capture, CaptureFuture, Change, Context, MutationBoundary, MutationTransaction, Principal,
 };
 
+use bilibi_module_registry::Module;
 use deadpool_postgres::{Manager, Pool};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use tokio_postgres::NoTls;
 
 pub use deadpool_postgres::Pool as Db;
@@ -32,6 +35,14 @@ pub enum Error {
     Registry(#[from] bilibi_module_registry::RegistryError),
     #[error("Applied production seed definition changed: {0}; publish a new version")]
     SeedDefinition(String),
+    #[error("Applied migration changed: {0}; restore the applied file and publish a new version")]
+    MigrationDefinition(String),
+    #[error("Migration {version} was applied by {recorded}, but {module} now declares it")]
+    MigrationOwner {
+        version: String,
+        recorded: String,
+        module: String,
+    },
     #[error("Internal error")]
     Internal,
 }
@@ -104,33 +115,105 @@ pub fn pool(url: &str) -> Result<Db> {
         .map_err(|_| Error::Internal)
 }
 
-/// The host supplies module-owned migrations in dependency order. A ledger and
-/// advisory transaction lock make concurrent starts safe; DDL is atomic.
-pub async fn migrate(db: &Db, migrations: &[(&str, &str)]) -> Result<()> {
+/// What a migration run did: the versions it applied, and recorded versions no
+/// registered module declares (an unmounted module's), which stay valid.
+#[derive(Debug, Default)]
+pub struct Migrated {
+    pub applied: Vec<&'static str>,
+    pub unmounted: Vec<(String, String)>,
+}
+
+/// The host supplies modules in dependency order. A ledger and advisory
+/// transaction lock make concurrent starts safe; DDL is atomic.
+///
+/// Each applied version records its owner module and the SHA-256 of its SQL. A
+/// version whose file changed, or that another module now claims, is refused:
+/// publish a new version instead. Versions recorded by a module that is no
+/// longer mounted are kept and accepted, so unmounting and remounting a Domain
+/// never replays or loses its schema. Rows written before the ledger kept
+/// provenance adopt the owner and hash of the module that declares them.
+pub async fn migrate(db: &Db, modules: &[&'static Module]) -> Result<Migrated> {
     let mut client = db.get().await?;
     let tx = client.transaction().await?;
     tx.execute("SELECT pg_advisory_xact_lock(841317)", &[])
         .await?;
-    tx.batch_execute("CREATE TABLE IF NOT EXISTS bilibi_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").await?;
-    for (version, sql) in migrations {
-        if tx
-            .query_opt(
-                "SELECT version FROM bilibi_migrations WHERE version=$1",
-                &[version],
-            )
-            .await?
-            .is_none()
-        {
-            tx.batch_execute(sql).await?;
-            tx.execute(
-                "INSERT INTO bilibi_migrations(version) VALUES ($1)",
-                &[version],
-            )
-            .await?;
+    tx.batch_execute(
+        "CREATE TABLE IF NOT EXISTS bilibi_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+         ALTER TABLE bilibi_migrations ADD COLUMN IF NOT EXISTS module_id text, ADD COLUMN IF NOT EXISTS sha256 text",
+    )
+    .await?;
+    let mut migrated = Migrated::default();
+    let mut declared = BTreeSet::new();
+    for module in modules {
+        for (version, sql) in module.migrations {
+            declared.insert(*version);
+            let digest = sha256(sql);
+            let recorded = tx
+                .query_opt(
+                    "SELECT module_id, sha256 FROM bilibi_migrations WHERE version=$1",
+                    &[version],
+                )
+                .await?;
+            match recorded {
+                None => {
+                    tx.batch_execute(sql).await?;
+                    tx.execute(
+                        "INSERT INTO bilibi_migrations(version, module_id, sha256) VALUES ($1, $2, $3)",
+                        &[version, &module.id, &digest],
+                    )
+                    .await?;
+                    migrated.applied.push(version);
+                }
+                Some(row) => match (
+                    row.get::<_, Option<String>>(0),
+                    row.get::<_, Option<String>>(1),
+                ) {
+                    (None, None) => {
+                        tx.execute(
+                            "UPDATE bilibi_migrations SET module_id=$2, sha256=$3 WHERE version=$1",
+                            &[version, &module.id, &digest],
+                        )
+                        .await?;
+                    }
+                    (Some(owner), _) if owner != module.id => {
+                        return Err(Error::MigrationOwner {
+                            version: (*version).into(),
+                            recorded: owner,
+                            module: module.id.into(),
+                        })
+                    }
+                    (_, hash) if hash.as_deref() != Some(digest.as_str()) => {
+                        return Err(Error::MigrationDefinition(format!(
+                            "{version} of {}",
+                            module.id
+                        )))
+                    }
+                    _ => {}
+                },
+            }
+        }
+    }
+    for row in tx
+        .query(
+            "SELECT version, coalesce(module_id, '') FROM bilibi_migrations ORDER BY applied_at, version",
+            &[],
+        )
+        .await?
+    {
+        let version: String = row.get(0);
+        if !declared.contains(version.as_str()) {
+            migrated.unmounted.push((version, row.get(1)));
         }
     }
     tx.commit().await?;
-    Ok(())
+    Ok(migrated)
+}
+
+fn sha256(sql: &str) -> String {
+    Sha256::digest(sql.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // Frozen historical bootstrap: future tenancy/session/authz/audit migrations

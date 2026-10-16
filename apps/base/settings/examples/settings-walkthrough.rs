@@ -52,11 +52,7 @@ async fn main() -> Result<()> {
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| bilibi_database::Error::Invalid)?)?;
     bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
-    let migrations: Vec<_> = modules
-        .iter()
-        .flat_map(|module| module.migrations.iter().copied())
-        .collect();
-    bilibi_database::migrate(&db, &migrations).await?;
+    bilibi_database::migrate(&db, &modules).await?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
     services.install(&modules)?;

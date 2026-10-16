@@ -3,8 +3,18 @@ use bilibi_database::{pool, Error, Result};
 async fn main() -> Result<()> {
     let url = std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?;
     let db = pool(&url)?;
+    bilibi_web::verify_composition()?;
     match std::env::args().nth(1).as_deref() {
-        Some("migrate") => bilibi_web::migrate(&db).await?,
+        Some("migrate") => {
+            let migrated = bilibi_web::migrate(&db).await?;
+            println!("Migrations applied: {}", migrated.applied.len());
+            for version in &migrated.applied {
+                println!("  applied {version}");
+            }
+            for (version, module) in &migrated.unmounted {
+                println!("  kept {version} of unmounted {module}");
+            }
+        }
         Some("authz-reconcile") => {
             let app = bilibi_web::App::new(db.clone(), "http://localhost")?;
             app.services

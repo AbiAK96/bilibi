@@ -698,14 +698,7 @@ async fn main() -> Result<()> {
             None => Ok(Timestamp::now()),
         }
     };
-    bilibi_database::migrate(
-        &db,
-        &modules
-            .iter()
-            .flat_map(|m| m.migrations.iter().copied())
-            .collect::<Vec<_>>(),
-    )
-    .await?;
+    bilibi_database::migrate(&db, &modules).await?;
     let handler = Arc::new(Walkthrough {
         schedule: OnceLock::new(),
     });

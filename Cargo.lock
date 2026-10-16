@@ -519,6 +519,7 @@ dependencies = [
  "deadpool-postgres",
  "inventory",
  "serde_json",
+ "sha2",
  "thiserror",
  "tokio",
  "tokio-postgres",

@@ -71,10 +71,10 @@ impl bilibi_tenancy::ActorVerifier for SpecimenVerifier {
     }
 }
 inventory::submit! { bilibi_module_registry::Module {
-    id:"extensions/queue-specimen",layer:bilibi_module_registry::Layer::Extensions,
+    id:"extensions/queue_specimen",layer:bilibi_module_registry::Layer::Extensions,
     dependencies:&["base/queue","base/tenancy"],
-    migrations:&[("queue-specimen-001","CREATE TABLE queue_execution_accounts(user_id bigint PRIMARY KEY, active boolean NOT NULL)")],
-    services:&[bilibi_module_registry::Service {id:"extensions/queue-specimen.actor",factory:|services| {
+    migrations:&[("extensions-queue-specimen-001-accounts","CREATE TABLE queue_execution_accounts(user_id bigint PRIMARY KEY, active boolean NOT NULL)")],
+    services:&[bilibi_module_registry::Service {id:"extensions/queue_specimen.actor",factory:|services| {
         services.get::<Authentication>("base/tenancy.authentication")?.bind(Arc::new(SpecimenVerifier))?;
         Ok(Arc::new(()))
     }}],
@@ -149,14 +149,7 @@ async fn main() -> Result<()> {
     let mut services = Services::default();
     let modules = bilibi_module_registry::discover()?;
     if std::env::args().nth(1).as_deref() == Some("prepare") {
-        bilibi_database::migrate(
-            &db,
-            &modules
-                .iter()
-                .flat_map(|m| m.migrations.iter().copied())
-                .collect::<Vec<_>>(),
-        )
-        .await?;
+        bilibi_database::migrate(&db, &modules).await?;
         db.get().await?.batch_execute("INSERT INTO tenants(id,name) VALUES(1,'Private queue specimen'),(2,'Other private tenant') ON CONFLICT DO NOTHING; INSERT INTO queue_execution_accounts(user_id,active) VALUES(1,true) ON CONFLICT DO NOTHING; INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,1,'companies.update',true) ON CONFLICT DO NOTHING").await?;
         println!("private prerequisite-only host prepared");
         return Ok(());

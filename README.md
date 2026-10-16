@@ -225,7 +225,9 @@ runs this automatically; CI checks that composition files are current.
 Each deep module submits one `bilibi_module_registry::Module` descriptor through
 `inventory`, naming its stable ID, layer, dependencies, embedded migrations and
 service factories. Runtime discovery rejects missing/duplicate modules, upward
-dependencies, cycles, duplicate migrations and conflicting service names. It
+dependencies, cycles, duplicate migrations and conflicting service names, and the
+`bilibi-web` binary refuses Domain or Extension descriptors that differ from the
+mounted crates discovery found. It
 orders Base → Core → Domains → Extensions and dependencies before consumers,
 then initializes typed services. The host resolves named services and runs
 module-contributed SQL; it keeps no module or migration list. Company resolves the Base notification boundary; User installs its persistence

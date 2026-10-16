@@ -140,11 +140,7 @@ async fn main() -> DbResult<()> {
             .map_err(internal);
     }
     let modules = bilibi_module_registry::discover()?;
-    let migrations: Vec<_> = modules
-        .iter()
-        .flat_map(|m| m.migrations.iter().copied())
-        .collect();
-    bilibi_database::migrate(&db, &migrations).await?;
+    bilibi_database::migrate(&db, &modules).await?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
     services.install(&modules)?;

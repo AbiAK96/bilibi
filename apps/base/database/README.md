@@ -46,9 +46,20 @@ DDL on databases where their versions were applied. `004-database-boundary` is
 an additive bridge and Database ledger migration; `006-audit-evidence` is Audit's. Future tenancy, session,
 authorization and audit DDL is contributed by those owning modules through
 `Module::migrations`; Database only supplies orchestration. Use globally unique
-module-prefixed versions, such as `base/settings/001-values`. The host runs
-migrations in dependency order under a transaction advisory lock. A failed batch
-rolls back both DDL and migration ledger rows.
+module-prefixed versions, such as `base/settings/001-values`; a Domain or
+Extension module must name them `<container>-<module>-NNN-<slug>` with
+underscores as hyphens (`supply-chain-purchasing-001-suppliers`), which the
+registry enforces. `migrate(db, &modules)` runs migrations in dependency order
+under a transaction advisory lock. A failed batch rolls back both DDL and
+migration ledger rows.
+
+The `bilibi_migrations` ledger records each applied version's owner module and
+the SHA-256 of its SQL. A version whose SQL changed, or that another module now
+declares, is refused: never edit an applied migration, publish a new version.
+Versions recorded by a module that is no longer mounted stay valid and are
+reported as kept, so unmounting and remounting a Domain neither replays nor
+loses its schema. Rows applied before the ledger kept provenance adopt the
+owner and hash of the module that declares them on the next run.
 
 # Production seeds
 
