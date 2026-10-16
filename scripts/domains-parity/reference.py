@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export the pinned Bilimbi reference and capture its domain pages (no unit tests)."""
 import argparse
+import difflib
 import hashlib
 import io
 import json
@@ -54,6 +55,7 @@ def export(args):
     with open(identity_path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as file:
         json.dump(identity, file)
     write_json(evidence / "pins.json", PINS)
+    tls(args)
     routes(args)
 
 
@@ -74,6 +76,42 @@ def routes(args):
         raise SystemExit("Pinned inventory must have 49 routes, including 44 LiveViews")
     write_json(args.evidence / "routes.json", found)
     print("Inventoried 44 LiveViews and 5 controllers")
+
+
+def repair(args):
+    """Apply the approved, recorded repair only in the exported reference."""
+    relative = "apps/domains/finance/reconciliation/lib/reconciliation/contributions.ex"
+    source = args.evidence / "reference" / relative
+    before = source.read_text()
+    old = 'verbs: ["import", "finalise"]'
+    new = 'verbs: ["finalise"]'
+    if before.count(old) != 1:
+        raise SystemExit("Expected pinned declaration missing; preserve the reference and inspect it")
+    after = before.replace(old, new)
+    patch = "".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True),
+                                       fromfile="a/" + relative, tofile="b/" + relative))
+    (args.evidence / "reference-compatibility.patch").write_text(patch)
+    source.write_text(after)
+    write_json(args.evidence / "reference-repair.json", {
+        "approved_by": "firstmate, steering message 001, 2026-10-16T04:17:53Z",
+        "defect": "finance/reconciliation and factory/production_execution both register import",
+        "change": "Remove redundant reconciliation verb registration; all capability keys remain",
+        "source": relative, "before_sha256": hashlib.sha256(before.encode()).hexdigest(),
+        "after_sha256": hashlib.sha256(after.encode()).hexdigest(),
+    })
+    print("Applied approved reference-only import registration repair")
+
+
+def tls(args):
+    destination = args.evidence / "tls"
+    destination.mkdir(mode=0o700, exist_ok=True)
+    if (destination / "key.pem").exists():
+        raise SystemExit("TLS identity exists; keep the reference identity instead of replacing it")
+    command(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+             "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+             "-keyout", destination / "key.pem", "-out", destination / "cert.pem"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    (destination / "key.pem").chmod(0o600)
 
 
 def dump(args):
@@ -139,20 +177,43 @@ def capture(args):
     screens = evidence / "screens" / args.theme
     screens.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, CHROME_DEVTOOLS_AXI_SESSION=args.session, TZ="Asia/Kuala_Lumpur")
+    if args.base_url.startswith("https://127.0.0.1:"):
+        # A private self-signed endpoint keeps Bilimbi's compiled SSL policy.
+        # This flag applies only to this task's isolated browser process.
+        env["CHROME_DEVTOOLS_AXI_CHROME_ARGS"] = (
+            env.get("CHROME_DEVTOOLS_AXI_CHROME_ARGS", "") + " --ignore-certificate-errors").strip()
     def axi(*argv, script=None):
-        return command(["chrome-devtools-axi", *argv], env=env, input=script, capture_output=True).stdout
+        try:
+            return command(["chrome-devtools-axi", *argv], env=env, input=script, capture_output=True).stdout
+        except subprocess.CalledProcessError as error:
+            raise SystemExit(error.stderr or error.stdout or str(error)) from error
+    axi("newpage", args.base_url + "/")
     axi("emulate", "--viewport", "1440x1000x1", "--color-scheme", args.theme)
     identity = json.loads((evidence / "identity.json").read_text())
     # Login uses the real HTTP form; no session injection or authentication bypass.
     login = f"""
-await page.open({json.dumps(args.base_url + '/login')});
+await page.open({json.dumps(args.base_url + '/')});
+await page.eval(async () => {{
+  const deadline = Date.now() + 15000;
+  while (!document.querySelector('.phx-connected') && Date.now() < deadline)
+    await new Promise(resolve => setTimeout(resolve, 100));
+  if (!document.querySelector('.phx-connected')) throw new Error('Login LiveView did not connect');
+}});
 console.log(await page.snapshot());
 """
     (evidence / "login-snapshot.txt").write_text(axi("run", script=login))
     login = f"""
-await page.fill('input[name="login[email]"]', {json.dumps(identity['email'])});
-await page.fill('input[name="login[password]"]', {json.dumps(identity['password'])});
-await page.click('button[type="submit"]');
+if (await page.eval(() => !!document.querySelector('#login-email'))) {{
+  await page.fill('#login-email', {json.dumps(identity['email'])});
+  await page.fill('#login-password', {json.dumps(identity['password'])});
+  await page.click('#login-submit');
+  await page.eval(async () => {{
+    const deadline = Date.now() + 15000;
+    while (location.pathname === '/' && Date.now() < deadline)
+      await new Promise(resolve => setTimeout(resolve, 100));
+    if (location.pathname === '/') throw new Error('Login did not finish');
+  }});
+}}
 console.log(await page.snapshot());
 """
     (evidence / "authenticated-snapshot.txt").write_text(axi("run", script=login))
@@ -164,7 +225,6 @@ console.log(await page.snapshot());
         filename = route["path"].strip("/").replace("/", "__").replace(":", "")
         script = f"""
 const response = await page.open({json.dumps(args.base_url + path)});
-await page.wait('[data-phx-main]');
 await page.eval(async () => {{
   await document.fonts.ready;
   const deadline = Date.now() + 15000;
@@ -191,11 +251,11 @@ console.log(await page.snapshot());
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("export", "routes", "dump", "capture"))
+    parser.add_argument("action", choices=("export", "routes", "repair", "tls", "dump", "capture"))
     parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--projects", type=Path)
     parser.add_argument("--pg-bin", default="/usr/lib/postgresql/18/bin")
-    parser.add_argument("--base-url", default="http://127.0.0.1:41461")
+    parser.add_argument("--base-url", default="https://127.0.0.1:41461")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
     parser.add_argument("--session", default="bilibi-dom-r1")
     args = parser.parse_args()

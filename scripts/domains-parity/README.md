@@ -20,6 +20,7 @@ can exceed PostgreSQL's Unix socket path limit; disable Unix sockets with
 From the exported `reference/` directory:
 
 ```bash
+# First apply the approved reference repair from Bilibi (see below).
 ERL_FLAGS='+S 4:4' mix deps.get
 ERL_FLAGS='+S 4:4' mix bilimbi.migrate
 ERL_FLAGS='+S 4:4' mix run --no-start ../fixtures.exs
@@ -27,9 +28,10 @@ ERL_FLAGS='+S 4:4' mix run --no-start ../fixtures.exs
 ERL_FLAGS='+S 4:4' mix run --no-start ../serve.exs
 ```
 
-`serve.exs` binds only `127.0.0.1:41461` (override `PARITY_HTTP_PORT`). It disables
-workers and uses HTTP for this private reference without registering a shared
-ingress. It leaves the pinned production sources unchanged. `fixtures.exs`
+`serve.exs` binds HTTPS only on `127.0.0.1:41461` (override `PARITY_HTTP_PORT`).
+It disables workers and uses an exported self-signed TLS identity without
+registering a shared ingress. The isolated capture browser accepts that local
+certificate; no system trust store changes are needed. It leaves the pinned production sources unchanged. `fixtures.exs`
 provisions a disposable operator through the real bootstrap API, and creates no
 domain records. Credentials are generated into `identity.json` with mode 0600.
 Never put that file in Git. `walkthrough.exs` is an explicit skeleton for later
@@ -71,3 +73,16 @@ contribution installation:
 The fallback `2a99148` has byte-identical `ContributionValidator` code. Both
 domains declare `import`. A combined runtime therefore needs an explicitly
 recorded reference compatibility repair before it can provide screenshots.
+Firstmate approved removing Reconciliation's redundant `import` registration
+in steering message 001 at 2026-10-16T04:17:53Z. All capability keys are
+unchanged; Production Execution still provides the verb. Apply it only to the
+exported scratch reference:
+
+```bash
+python3 scripts/domains-parity/reference.py repair --evidence /path/to/evidence
+```
+
+The action writes `reference-compatibility.patch` and `reference-repair.json`,
+including before/after hashes. Never apply this repair to the source domain
+repositories. The duplicate registration is a real Bilimbi composition defect
+to file separately; it is not a change to the Rust port.
