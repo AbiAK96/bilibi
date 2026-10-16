@@ -123,7 +123,7 @@ async fn main() -> Result<(), Failure> {
         "People installed",
         bilibi_web::modules()?
             .iter()
-            .any(|m| m.id.starts_with("domains/people")),
+            .any(|m| m.id.starts_with("people/")),
     );
     show(
         "unknown HR/account keys",

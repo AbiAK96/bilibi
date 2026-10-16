@@ -132,7 +132,7 @@ async fn main() -> Result<(), Failure> {
         "People module installed",
         bilibi_web::modules()?
             .iter()
-            .any(|m| m.id.starts_with("domains/people")),
+            .any(|m| m.id.starts_with("people/")),
     );
     let after: i64 = client
         .query_one("SELECT count(*) FROM users", &[])
