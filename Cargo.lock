@@ -446,6 +446,7 @@ name = "bilibi-company"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "bilibi-address",
  "bilibi-agent-api",
  "bilibi-artifacts",
  "bilibi-audit",
@@ -464,6 +465,7 @@ dependencies = [
  "bilibi-person",
  "bilibi-principal-directory",
  "bilibi-security",
+ "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",

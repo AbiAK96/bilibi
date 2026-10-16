@@ -4,17 +4,20 @@
 //! `FILES` on the caller's sealed connection before every operation; the
 //! adapter answers from Company's own rules and never trusts an id.
 //!
-//! One rule serves both: the operation capability now, the company live in
-//! the actor's own tenant and within the actor's reach (own company, or any
-//! with `admin.company.tenant-wide.manage`), and for a write an unarchived
-//! company. Missing and cross-tenant companies are `NotFound`; a denied
-//! or archived one is `Forbidden`. A company's documents are filed under the
-//! company itself: an artifact reference naming another subject is refused.
+//! One rule serves both, the same the company pages follow: a read needs
+//! `admin.company.view` now and a company live in the actor's own tenant
+//! (the detail page's rule); a write needs `admin.company.update` (purge,
+//! `.delete`), the actor's reach (own company, or any with
+//! `admin.company.tenant-wide.manage`) and an unarchived company. Missing and
+//! cross-tenant companies are `NotFound`; a denied or archived one is
+//! `Forbidden`. A company's documents are filed under the company itself: an
+//! artifact reference naming another subject is refused.
 use crate::{
     contributions::{DELETE, UPDATE, VIEW},
     organisation::Directory,
 };
 use bilibi_artifacts::{Operation, Owner, Reference};
+use bilibi_authz::authorize_proof;
 use bilibi_database::{Error, Result};
 use bilibi_media::{Subject, SubjectAction, SubjectOwner, SUBJECTS};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -45,8 +48,16 @@ async fn authorize(
     capability: &str,
     write: bool,
 ) -> Result<()> {
+    if !write {
+        authorize_proof(client, scope, capability).await?;
+        return Directory
+            .lookup(client, scope, id)
+            .await?
+            .map(|_| ())
+            .ok_or(Error::NotFound);
+    }
     let company = Directory.target(client, scope, id, capability).await?;
-    if write && company.archived {
+    if company.archived {
         return Err(Error::Forbidden);
     }
     Ok(())

@@ -36,4 +36,6 @@ bilibi-artifacts = { path = "../../base/artifacts" }
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-web = { path = "../../web" }
+bilibi-address = { path = "../address" }
+bilibi-settings = { path = "../../base/settings" }
 tokio.workspace = true
