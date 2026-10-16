@@ -1,0 +1,132 @@
+//! The one bounded read: tenant accounts with their company standing and
+//! visible roles, filtered, counted, ordered and paged in one PostgreSQL
+//! statement (Bilimbi `Core.UserAdministration.Query`). Every physical
+//! source is named here and nowhere else in this crate; nothing is written.
+use crate::{Entry, Options, Page, Role, Sort};
+use bilibi_database::{Error, Result};
+use bilibi_tenancy::Scope;
+use tokio_postgres::{types::ToSql, GenericClient};
+
+/// Fixed SQL for each sort; every ordering ends with the account id
+/// descending so equal values page stably.
+fn order(sort: Sort, descending: bool, prefix: &str) -> String {
+    let column = match sort {
+        Sort::Name => format!("lower({prefix}name)"),
+        Sort::Email => format!("lower({prefix}email)"),
+        Sort::CompanyName => format!("lower({prefix}company_name)"),
+        Sort::CreatedAt => format!("{prefix}created_at"),
+    };
+    let direction = if descending { "DESC" } else { "ASC" };
+    format!("{column} {direction} NULLS LAST, {prefix}id DESC")
+}
+
+/// `%`, `_` and `\` in the typed text match themselves (Bilibi's lists
+/// search for what was typed; Bilimbi kept the PHP wildcard meaning).
+fn escape_like(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if matches!(character, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
+const STATEMENT: &str = "WITH tenant_companies AS (
+  SELECT id, name, status, deleted_at FROM companies WHERE tenant_id = $1
+), filtered_users AS (
+  SELECT u.id, u.name, u.email, u.created_at, u.organisation_id AS company_id, c.name AS company_name,
+         (c.id IS NOT NULL AND (c.deleted_at IS NOT NULL OR c.status = 'archived')) AS company_archived,
+         (c.id IS NOT NULL AND c.deleted_at IS NOT NULL) AS company_deleted
+  FROM users u LEFT JOIN tenant_companies c ON c.id = u.organisation_id
+  WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+    AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
+    AND (cardinality($3::bigint[]) = 0 OR EXISTS (
+      SELECT 1 FROM principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))
+), user_total AS (
+  SELECT count(*) AS total FROM filtered_users
+), page_users AS (
+  SELECT * FROM filtered_users ORDER BY {order} LIMIT $4 OFFSET $5
+), page_roles AS (
+  SELECT pr.user_id,
+         array_agg(r.id ORDER BY r.name, r.code, r.id) AS role_ids,
+         array_agg(r.name ORDER BY r.name, r.code, r.id) AS role_names,
+         array_agg(r.code ORDER BY r.name, r.code, r.id) AS role_codes,
+         array_agg(r.is_system ORDER BY r.name, r.code, r.id) AS role_system
+  FROM principal_roles pr JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
+  WHERE pr.tenant_id = $1 AND pr.user_id IN (SELECT id FROM page_users)
+  GROUP BY pr.user_id
+)
+SELECT t.total, p.id, p.name, p.email, p.created_at, p.company_id, p.company_name, p.company_archived, p.company_deleted,
+       g.role_ids, g.role_names, g.role_codes, g.role_system
+FROM user_total t
+LEFT JOIN page_users p ON true
+LEFT JOIN page_roles g ON g.user_id = p.id
+ORDER BY {final_order}";
+
+/// One page under the caller's already-proven `admin.user.list`; the scope's
+/// tenant is the only predicate. An out-of-range page keeps the real total.
+pub async fn list(client: &impl GenericClient, scope: &Scope, options: &Options) -> Result<Page> {
+    let tenant = scope.tenant();
+    let pattern = options
+        .search
+        .as_deref()
+        .map(|text| format!("%{}%", escape_like(text)));
+    let limit = i64::try_from(options.page_size).map_err(|_| Error::Invalid)?;
+    let offset = i64::try_from((options.page - 1).saturating_mul(options.page_size))
+        .map_err(|_| Error::Invalid)?;
+    let params: [&(dyn ToSql + Sync); 5] = [&tenant, &pattern, &options.role_ids, &limit, &offset];
+    let statement = STATEMENT
+        .replacen("{order}", &order(options.sort, options.descending, ""), 1)
+        .replacen(
+            "{final_order}",
+            &order(options.sort, options.descending, "p."),
+            1,
+        );
+    let rows = client.query(&statement, &params).await?;
+    let total = rows
+        .first()
+        .map(|row| row.get::<_, i64>(0))
+        .unwrap_or_default();
+    let mut entries = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let Some(id) = row.get::<_, Option<i64>>(1) else {
+            continue;
+        };
+        let roles = match row.get::<_, Option<Vec<i64>>>(9) {
+            None => Vec::new(),
+            Some(ids) => {
+                let names: Vec<String> = row.get(10);
+                let codes: Vec<Option<String>> = row.get(11);
+                let system: Vec<bool> = row.get(12);
+                ids.into_iter()
+                    .zip(names)
+                    .zip(codes)
+                    .zip(system)
+                    .map(|(((id, name), code), is_system)| Role {
+                        id,
+                        name,
+                        code,
+                        is_system,
+                    })
+                    .collect()
+            }
+        };
+        entries.push(Entry {
+            id,
+            name: row.get(2),
+            email: row.get(3),
+            created_at: row.get(4),
+            company_id: row.get(5),
+            company_name: row.get(6),
+            company_archived: row.get(7),
+            company_deleted: row.get(8),
+            roles,
+        });
+    }
+    Ok(Page {
+        entries,
+        total_entries: u64::try_from(total).unwrap_or_default(),
+    })
+}

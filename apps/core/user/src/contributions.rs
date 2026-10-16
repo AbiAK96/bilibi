@@ -45,6 +45,42 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { mod
     system_principals: &[],
 }) }
 
+// Bilimbi's `admin.user` menu entry: Core User owns the navigation to the
+// tenant-wide `/users` index, whose page User Administration contributes.
+bilibi_menu::contribute!(
+    "core/user",
+    bilibi_menu::MenuItem::page("admin.user", "Users", "/users")
+        .under("admin")
+        .icon("users")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(30)
+);
+
+// What Core User puts in the Grid catalog (Bilimbi `Core.User.GridTables`):
+// the `users` table and its links to the company an account signs in under
+// and the Person it names, plus the inbound many-links back to the accounts.
+// Core User depends on Company and Person, so it may name their tables.
+static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
+    tables: &[bilibi_grid::TableDecl::new("users", "Users", LIST,
+        bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,created_at,updated_at,organisation_id AS company_id,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
+            bilibi_grid::Field::new("id", "ID", bilibi_grid::FieldType::Integer),
+            bilibi_grid::Field::new("name", "Name", bilibi_grid::FieldType::String),
+            bilibi_grid::Field::new("email", "Email", bilibi_grid::FieldType::String),
+            bilibi_grid::Field::new("email_verified_at", "Email verified", bilibi_grid::FieldType::DateTime),
+            bilibi_grid::Field::new("created_at", "Created", bilibi_grid::FieldType::DateTime),
+            bilibi_grid::Field::new("updated_at", "Updated", bilibi_grid::FieldType::DateTime),
+            bilibi_grid::Field::new("company_id", "Company", bilibi_grid::FieldType::Integer).hidden(),
+            bilibi_grid::Field::new("person_id", "Person", bilibi_grid::FieldType::Integer).hidden(),
+        ]).label_field("name").time_field("created_at").record_types(&["user"])],
+    links: &[
+        bilibi_grid::LinkDecl::on("company", "Company", bilibi_grid::LinkKind::One, "users", "company_id", "companies", "id"),
+        bilibi_grid::LinkDecl::on("person", "Person", bilibi_grid::LinkKind::One, "users", "person_id", "persons", "id"),
+        bilibi_grid::LinkDecl::on("users", "Users", bilibi_grid::LinkKind::Many, "companies", "id", "users", "company_id"),
+        bilibi_grid::LinkDecl::on("accounts", "Accounts", bilibi_grid::LinkKind::Many, "persons", "id", "users", "person_id"),
+    ],
+};
+bilibi_grid::contribute!("core/user", "user.grid", &GRID);
+
 // The account administration pages (Bilimbi `FormLive`, `ShowLive`). The
 // tenant-wide `/users` index is User Administration's (K13); these two are the
 // create form and the read-first detail page it links to.

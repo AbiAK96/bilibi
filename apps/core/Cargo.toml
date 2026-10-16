@@ -15,3 +15,4 @@ bilibi-geonames = { path = "geonames" }
 bilibi-party = { path = "party" }
 bilibi-person = { path = "person" }
 bilibi-user = { path = "user" }
+bilibi-user-administration = { path = "user_administration" }

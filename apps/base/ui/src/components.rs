@@ -307,7 +307,7 @@ pub struct Button<'a> {
 /// A compact icon-only action with an accessible label.
 #[derive(Template, Debug)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon=icon, label=label, context=context, kind=kind, chrome=chrome, busy=busy, disabled=disabled, class=class, id=id, href=href, title=title, button_type=button_type, event=event, name=name, value=value, draggable=draggable, data_role=data_role, nav_pin=nav_pin) %}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon=icon, label=label, context=context, kind=kind, chrome=chrome, busy=busy, disabled=disabled, class=class, id=id, href=href, title=title, button_type=button_type, event=event, name=name, value=value, draggable=draggable, data_role=data_role, nav_pin=nav_pin, method=method) %}{% endcall %}"#,
     ext = "html"
 )]
 pub struct IconButton<'a> {
@@ -333,6 +333,9 @@ pub struct IconButton<'a> {
     /// A page's own "Pin to sidebar" control: the navigation item ID
     /// (`nav-admin-system-settings`) that `assets/shell.js` pins and marks.
     pub nav_pin: &'a str,
+    /// With `href`, the HTTP method of a submitting action link (`post`);
+    /// `ui.js` sends it with the CSRF token and follows the redirect.
+    pub method: &'a str,
 }
 
 impl<'a> IconButton<'a> {
@@ -356,6 +359,7 @@ impl<'a> IconButton<'a> {
             draggable: false,
             data_role: "",
             nav_pin: "",
+            method: "",
         }
     }
 }
