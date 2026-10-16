@@ -395,6 +395,28 @@ impl BindingIdentity<'_> {
     }
 }
 
+/// Authentication-edge read for the account binder (K9): whether a linked
+/// Person still stands, on the caller's connection and before any Scope
+/// exists. A retired identity, a cross-tenant or missing id and the protected
+/// system identity all answer `false`; the caller freezes the account. This
+/// grants nothing and returns no contact data.
+pub async fn account_standing(
+    client: &dyn ProofClient,
+    tenant: i64,
+    id: PersonId,
+) -> Result<bool> {
+    if tenant <= 0 {
+        return Err(Error::Unauthorized);
+    }
+    Ok(client
+        .query_opt(
+            "SELECT id FROM persons WHERE tenant_id=$1 AND id=$2 AND retired_at IS NULL AND system_key IS NULL",
+            &[&tenant, &id.get()],
+        )
+        .await?
+        .is_some())
+}
+
 /// Base's sealed proof service calls the owner on its current connection.
 pub struct Provider;
 impl PersonProvider for Provider {

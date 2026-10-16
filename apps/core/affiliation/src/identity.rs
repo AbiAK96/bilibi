@@ -3,7 +3,7 @@
 use crate::{contributions::*, model::*, publish};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ProofClient, Scope};
 use serde_json::Value;
 use std::collections::HashSet;
 use tokio_postgres::GenericClient;
@@ -231,6 +231,35 @@ async fn save(
     })).await?;
     publish(tx, tenant, &affiliation);
     Ok(affiliation.redact(&masked))
+}
+
+/// Authentication-edge read for the account binder (K9): the endpoints of a
+/// linked (not unlinked) affiliation, on the caller's connection and before
+/// any Scope exists. `None` for an unlinked, missing or cross-tenant id, so the
+/// account's organisation facet never outlives the affiliation that proved it.
+/// Dates are not judged here: an ended affiliation keeps its identity provable,
+/// as `lock_for_account_binding` does. No contact data is returned.
+pub async fn account_standing(
+    client: &dyn ProofClient,
+    tenant: i64,
+    id: AffiliationId,
+) -> Result<Option<(PersonId, OrganisationId)>> {
+    if tenant <= 0 {
+        return Err(Error::Unauthorized);
+    }
+    let row = client
+        .query_opt(
+            "SELECT person_id,organisation_id FROM person_affiliations WHERE tenant_id=$1 AND id=$2 AND unlinked_at IS NULL",
+            &[&tenant, &id.get()],
+        )
+        .await?;
+    row.map(|row| {
+        Ok((
+            PersonId::new(row.get(0)).map_err(|_| Error::Internal)?,
+            OrganisationId::new(row.get(1)).map_err(|_| Error::Internal)?,
+        ))
+    })
+    .transpose()
 }
 
 /// Sealed, non-serializable identity held only while its transaction is borrowed.

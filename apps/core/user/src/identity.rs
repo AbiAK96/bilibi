@@ -1,0 +1,490 @@
+//! The account binder (K9): the one place an account becomes a Core identity.
+//! An account optionally names a Person and, through one of that Person's
+//! affiliations, an Organisation (Bilimbi `users.company_id`, on the approved
+//! party model). Every authentication re-proves those links through their
+//! owners' public reads: the session check behind each request and live event,
+//! the bearer proof behind each token request, sign-in and password reset all
+//! pass through [`standing`], so a browser request and an agent request carry
+//! the same actor facets, and archiving a company freezes its accounts at once
+//! (Bilimbi `UserAuth`: "An archived company's accounts therefore cannot sign
+//! in, be impersonated, or keep a session"). Nothing here grants a capability.
+use crate::{
+    contributions::{UPDATE, VIEW},
+    password, CredentialError, Login, UserService,
+};
+use bilibi_affiliation::identity::account_standing as affiliation_standing;
+use bilibi_company::eligibility::{
+    account_eligibility, lock_account_company, lock_writable_companies, AccountEligibility,
+};
+use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
+use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+use bilibi_person::identity::account_standing as person_standing;
+use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope, Sessions};
+use serde::Serialize;
+use serde_json::json;
+use tokio_postgres::{GenericClient, Row};
+
+/// The account's party links as stored: owner output, never request input.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct AccountLinks {
+    pub person: Option<PersonId>,
+    pub affiliation: Option<AffiliationId>,
+    pub organisation: Option<OrganisationId>,
+}
+impl AccountLinks {
+    fn from_row(row: &Row, first: usize) -> Result<Self> {
+        let id = |index: usize| -> Result<Option<i64>> { Ok(row.get(index)) };
+        Ok(Self {
+            person: id(first)?
+                .map(PersonId::new)
+                .transpose()
+                .map_err(|_| Error::Internal)?,
+            affiliation: id(first + 1)?
+                .map(AffiliationId::new)
+                .transpose()
+                .map_err(|_| Error::Internal)?,
+            organisation: id(first + 2)?
+                .map(OrganisationId::new)
+                .transpose()
+                .map_err(|_| Error::Internal)?,
+        })
+    }
+    fn json(&self) -> serde_json::Value {
+        json!({
+            "person_id": self.person.map(PersonId::get),
+            "affiliation_id": self.affiliation.map(AffiliationId::get),
+            "organisation_id": self.organisation.map(OrganisationId::get),
+        })
+    }
+}
+
+/// One account as an administrator reads it (K16 composes its page from this).
+#[derive(Clone, Debug, Serialize)]
+pub struct Account {
+    pub id: i64,
+    pub name: String,
+    pub email: String,
+    pub status: String,
+    pub email_verified: bool,
+    pub links: AccountLinks,
+}
+
+/// Why a live, correctly authenticated account still may not act.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Freeze {
+    /// The company the account's affiliation names is archived: final, as
+    /// Bilimbi's archive is. The sign-in page names this one.
+    CompanyArchived,
+    /// The account no longer stands on a live identity: its company is gone,
+    /// its affiliation was unlinked or its Person retired. Bilimbi's
+    /// "not attached to an active workspace".
+    Identity,
+}
+/// The authentication-edge answer for one account id.
+#[derive(Debug)]
+pub enum Standing {
+    Live(AccountIdentity),
+    /// No active, undeleted account with that id in that tenant.
+    Unknown,
+    Frozen(Freeze),
+}
+
+/// Re-proves the account and each stored link through its owner, on the
+/// caller's connection, before any Scope exists. Called on every session
+/// check and bearer proof (through [`AccountVerifier`]), at sign-in and when a
+/// reset link is issued or redeemed. The result is read afresh each time and
+/// never written back as a derived account status.
+pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Result<Standing> {
+    if tenant <= 0 || user <= 0 {
+        return Ok(Standing::Unknown);
+    }
+    let Some(row) = client
+        .query_opt(
+            "SELECT name,email,person_id,affiliation_id,organisation_id FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
+            &[&tenant, &user],
+        )
+        .await?
+    else {
+        return Ok(Standing::Unknown);
+    };
+    let links = AccountLinks::from_row(&row, 2)?;
+    if let Some(organisation) = links.organisation {
+        match account_eligibility(client, tenant, organisation).await? {
+            AccountEligibility::Eligible => {}
+            AccountEligibility::Archived => return Ok(Standing::Frozen(Freeze::CompanyArchived)),
+            AccountEligibility::Missing => return Ok(Standing::Frozen(Freeze::Identity)),
+        }
+    }
+    if let Some(affiliation) = links.affiliation {
+        // The stored endpoints are what the foreign key guarantees; an
+        // unlinked affiliation no longer proves the organisation facet.
+        match affiliation_standing(client, tenant, affiliation).await? {
+            Some((person, organisation))
+                if Some(person) == links.person && Some(organisation) == links.organisation => {}
+            _ => return Ok(Standing::Frozen(Freeze::Identity)),
+        }
+    }
+    if let Some(person) = links.person {
+        if !person_standing(client, tenant, person).await? {
+            return Ok(Standing::Frozen(Freeze::Identity));
+        }
+    }
+    Ok(Standing::Live(AccountIdentity {
+        name: row.get(0),
+        email: row.get(1),
+        person: links.person,
+        organisation: links.organisation,
+        affiliation: links.affiliation,
+    }))
+}
+
+/// The one `ActorVerifier` bound into `base/tenancy.authentication`: it
+/// answers every session check, live refresh and bearer proof with the same
+/// [`standing`], so the sealed actor's facets are identical whichever edge
+/// authenticated the request. A frozen account is indistinguishable from an
+/// unknown one here; sign-in names the reason before a session exists.
+pub struct AccountVerifier;
+impl ActorVerifier for AccountVerifier {
+    fn verify<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        tenant: i64,
+        user: i64,
+    ) -> ProofFuture<'a, AccountIdentity> {
+        Box::pin(async move {
+            match standing(client, tenant, user).await? {
+                Standing::Live(identity) => Ok(identity),
+                Standing::Unknown | Standing::Frozen(_) => Err(Error::Unauthorized),
+            }
+        })
+    }
+    fn confirm_password<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        tenant: i64,
+        user: i64,
+        password: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            if password.len() > password::MAX_LENGTH {
+                return Ok(false);
+            }
+            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.map(|row| row.get(0));
+            password::verify(password, stored.as_deref()).await
+        })
+    }
+}
+
+/// Bilimbi's sign-in: the email is unique platform-wide, so no tenant is
+/// asked. The password is verified first, at the same cost for an unknown
+/// address, and only then is the account's standing judged, so a frozen
+/// account is named only to someone holding its credential.
+pub async fn login(db: &Db, email: &str, password: &str) -> Result<Login, CredentialError> {
+    let email = crate::reset::normalize_email(email).map_err(|_| CredentialError::Rejected)?;
+    if password.len() > password::MAX_LENGTH {
+        return Err(CredentialError::Rejected);
+    }
+    let client = db.get().await.map_err(Error::from)?;
+    let row = client
+        .query_opt(
+            "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active'",
+            &[&email],
+        )
+        .await
+        .map_err(Error::from)?;
+    // An unknown account still pays for one verification.
+    let stored: Option<String> = row.as_ref().map(|row| row.get(2));
+    if !password::verify(password, stored.as_deref()).await? {
+        return Err(CredentialError::Rejected);
+    }
+    let row = row.ok_or(CredentialError::Rejected)?;
+    let (user, tenant, workspace): (i64, i64, bool) = (row.get(0), row.get(1), row.get(3));
+    if !workspace {
+        return Err(CredentialError::WorkspaceUnavailable);
+    }
+    match standing(&**client, tenant, user).await? {
+        Standing::Live(_) => {}
+        Standing::Frozen(Freeze::CompanyArchived) => return Err(CredentialError::CompanyArchived),
+        Standing::Frozen(Freeze::Identity) | Standing::Unknown => {
+            return Err(CredentialError::WorkspaceUnavailable)
+        }
+    }
+    let result = Login {
+        token: uuid::Uuid::new_v4().simple().to_string(),
+        csrf: uuid::Uuid::new_v4().simple().to_string(),
+    };
+    client.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')", &[&result.token,&tenant,&user,&result.csrf]).await.map_err(Error::from)?;
+    Ok(result)
+}
+
+/// Why a link command did not happen. `Access` is an authorization denial,
+/// an owner's refusal to prove the target (retired or protected Person) or a
+/// database fault.
+#[derive(Debug, thiserror::Error)]
+pub enum LinkError {
+    #[error("Not found")]
+    NotFound,
+    #[error("This account's company is archived and read-only")]
+    Archived,
+    #[error("This affiliation belongs to another person")]
+    PersonMismatch,
+    #[error(transparent)]
+    Access(#[from] Error),
+}
+impl From<bilibi_company::WriteError> for LinkError {
+    fn from(error: bilibi_company::WriteError) -> Self {
+        match error {
+            bilibi_company::WriteError::NotFound => Self::NotFound,
+            bilibi_company::WriteError::Archived => Self::Archived,
+            bilibi_company::WriteError::Access(error) => Self::Access(error),
+            _ => Self::Access(Error::Forbidden),
+        }
+    }
+}
+
+async fn read_account(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+    lock: bool,
+) -> Result<Option<Account>> {
+    let sql = format!(
+        "SELECT id,name,email,status,email_verified_at IS NOT NULL,person_id,affiliation_id,organisation_id FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        if lock { " FOR UPDATE" } else { "" }
+    );
+    client
+        .query_opt(&sql, &[&scope.tenant(), &user])
+        .await?
+        .map(|row| {
+            Ok(Account {
+                id: row.get(0),
+                name: row.get(1),
+                email: row.get(2),
+                status: row.get(3),
+                email_verified: row.get(4),
+                links: AccountLinks::from_row(&row, 5)?,
+            })
+        })
+        .transpose()
+}
+
+/// Writes the links, audited as the account, and ends the account's sessions
+/// when its organisation changes (Bilimbi's reassignment ends them all): the
+/// sealed facets of every open page and token would otherwise be stale until
+/// their next check. Announced only after the commit.
+async fn save_links(
+    service: &UserService,
+    tx: &mut MutationTransaction<'_>,
+    old: &Account,
+    links: AccountLinks,
+) -> Result<AccountLinks> {
+    let tenant = tx.context().tenant;
+    let (id, before) = (old.id, old.links);
+    let ended = tx
+        .mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute(
+                    "UPDATE users SET person_id=$3,affiliation_id=$4,organisation_id=$5 WHERE tenant_id=$1 AND id=$2",
+                    &[
+                        &tenant,
+                        &id,
+                        &links.person.map(PersonId::get),
+                        &links.affiliation.map(AffiliationId::get),
+                        &links.organisation.map(OrganisationId::get),
+                    ],
+                )
+                .await?;
+                let ended = if before.organisation != links.organisation {
+                    Sessions::end_user_sessions(sql, tenant, id, None).await?
+                } else {
+                    Vec::new()
+                };
+                Ok((
+                    ended,
+                    vec![Change {
+                        kind: "user".into(),
+                        id,
+                        old: before.json(),
+                        new: links.json(),
+                    }],
+                ))
+            })
+        })
+        .await?;
+    let sessions = service.sessions.clone();
+    tx.after_commit(move || sessions.announce(ended));
+    Ok(links)
+}
+
+impl UserService {
+    /// One account of the actor's tenant with its party links; `admin.user.view`.
+    pub async fn account(&self, scope: &Scope, user: i64) -> Result<Account> {
+        let client = self.db.get().await?;
+        let scope = self.fresh(&**client, scope).await?;
+        bilibi_authz::authorize_key(&**client, &scope, VIEW).await?;
+        read_account(&**client, &scope, user, false)
+            .await?
+            .ok_or(Error::NotFound)
+    }
+    /// Refresh account/tenant eligibility without renewing idle sessions, as
+    /// the other Core owners do; HTTP adapters validated the credential already.
+    async fn fresh(&self, client: &(impl GenericClient + Sync), scope: &Scope) -> Result<Scope> {
+        let fresh = self
+            .authentication
+            .authenticate(client, scope.tenant(), scope.user(), scope.csrf.clone())
+            .await?;
+        Ok(match scope.agent() {
+            Some(agent) => fresh.for_agent(agent.connection(), agent.trace().into()),
+            None => fresh,
+        })
+    }
+    /// Names the Person an account signs in as, without an affiliation. The
+    /// Person owner proves and locks a live, non-system identity; an account
+    /// already bound to an affiliation keeps that affiliation's Person.
+    pub async fn link_person(
+        &self,
+        scope: &Scope,
+        user: i64,
+        person: PersonId,
+    ) -> std::result::Result<AccountLinks, LinkError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.link_person"))
+            .await?;
+        let scope = self.fresh(tx.sql(), scope).await?;
+        bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
+        let account = read_account(tx.sql(), &scope, user, false)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if account.links.affiliation.is_some() && account.links.person != Some(person) {
+            return Err(LinkError::PersonMismatch);
+        }
+        // Lock order: Company (the account's current one), Person, User.
+        if let Some(organisation) = account.links.organisation {
+            lock_account_company(tx.sql(), &scope, organisation).await?;
+        }
+        let identity = bilibi_person::identity::lock_for_account_binding(&tx, &scope, person)
+            .await
+            .map_err(|error| match error {
+                Error::NotFound => LinkError::NotFound,
+                other => LinkError::Access(other),
+            })?;
+        let person = identity.id();
+        drop(identity);
+        let account = read_account(tx.sql(), &scope, user, true)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if account.links.person == Some(person) {
+            tx.rollback().await?;
+            return Ok(account.links);
+        }
+        let links = AccountLinks {
+            person: Some(person),
+            ..account.links
+        };
+        let links = save_links(self, &mut tx, &account, links).await?;
+        tx.commit().await?;
+        Ok(links)
+    }
+    /// Binds an account to one of its Person's affiliations, which names the
+    /// Organisation it signs in under. The Affiliation owner proves and locks
+    /// the affiliation with its company and Person; both the account's current
+    /// company and the target must be writable, so an archived company freezes
+    /// its accounts in place, as Bilimbi's does. The account's sessions end.
+    pub async fn link_affiliation(
+        &self,
+        scope: &Scope,
+        user: i64,
+        affiliation: AffiliationId,
+    ) -> std::result::Result<AccountLinks, LinkError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.link_affiliation"))
+            .await?;
+        let scope = self.fresh(tx.sql(), scope).await?;
+        bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
+        let account = read_account(tx.sql(), &scope, user, false)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        let (person, organisation) = affiliation_standing(tx.sql(), scope.tenant(), affiliation)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if account.links.person.is_some_and(|linked| linked != person) {
+            return Err(LinkError::PersonMismatch);
+        }
+        // Lock order: both companies (sorted), then Person and Affiliation
+        // through the owner's proof, then the account row.
+        let companies: Vec<OrganisationId> = account
+            .links
+            .organisation
+            .into_iter()
+            .chain([organisation])
+            .collect();
+        lock_writable_companies(tx.sql(), &scope, &companies).await?;
+        let proof = self
+            .affiliations
+            .lock_for_account_binding(&tx, &scope, affiliation)
+            .await
+            .map_err(|error| match error {
+                Error::NotFound => LinkError::NotFound,
+                other => LinkError::Access(other),
+            })?;
+        if proof.person() != person || proof.organisation() != organisation {
+            return Err(LinkError::Access(Error::Conflict));
+        }
+        drop(proof);
+        let account = read_account(tx.sql(), &scope, user, true)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if account.links.person.is_some_and(|linked| linked != person) {
+            return Err(LinkError::PersonMismatch);
+        }
+        let links = AccountLinks {
+            person: Some(person),
+            affiliation: Some(affiliation),
+            organisation: Some(organisation),
+        };
+        if account.links == links {
+            tx.rollback().await?;
+            return Ok(links);
+        }
+        let links = save_links(self, &mut tx, &account, links).await?;
+        tx.commit().await?;
+        Ok(links)
+    }
+    /// Removes the account's Person and affiliation links. The current company
+    /// must be writable: an archived company's account stays frozen rather than
+    /// being moved out, since Bilimbi's archive offers no restore or move. The
+    /// account's sessions end when it had an organisation.
+    pub async fn unlink(
+        &self,
+        scope: &Scope,
+        user: i64,
+    ) -> std::result::Result<AccountLinks, LinkError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.unlink"))
+            .await?;
+        let scope = self.fresh(tx.sql(), scope).await?;
+        bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
+        let account = read_account(tx.sql(), &scope, user, false)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if let Some(organisation) = account.links.organisation {
+            lock_account_company(tx.sql(), &scope, organisation).await?;
+        }
+        let account = read_account(tx.sql(), &scope, user, true)
+            .await?
+            .ok_or(LinkError::NotFound)?;
+        if account.links == AccountLinks::default() {
+            tx.rollback().await?;
+            return Ok(account.links);
+        }
+        let links = save_links(self, &mut tx, &account, AccountLinks::default()).await?;
+        tx.commit().await?;
+        Ok(links)
+    }
+}
