@@ -15,7 +15,7 @@ references fail discovery. Routes describe method/path, access, framing and a
 service operation. Embeds describe slot/context, access and a service operation.
 These are metadata contracts; Web's route/event adapter owns execution and must
 apply guards. Seed execution and ledger tracking belong to Database; a seed
-selects Production/Demo and SQL or a named service operation.
+selects Production/Development and SQL or a named service operation.
 
 A new consumer (Menu, Settings, Grid, Queue, Agent API, etc.) registers
 `Consumer::new::<OwnerPayload>("base/owner.catalog", "base/owner", validator)`.

@@ -95,7 +95,8 @@ affiliations, the Organisation it signs in under: `users.person_id`,
 Affiliation published for this purpose, so a link can never name a Person or
 company other than the affiliation's. The login email is unique platform-wide
 (a partial unique index on `lower(email)` over live accounts); the migration
-resolves the one seeded duplicate explicitly and refuses any other.
+resolves the one duplicate the retired demo seed created explicitly and refuses
+any other.
 
 `identity::standing(client, tenant, user)` is the authentication-edge read:
 the account row, then each stored link re-proved through its owner's public
@@ -132,7 +133,8 @@ with the old and new link ids. Authorization is tenant-scoped until K15 binds
 company resource ownership; K16 composes the account page and its link controls
 from `account` and these commands.
 
-Run the walkthrough against a fresh disposable migrated/seeded database:
+Run the walkthrough against a fresh disposable migrated database (it installs
+the walkthrough fixture):
 
 ```sh
 BILIBI_IDENTITY_DEMO=disposable cargo run -p bilibi-user --example identity-walkthrough --locked
@@ -142,7 +144,7 @@ It prints the sealed facets of linked and unlinked sign-ins, the same facets
 through the bearer path's `Authentication`, a denied and a refused link, unlink
 and relink with the ended sessions, the archive of Company 002 freezing the
 contractor's sign-in, open session, reset request and link commands, and the
-unique-email refusal. It archives a seeded company, so never run it on a
+unique-email refusal. It archives a fixture company, so never run it on a
 working database.
 
 ## Pages (`core/user.pages`)
@@ -176,7 +178,7 @@ through `identity::standing` as sign-in does.
 ## Walkthrough
 
 `cargo run -p bilibi-user --example credentials-walkthrough` against a
-disposable database after `migrate` and `seed` (set
+disposable database after `migrate` (set
 `BILIBI_DISPOSABLE_CREDENTIALS_DEMO=yes`, `BILIBI_MAIL_DIR` and
 `BILIBI_USER_SIGNING_KEY`). It prints every outcome above and reads the dev
 mailbox to follow the links.
@@ -226,7 +228,7 @@ data or parameter values). It cannot record during a total database outage and
 therefore fails closed. Error details remain available in the operator's answer.
 
 Run `cargo run -p bilibi-user --example database-queries-walkthrough` against a
-**disposable** migrated/seeded database with `DATABASE_URL` and
+**disposable** migrated database with `DATABASE_URL` and
 `BILIBI_DISPOSABLE_QUERY_DEMO=yes`. This opt-in manual fixture prints CRUD,
 concurrent slug creation, stale refusal, owner/tenant isolation, parameters,
 column preservation, pagination, SQL/DB refusals, timeout, audit rollback and

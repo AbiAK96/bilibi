@@ -1,7 +1,7 @@
 INSERT INTO tenants(id,name) VALUES(1,'Bilimbi Labs'),(2,'Other Workspace') ON CONFLICT DO NOTHING;
 INSERT INTO roles(id,tenant_id,name,grant_all) VALUES(1,1,'manager',false),(2,1,'viewer',false),(3,1,'staff',false),(4,1,'admin',true),(5,2,'manager',false) ON CONFLICT DO NOTHING;
 INSERT INTO role_capabilities(tenant_id,role_id,capability)
-SELECT tenant_id,id,capability FROM roles CROSS JOIN unnest(ARRAY['companies.view','notifications.view','notifications.update','session.logout']) capability WHERE id IN (1,2,3,4,5) ON CONFLICT DO NOTHING;
+SELECT tenant_id,id,capability FROM roles CROSS JOIN unnest(ARRAY['companies.view']) capability WHERE id IN (1,2,3,4,5) ON CONFLICT DO NOTHING;
 INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,1,'companies.update'),(1,3,'companies.update'),(2,5,'companies.update') ON CONFLICT DO NOTHING;
 INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id)
 SELECT 1,role_id,'companies',field_id FROM unnest(ARRAY[2,3]::bigint[]) role_id CROSS JOIN unnest(ARRAY['tax_id','revenue']) field_id ON CONFLICT DO NOTHING;

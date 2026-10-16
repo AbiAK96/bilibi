@@ -19,6 +19,8 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{broadcast, Mutex};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 #[derive(Default)]
 struct Record {
@@ -199,6 +201,7 @@ inventory::submit! {
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

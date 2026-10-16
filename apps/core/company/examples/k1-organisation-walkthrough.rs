@@ -1,5 +1,5 @@
-//! Manual K1 walkthrough against an explicitly disposable, migrated and
-//! seeded database. Real app services and demo sessions, no assertions: it
+//! Manual K1 walkthrough against an explicitly disposable, migrated
+//! database. Real app services and walkthrough-fixture sessions, no assertions: it
 //! prints each outcome for inspection. It creates a tenant and, when none
 //! exists, the platform operator, so never point it at a shared database.
 //!
@@ -22,6 +22,8 @@ use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{PartyProofs, ProofFuture};
 use serde_json::json;
 use tokio_postgres::Transaction;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Error = Box<dyn std::error::Error>;
 
@@ -57,12 +59,13 @@ async fn main() -> Result<(), Error> {
         return Err("set BILIBI_COMPANY_DEMO=disposable for this walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35572")?;
     let companies = app.services.get::<CompanyService>(SERVICE)?;
     let parties = app.services.get::<PartyProofs>("base/tenancy.parties")?;
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
     let other_login = app
@@ -74,7 +77,7 @@ async fn main() -> Result<(), Error> {
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
-    // Re-runs start from the seeded state.
+    // Re-runs start from the fixture state.
     client.batch_execute("DELETE FROM company_departments WHERE department_type_id IN (SELECT id FROM company_department_types WHERE code LIKE 'WT_%'); DELETE FROM company_department_types WHERE code LIKE 'WT_%'; UPDATE companies SET legal_entity_type_id=NULL WHERE code LIKE 'walkthrough%'; DELETE FROM company_legal_entity_types WHERE code LIKE 'WT_%'; DELETE FROM companies WHERE code LIKE 'walkthrough%' AND id NOT IN (SELECT company_id FROM tenant_primary_companies); UPDATE companies SET status='active' WHERE tenant_id=1 AND id=2").await?;
 
     println!("== identity: existing ids and URLs are kept");
@@ -660,7 +663,7 @@ async fn main() -> Result<(), Error> {
     app.user
         .logout(&other_login.token, &other_login.csrf)
         .await?;
-    println!("Walkthrough complete; demo sessions removed.");
+    println!("Walkthrough complete; fixture sessions removed.");
     Ok(())
 }
 

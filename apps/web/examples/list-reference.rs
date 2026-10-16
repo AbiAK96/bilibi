@@ -1,5 +1,5 @@
 //! Manual list specimen for the shared list surface, separate from product routes.
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL, APP_ORIGIN and BIND_ADDR.
+//! Run with an isolated, migrated DATABASE_URL, APP_ORIGIN and BIND_ADDR.
 //!
 //! `/list-reference` lists 137 deterministic vendors held in memory through
 //! `ListState`, `FilterToolbar`, `Table`, `Pagination` and `EmptyState`, with
@@ -27,6 +27,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 const STATUSES: [&str; 4] = ["active", "suspended", "pending", "archived"];
@@ -375,6 +377,7 @@ inventory::submit! {
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

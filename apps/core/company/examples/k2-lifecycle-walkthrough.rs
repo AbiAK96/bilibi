@@ -1,4 +1,4 @@
-//! Manual inspection of real lifecycle services on a disposable migrated/seeded
+//! Manual inspection of real lifecycle services on a disposable migrated
 //! database. No assertions or unit tests. Includes deliberate audit failure and
 //! two concurrent connections; never run against a shared database.
 use bilibi_company::{
@@ -10,6 +10,8 @@ use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{AccountIdentity, ActorVerifier, Authentication, ProofClient, ProofFuture};
 use std::{sync::Arc, time::Duration};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Error = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
@@ -68,12 +70,13 @@ async fn main() -> Result<(), Error> {
         return Err("set BILIBI_COMPANY_DEMO=disposable for this walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35572")?;
     let companies = app.services.get::<CompanyService>(SERVICE)?;
     let mutations = app
         .services
         .get::<MutationBoundary>("base/database.mutations")?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let staff_login = app.user.login("staff@example.test", password).await?;
     let other_login = app
@@ -143,6 +146,8 @@ async fn main() -> Result<(), Error> {
         "primary company suspend refused",
         companies.suspend_company(&manager, 1, None).await,
     );
+    // The fixture appoints tenant 1; this part starts without an operator.
+    client.execute("DELETE FROM platform_operator", &[]).await?;
     show(
         "operator proof without explicit marker",
         bilibi_tenancy::prove_operator(client, &manager)

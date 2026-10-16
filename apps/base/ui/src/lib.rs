@@ -135,9 +135,9 @@ pub fn static_asset(name: &str) -> Option<StaticAsset> {
             "text/html; charset=utf-8",
             include_bytes!("../assets/static/ui-specimen.html"),
         ),
-        "ui-feedback-demo.js" => (
+        "ui-feedback-driver.js" => (
             "text/javascript",
-            include_bytes!("../assets/static/ui-feedback-demo.js"),
+            include_bytes!("../assets/static/ui-feedback-driver.js"),
         ),
         "logo.svg" => ("image/svg+xml", include_bytes!("../assets/static/logo.svg")),
         "favicon.svg" => (

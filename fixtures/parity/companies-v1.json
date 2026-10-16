@@ -3,9 +3,9 @@
   "fixture_id": "bilibi-companies-v1",
   "purpose": "Repeatable isolated smoke and visual-parity run for the currently implemented Companies slice.",
   "baseline": {
-    "bilibi_seed": "apps/web/src/seed.rs + seed.sql + seed-users.sql",
+    "bilibi_seed": "fixtures/walkthrough/src/fixture.sql + operator.sql",
     "bilimbi_reference": "BelimbingApp/bilimbi, pinned by the parity run record",
-    "seed_command": "cargo run -p bilibi-web -- seed"
+    "seed_command": "cargo run -p bilibi-walkthrough-fixture"
   },
   "isolation": {
     "required": true,
@@ -16,7 +16,7 @@
   "runtime": {
     "bilibi": {
       "migrate": "cargo run -p bilibi-web -- migrate",
-      "seed": "cargo run -p bilibi-web -- seed",
+      "seed": "cargo run -p bilibi-walkthrough-fixture",
       "serve": "APP_ORIGIN=http://127.0.0.1:4301 BIND_ADDR=127.0.0.1:4301 cargo run -p bilibi-web -- run"
     },
     "bilimbi": {

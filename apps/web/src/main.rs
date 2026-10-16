@@ -37,7 +37,15 @@ async fn main() -> Result<()> {
         }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
-            bilibi_web::seed::seed(&db, bilibi_web::seed::DEMO_PASSWORD).await?;
+            let at_startup = match std::env::args().nth(2).as_deref() {
+                None => false,
+                Some("--at-startup") => true,
+                Some(_) => {
+                    eprintln!("usage: bilibi-web seed [--at-startup]");
+                    return Err(Error::Invalid);
+                }
+            };
+            bilibi_web::seed::seed(&db, at_startup).await?;
         }
         Some("media-cleanup") => {
             let args: Vec<String> = std::env::args().skip(2).collect();

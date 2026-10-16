@@ -32,5 +32,6 @@ bilibi-grid = { path = "../../base/grid" }
 bilibi-person = { path = "../person" }
 
 [dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-web = { path = "../../web" }
 tokio.workspace = true

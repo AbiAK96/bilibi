@@ -1,5 +1,5 @@
 //! Manual live-protocol specimen, deliberately separate from product routes.
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL and APP_ORIGIN.
+//! Run with an isolated, migrated DATABASE_URL and APP_ORIGIN.
 //!
 //! `/live-reference` is a framed-capable page with two counter panels, a scratch
 //! note form, a scroll box and an iframe island. The island at
@@ -19,6 +19,8 @@ use bilibi_ui::page::{
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::broadcast;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 struct Reference {
     changes: broadcast::Sender<Change>,
@@ -196,12 +198,13 @@ inventory::submit! {
 }
 inventory::submit! {
     Contribution::new(EMBEDS, "extensions/live_reference.counter", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Embed {
-        slot:"reference.counter", context:EmbedContext::Record {kind:"reference"}, service:"extensions/live_reference.pages", operation:"counter", access:Access::Capability("notifications.view"),
+        slot:"reference.counter", context:EmbedContext::Record {kind:"reference"}, service:"extensions/live_reference.pages", operation:"counter", access:Access::Capability("companies.view"),
     })
 }
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

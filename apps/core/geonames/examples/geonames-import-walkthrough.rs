@@ -1,5 +1,5 @@
 //! Manual importer walkthrough against an explicitly supplied disposable,
-//! seeded database. No test harness or assertions; prints each outcome.
+//! migrated database. No test harness or assertions; prints each outcome.
 //!
 //! Serves the checked-in `sample/` payloads from a local HTTP fixture with
 //! ETags (cities zipped on the fly, as GeoNames ships them) and runs the real
@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
     let importer = services.get::<ReferenceImport>(IMPORT_SERVICE)?;
     let geo = services.get::<Geonames>(SERVICE)?;
     db.get().await?
-        .batch_execute("TRUNCATE geonames_postcode_overrides, geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
+        .batch_execute("TRUNCATE address_attachments, addresses, geonames_postcode_overrides, geonames_cities, geonames_postcodes, geonames_admin1, geonames_countries RESTART IDENTITY")
         .await?;
 
     let (port, fixture) = fixture::start().await.map_err(|_| Error::Internal)?;

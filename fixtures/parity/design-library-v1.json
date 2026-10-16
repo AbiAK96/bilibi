@@ -3,7 +3,7 @@
   "fixture_id": "bilibi-design-library-v1",
   "reference_sha": "d48e3423a6df733cfe546b887c8512af4eb7fc82",
   "source": "apps/base/design_library/source.json",
-  "setup": "Migrate and seed an isolated Bilibi database using the existing Companies fixture. The catalogue's example companies and controls are deterministic in-memory specimens copied from Bilimbi; no business records are changed.",
+  "setup": "Migrate an isolated Bilibi database and install the walkthrough fixture (cargo run -p bilibi-walkthrough-fixture), as the Companies fixture does. The catalogue's example companies and controls are deterministic in-memory specimens copied from Bilimbi; no business records are changed.",
   "accounts": {"allowed": "tenant 1 admin@example.test", "forbidden": "tenant 1 viewer@example.test"},
   "capability": "admin.system.design-library.view",
   "routes": [

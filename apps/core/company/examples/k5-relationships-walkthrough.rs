@@ -1,5 +1,5 @@
-//! Manual K5 walkthrough against an explicitly disposable, migrated and
-//! seeded database: real app services and demo sessions, no assertions. It
+//! Manual K5 walkthrough against an explicitly disposable, migrated
+//! database: real app services and walkthrough-fixture sessions, no assertions. It
 //! prints each outcome of the relationship-role catalog and the directed
 //! links, including two connections contending for a role, and the reviewed
 //! safe-write path with replay. Never point it at a shared database.
@@ -26,6 +26,8 @@ use bilibi_tenancy::{PartyProofs, ProofFuture, Scope};
 use serde_json::json;
 use std::time::Duration;
 use tokio_postgres::Transaction;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Error = Box<dyn std::error::Error>;
 struct Browser<'a> {
@@ -134,6 +136,7 @@ async fn main() -> Result<(), Error> {
         return Err("set BILIBI_COMPANY_DEMO=disposable for this walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35575")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
@@ -147,7 +150,7 @@ async fn main() -> Result<(), Error> {
         .get::<MutationBoundary>("base/database.mutations")?;
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let staff_login = app.user.login("staff@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
@@ -161,7 +164,7 @@ async fn main() -> Result<(), Error> {
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
-    // Re-runs start from the seeded state.
+    // Re-runs start from the fixture state.
     client.batch_execute("DELETE FROM company_relationships WHERE source_organisation_id IN (SELECT id FROM companies WHERE code LIKE 'k5\\_%') OR role_id IN (SELECT id FROM company_relationship_roles WHERE code LIKE 'wt\\_%'); DELETE FROM company_relationship_roles WHERE code LIKE 'wt\\_%'; DELETE FROM companies WHERE code LIKE 'k5\\_%'; DELETE FROM persons WHERE name LIKE 'K5 %'").await?;
 
     println!("== catalog: contributed defaults reconciled by code, per tenant");

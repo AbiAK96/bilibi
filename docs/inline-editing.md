@@ -75,7 +75,7 @@ draft; the stored value decides whether to retry.
 
 `apps/web/examples/u5-inline.rs` serves `/inline-reference` with an in-memory
 record per tenant (no unit-test runner). Run it against an isolated, migrated
-and seeded database:
+database (it installs the walkthrough fixture itself):
 
 ```sh
 DATABASE_URL=… APP_ORIGIN=http://127.0.0.1:4100 BIND_ADDR=127.0.0.1:4100 \

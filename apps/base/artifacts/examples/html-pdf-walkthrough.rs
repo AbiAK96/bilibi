@@ -6,7 +6,7 @@
 //! Needs `BILIBI_PDF_DEMO_OUT` (output directory), `BILIBI_PDF_CHROMIUM`
 //! (absolute path of a sandbox-capable Chromium/Chrome), optional
 //! `BILIBI_PDF_DEMO_PORT` (first of three free local ports), the disposable-DB
-//! variables from the README and a database that is migrated and seeded.
+//! variables from the README and a database that is migrated.
 use bilibi_artifacts::{Artifacts, HtmlFuture, HtmlOwner, Operation, Owner, Reference, Served};
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
@@ -26,6 +26,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 use tokio_postgres::Client;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Embedded red square: the only image the document may legitimately show.
@@ -275,6 +277,7 @@ async fn main() -> Result<()> {
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><rect width="60" height="60" fill="#ff00ff"/></svg>"##,
     )?;
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://127.0.0.1")?;
     let store = app.services.get::<Artifacts>("base/artifacts.store")?;
     // Three consecutive free ports; pick a base outside the ephemeral range.

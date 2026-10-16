@@ -54,25 +54,41 @@ cargo run -p bilibi-web -- seed
 cargo run -p bilibi-web -- run
 ```
 
-Open <http://localhost:3000>. Sign in with one of these accounts and the
-password `bilibi-dev`; the email alone names the account, as in Bilimbi:
+Open <http://localhost:3000> and sign in as `ai@agent.my` with password
+`bilibi-dev`; the email alone names the account, as in Bilimbi.
 
-| Email | Role | Identity | Access |
-|---|---|---|---|
-| ai@agent.my | core_admin | agent Person “AI Agent” | Platform operator administrator: all capabilities, including platform ones |
-| manager@example.test | manager | Person “Ada Manager”, affiliated with Company 001 | View and edit all company fields |
-| staff@example.test | staff | unlinked | View and edit, with tax ID and revenue restricted |
-| viewer@example.test | viewer | unlinked | Read only; email, phone, tax ID and revenue masked |
-| admin@example.test | admin | unlinked | All capabilities; any additional restricting role still masks fields |
-| contractor@example.test | staff | Person “Kim Contractor”, affiliated with Company 002 | As staff; archiving Company 002 freezes this account |
+`seed` is the development seed (Bilimbi `mix bilimbi.dev.seed`). It runs the
+installed production seeds, then provisions the platform operator once: tenant
+`Bilibi local development`, its primary company `Bilibi Development` and
+`ai@agent.my` holding the grant-all `core_admin` system role. The modules'
+development sample data (two departments) is added in the same run. That is
+everything a fresh install contains. The bootstrap runs once (its
+`user_bootstrap` receipt): re-running preserves the account, its password and
+its roles, so a revoked grant stays revoked. A database that already holds accounts or a platform
+operator without that administrator is refused rather than promoted; the
+start-up form, `seed --at-startup`, reports the refusal and carries on.
+`seed-production` runs only the production seeds.
 
-Tenant `2` has `manager@other.example.test` and a private company. Login
-emails are unique across tenants; requests and events derive the tenant from
-the session, never from client page parameters. The seed adds 62 companies to tenant `1` so
-pagination can be tried. Seeding and migrations are explicit, transactional and
-idempotent; re-seeding preserves passwords and company edits, and ensures the
-demo roles and assignments exist. The ai@agent.my `core_admin` bootstrap runs once
-(its `user_bootstrap` receipt), so a revoked grant stays revoked.
+A database seeded before the demo seed was removed is cleaned by the next
+`seed`, which prints each change: the five `example.test` accounts with their
+sessions, roles and preferences (tenant 2's `manager@other.example.test` and
+`contractor@example.test` included), the demo Persons and affiliations, the demo
+roles and their grants, the generated companies 2–62, tenant 2 and its company
+100, and the unused demo legal-entity and department types. The agent Person
+linked to `ai@agent.my` is kept with its link. The operator's primary company keeps its id but gets a
+fresh install's name and loses the demo contact facts nobody changed. Rows that
+something else still uses are kept and reported
+([`retire-demo.sql`](apps/web/src/retire-demo.sql)).
+
+Login emails are unique across tenants; requests and events derive the tenant
+from the session, never from client page parameters. Seeding and migrations are explicit
+and transactional.
+
+Examples and slice walkthroughs never use a seeded database. Each one installs
+the [walkthrough fixture](fixtures/walkthrough/src/lib.rs) (fixed accounts,
+roles, two tenants, 62 companies and the linked Persons) into a freshly migrated disposable
+database. For a running-app walkthrough, migrate a new database and run
+`cargo run -p bilibi-walkthrough-fixture` against it.
 
 Outgoing mail goes to `.local/mailbox/` (one file per message, newest 100) unless
 `MAIL_HOST` configures an SMTP relay; see [Mail](apps/base/mail/README.md).
@@ -143,9 +159,10 @@ run automatically on app boot.
 
 The public sign-in, forgotten-password and reset pages, their submissions and
 static assets have no signed-in actor and therefore no capability decision;
-the password settings page needs a session and no capability. Sign out checks `session.logout`;
-company operations check `companies.view`/`companies.update`; bell operations
-check `notifications.view`/`notifications.update`. Invalid wire input is rejected.
+the password settings page, sign out and the bell (the account's own
+notifications, as in Bilimbi) need a session and no capability; company
+operations check the `admin.company.*` capabilities. Invalid wire input is
+rejected.
 Permissions, tenant/user status and restrictions are read afresh, not cached.
 
 ## Live pages and module boundaries
@@ -192,6 +209,7 @@ apps/base/ui          shared shell, credential layout and cards, styles, small l
 apps/core/user        credentials, password reset/verification, settings pages, sessions, notifications, owned SQL
 apps/core/company     Companies API, relationship roles and links, owned SQL, page templates
 apps/web              executable host, route/socket transport, explicit seed
+fixtures/walkthrough  example-only accounts, roles and companies; never a product dependency
 ```
 
 Base does not depend on Core. Core depends on Base and declared public Core APIs
@@ -216,7 +234,7 @@ types, duplicate contribution IDs and missing service references fail discovery.
 Service factories can resolve only their own module and declared direct dependencies.
 Domains and Extensions are empty composition roots, ready for later modules.
 All application SQL binds data and includes tenant predicates; session-token
-bootstrap and the explicit demo seed/migration commands are the exceptions.
+bootstrap and the explicit seed/migration commands are the exceptions.
 
 ## Checks
 

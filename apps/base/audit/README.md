@@ -6,7 +6,7 @@ and the diagnostics table `base_audit_capture_failures` (migration
 `006-audit-evidence`). Rows outlive actors and subjects: no foreign keys to
 tenants, accounts or records. PostgreSQL refuses UPDATE, DELETE and TRUNCATE on
 evidence, stamps `recorded_at` from `clock_timestamp()` and fills a missing
-`occurred_at`. The frozen demo ledgers `audit_mutations` and
+`occurred_at`. The frozen legacy ledgers `audit_mutations` and
 `bilibi_action_commits` were carried over once as `source = 'legacy'` rows and
 receive nothing further.
 

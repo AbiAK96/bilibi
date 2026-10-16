@@ -15,7 +15,7 @@ Named system principals, impersonation and delegated job rehydration require the
 `admin::Tenants` (`base/tenancy.tenants`, `src/admin.rs`) is the tenant
 administration service: `list`, `count`, `fetch` and the audited `create`
 (mutation `tenancy.tenant.create`, change kind `tenancy.tenant`). Every method
-takes an explicit `OperatorProof`; a tenant id, `grant_all` or demo tenant 1 is
+takes an explicit `OperatorProof`; a tenant id (tenant 1 included) or `grant_all` is
 never that proof, and `create` re-proves the identity on its own transaction.
 Callers receive `TenantIdentity` (Bilimbi `Tenancy.Identity`), never the row;
 its `is_platform_operator` is the `platform_operator` marker read with the row.
@@ -37,17 +37,12 @@ through `Authorization` (`base/tenancy.authorization`), a once-bound
 startup. A module below Authz that needs a capability decision uses this seam
 rather than importing Authz or re-deriving operator standing from an id.
 
-To try it on a demo database, appoint the demo tenant explicitly (K17 owns the
-real bootstrap; migrations appoint nobody):
-
-```sh
-psql "$DATABASE_URL" -c "INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1) ON CONFLICT DO NOTHING"
-```
-
-Then sign in to tenant 1 as `admin@example.test` (grant-all) and open
+To try it, install the walkthrough fixture on a migrated disposable database
+(`cargo run -p bilibi-walkthrough-fixture`; it appoints tenant 1, while
+migrations appoint nobody and `bilibi-web seed` provisions a real operator),
+then sign in as `admin@example.test` (grant-all, tenant 1) and open
 Administration → Tenancy → Tenants. Without the marker the same account is
 refused (403, and the menu branch stays hidden); with it, an account that holds
 `LIST` but not `CREATE` sees the list without the Add button and is refused the
-create with a flash. Deleting the marker row restores the demo's non-operator
-state.
+create with a flash. Deleting the marker row restores the non-operator state.
 

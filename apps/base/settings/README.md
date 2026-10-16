@@ -62,7 +62,7 @@ at commit. These notifications are refresh hints, not a durable work queue.
 
 ## Manual walkthrough
 
-On a disposable database, run the host's `migrate` and `seed` commands first.
+On a disposable database, run the host's `migrate` command first.
 Explicitly appoint fixture tenant 1 with
 `INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1)`; the
 production migration deliberately appoints nobody. Set `DATABASE_URL`,

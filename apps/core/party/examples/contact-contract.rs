@@ -1,7 +1,7 @@
 //! Deterministic inspectable contract specimen, not a persisted fixture or test.
 use bilibi_party::{
-    demo, Affiliation, AffiliationId, AffiliationInput, EffectiveDates, OrganisationId, PartyId,
-    Person, PersonId, PersonInput, PersonKind, Relationship, RelationshipId, RelationshipInput,
+    Affiliation, AffiliationId, AffiliationInput, EffectiveDates, OrganisationId, PartyId, Person,
+    PersonId, PersonInput, PersonKind, Relationship, RelationshipId, RelationshipInput,
     RelationshipRoleId, OWNERSHIP,
 };
 use serde_json::json;
@@ -76,15 +76,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ],
             "relationships": relationships,
             "person_relationship_target": PartyId::Person(person_id),
-            "existing_demo": {
-                "tenant_1_company_1": demo::organisation(1, 1),
-                "tenant_2_company_100": demo::organisation(2, 100),
-                "tenant_1_company_100": demo::organisation(1, 100),
-                "account_person_links": demo::ACCOUNTS.iter().map(|account| json!({
-                    "tenant_id": account.tenant_id, "account_id": account.account_id,
-                    "person_id": account.person_id,
-                })).collect::<Vec<_>>()
-            },
             "owners": owners,
         }))?
     );

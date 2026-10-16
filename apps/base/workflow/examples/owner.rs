@@ -11,6 +11,7 @@ use serde_json::json;
 use std::sync::Arc;
 mod reference;
 use reference::DRIFTED_V1;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 /// One line per run and work item: the facts an operator checks between commands.
 fn print_view(view: &RunView) {
     let run = &view.run;
@@ -93,6 +94,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()

@@ -1,5 +1,5 @@
 //! Manual dashboard specimen, deliberately separate from product routes.
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL and APP_ORIGIN, then
+//! Run with an isolated, migrated DATABASE_URL and APP_ORIGIN, then
 //! open `/dashboard` (see `apps/base/dashboard` README).
 //!
 //! It contributes the entries a real module would, so the page, embed dispatch,
@@ -8,10 +8,10 @@
 //!
 //! * `ref-once`: no capability, `refresh_interval` 0: reads once, then never.
 //! * `ref-live`: no capability, refreshes every second: reads on every host tick.
-//! * `ref-notices`: needs `notifications.view` on the entry; its panel also
+//! * `ref-notices`: needs `companies.view` on the entry; its panel also
 //!   checks the capability itself and shows an em dash when it is gone.
 //! * `ref-guarded`: no entry capability but an embed that requires
-//!   `notifications.view`: when the grant goes the card stays and Web empties
+//!   `companies.view`: when the grant goes the card stays and Web empties
 //!   only that panel's anchor.
 //! * `ref-section`: a full-width section below the grid.
 use askama::Template;
@@ -30,6 +30,8 @@ use bilibi_ui::{
     StatItem, StatStrip,
 };
 use std::{sync::Arc, time::SystemTime};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 #[derive(Clone, Copy)]
 struct Kind {
@@ -56,7 +58,7 @@ const KINDS: [(&str, Kind); 5] = [
         "notices",
         Kind {
             title: "Notices",
-            reads_with: Some("notifications.view"),
+            reads_with: Some("companies.view"),
         },
     ),
     (
@@ -198,7 +200,7 @@ macro_rules! embed {
 embed!("once", Access::SignedIn);
 embed!("live", Access::SignedIn);
 embed!("notices", Access::SignedIn);
-embed!("guarded", Access::Capability("notifications.view"));
+embed!("guarded", Access::Capability("companies.view"));
 embed!("section", Access::SignedIn);
 contribute!(
     "extensions/dashboard_reference",
@@ -214,7 +216,7 @@ contribute!(
     "extensions/dashboard_reference",
     Widget::new("ref-notices", "Notices", "dashboard-reference.notices")
         .order(30)
-        .requires("notifications.view")
+        .requires("companies.view")
         .refresh(1000)
 );
 contribute!(
@@ -242,6 +244,7 @@ contribute!(
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

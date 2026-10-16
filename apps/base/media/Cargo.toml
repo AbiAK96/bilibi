@@ -23,6 +23,7 @@ libc = "0.2.190"
 ulid = "3.0.0"
 
 [dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }
 bilibi-web = { path = "../../web" }

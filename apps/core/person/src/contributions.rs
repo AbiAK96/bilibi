@@ -8,7 +8,7 @@ pub const CREATE: &str = "admin.person.create";
 pub const UPDATE: &str = "admin.person.update";
 pub const RETIRE: &str = "admin.person.retire";
 pub const SYSTEM_MANAGE: &str = "admin.person.system.manage";
-const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, RETIRE, SYSTEM_MANAGE];
+pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, RETIRE, SYSTEM_MANAGE];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -25,7 +25,7 @@ const fn role(
 inventory::submit! { Contribution::new(VOCABULARY, "core/person", Provenance { module: "core/person", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &["retire"],
     capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(RETIRE), C::platform(SYSTEM_MANAGE)],
-    roles: &[role("tenant_owner", "Tenant Owner", CAPS), role("manager", "manager", CAPS), role("staff", "staff", &[LIST, VIEW, CREATE, UPDATE]), role("viewer", "viewer", &[LIST, VIEW])],
+    roles: &[role("tenant_owner", "Tenant Owner", CAPS)],
     system_principals: &[],
 }) }
 

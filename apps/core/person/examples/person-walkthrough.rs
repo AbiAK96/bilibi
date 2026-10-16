@@ -11,6 +11,8 @@ use bilibi_person::{
 use bilibi_tenancy::{PartyProofs, ProofFuture};
 use serde_json::json;
 use tokio_postgres::Transaction;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Failure = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
@@ -48,11 +50,11 @@ fn human(name: &str) -> PersonInput {
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_PERSON_DEMO").as_deref() != Ok("disposable") {
         return Err(
-            "set BILIBI_PERSON_DEMO=disposable and use a disposable migrated/seeded DATABASE_URL"
-                .into(),
+            "set BILIBI_PERSON_DEMO=disposable and use a disposable migrated DATABASE_URL".into(),
         );
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35577")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
@@ -65,7 +67,7 @@ async fn main() -> Result<(), Failure> {
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let proofs = app.services.get::<PartyProofs>("base/tenancy.parties")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
     let staff_login = app.user.login("staff@example.test", password).await?;
@@ -386,6 +388,8 @@ async fn main() -> Result<(), Failure> {
     );
     show("audit failure publishes no change", changes.try_recv());
 
+    // The fixture appoints tenant 1; this part starts without an operator.
+    client.execute("DELETE FROM platform_operator", &[]).await?;
     show(
         "system identity requires explicit operator",
         people.ensure_platform_orchestrator(&manager).await,

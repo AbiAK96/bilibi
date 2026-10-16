@@ -62,6 +62,7 @@ async fn main() -> Result<()> {
     bilibi_core::link();
     let url = std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?;
     let db = pool(&url)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()

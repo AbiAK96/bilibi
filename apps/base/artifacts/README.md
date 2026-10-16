@@ -347,7 +347,7 @@ No unit tests. `examples/artifacts-walkthrough.rs` (A1) and
 of real facade calls, raw-SQL guard attempts and injected DB/filesystem outages,
 with output for manual inspection. They run no assertions and use no test harness.
 
-Run the walkthrough after migrating and seeding an isolated database:
+Run the walkthrough after migrating an isolated database:
 
 ```sh
 export DATABASE_URL=postgres://bilibi@127.0.0.1:55481/bilibi_a1

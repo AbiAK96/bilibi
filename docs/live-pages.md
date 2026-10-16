@@ -202,7 +202,7 @@ timer refresh records session activity. Only accepted user navigation/events do.
 
 ## Running reference specimen
 
-Use an isolated migrated/demo-seeded database as described in
+Use an isolated migrated database as described in
 `docs/runtime-parity.md`, then run:
 
 ```sh
@@ -211,10 +211,10 @@ APP_ORIGIN='http://127.0.0.1:4315' BIND_ADDR='127.0.0.1:4315' \
 cargo run -p bilibi-web --example live-reference
 ```
 
-Log in with a demo account, visit `/live-reference`, increment either panel and
+Log in with a walkthrough fixture account, visit `/live-reference`, increment either panel and
 announce from the page. Each counter retains independent state and subscriptions;
 Company pages are served by the same app. This is a manual specimen command,
-not a test suite or a product route. Its two panels require `notifications.view`;
+not a test suite or a product route. Its two panels require the fixture capability `companies.view`;
 the parent requires only sign-in, allowing independent revoke/restore and
 Company-denied socket demonstrations. The normal app does not register this route.
 

@@ -273,14 +273,29 @@ pub async fn provision_platform_operator(
     tenant_name: &str,
     company: &NewCompany,
 ) -> Result<ProvisionOutcome> {
+    let mut client = db.get().await?;
+    let tx = client.transaction().await?;
+    let outcome = provision_platform_operator_in(&tx, tenant_name, company).await?;
+    match outcome {
+        ProvisionOutcome::Provisioned(_) => tx.commit().await?,
+        ProvisionOutcome::Refused(_) => tx.rollback().await?,
+    }
+    Ok(outcome)
+}
+
+/// [`provision_platform_operator`] on the caller's transaction, which the
+/// caller commits, or rolls back on a refusal, together with its own writes.
+pub async fn provision_platform_operator_in(
+    sql: &Transaction<'_>,
+    tenant_name: &str,
+    company: &NewCompany,
+) -> Result<ProvisionOutcome> {
     let tenant_name = if tenant_name.trim().is_empty() {
         company.name.trim()
     } else {
         tenant_name.trim()
     };
-    let mut client = db.get().await?;
-    let tx = client.transaction().await?;
-    let sql: &Transaction<'_> = &tx;
+    let tx = sql;
     let (tenant, tenant_created) =
         bilibi_tenancy::admin::provision_platform_operator(sql, tenant_name).await?;
     crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
@@ -313,10 +328,7 @@ pub async fn provision_platform_operator(
         None => {
             let created = match provisioned_company(sql, tenant.id, company).await? {
                 Ok(created) => created,
-                Err(errors) => {
-                    tx.rollback().await?;
-                    return Ok(ProvisionOutcome::Refused(errors));
-                }
+                Err(errors) => return Ok(ProvisionOutcome::Refused(errors)),
             };
             insert_assignment(sql, tenant.id, created.id, None).await?;
             (created, true)
@@ -331,7 +343,6 @@ pub async fn provision_platform_operator(
         )
         .await?;
     }
-    tx.commit().await?;
     Ok(ProvisionOutcome::Provisioned(Box::new(Provisioned {
         tenant,
         tenant_created,

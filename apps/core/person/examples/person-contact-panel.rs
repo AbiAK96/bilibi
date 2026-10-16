@@ -1,5 +1,5 @@
 //! A real discovered record host for the reusable personal-contact panel.
-//! Use the ordinary migrated/seeded disposable database. This is a manually
+//! Use a migrated disposable database; it installs the walkthrough fixture. This is a manually
 //! operated app, with no fixtures, test runner, mocks or assertions.
 use bilibi_database::{pool, Error, Result};
 use bilibi_module_registry::{
@@ -10,6 +10,8 @@ use bilibi_person::{contributions::VIEW, PersonId, PersonService, SERVICE};
 use bilibi_tenancy::Scope;
 use bilibi_ui::page::*;
 use std::{collections::HashMap, sync::Arc};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 struct Host(Arc<PersonService>);
 struct State {
@@ -90,6 +92,7 @@ inventory::submit! { Contribution::new(ROUTES, "person.contact-reference", Prove
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://127.0.0.1:4499".into());
     let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:4499".into());
     let app = bilibi_web::App::new(db, &origin)?;

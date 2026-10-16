@@ -1,15 +1,17 @@
 //! Manual inspection of the K9 account binder through real services on a
-//! disposable migrated/seeded database. No assertions or unit tests; it prints
-//! each outcome. It archives seeded Company 002, so never run it on a working
-//! database.
+//! disposable migrated database, which it gives the walkthrough fixture. No
+//! assertions or unit tests; it prints each outcome. It archives the fixture's
+//! Company 002, so never run it on a working database.
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
 use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_tenancy::{Authentication, Scope};
 use bilibi_user::{identity, CredentialError, LinkError, UserService};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Failure = Box<dyn std::error::Error>;
-const PASSWORD: &str = bilibi_web::seed::DEMO_PASSWORD;
+const PASSWORD: &str = bilibi_walkthrough_fixture::PASSWORD;
 const CONTRACTOR: i64 = 7;
 
 fn facets(label: &str, scope: &Scope) {
@@ -40,11 +42,11 @@ fn login_outcome(label: &str, outcome: &Result<bilibi_user::Login, CredentialErr
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_IDENTITY_DEMO").as_deref() != Ok("disposable") {
         return Err(
-            "set BILIBI_IDENTITY_DEMO=disposable and a disposable migrated/seeded DATABASE_URL"
-                .into(),
+            "set BILIBI_IDENTITY_DEMO=disposable and a disposable migrated DATABASE_URL".into(),
         );
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35579")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?

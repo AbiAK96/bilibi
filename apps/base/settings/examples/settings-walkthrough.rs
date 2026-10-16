@@ -7,14 +7,9 @@ use bilibi_settings::{
     Definition, Definitions, Encryption, ScopeKind, Setting, Settings, Target, ValueType,
     DEFINITIONS,
 };
-use bilibi_tenancy::{
-    Authentication, OrganisationProvider, PartyProofs, ProofClient, ProofFuture, Scope,
-};
+use bilibi_tenancy::{Authentication, PartyProofs, Scope};
 use serde_json::{json, Value};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 const SCOPES: &[ScopeKind] = &[
     ScopeKind::Global,
@@ -30,25 +25,6 @@ inventory::submit! { Contribution::new(DEFINITIONS,"walkthrough.secret",Provenan
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS,"walkthrough.state.*",Provenance { module:"base/settings",source:file!(),line:line!() }, &Setting::RuntimeClaim) }
 
-/// Private fixture provider, not a production Company implementation. Only the
-/// named specimen is eligible; flipping the flag demonstrates reauthorization.
-struct FixtureCompany(AtomicBool);
-impl OrganisationProvider for FixtureCompany {
-    fn prove<'a>(
-        &'a self,
-        _client: &'a dyn ProofClient,
-        actor: &'a Scope,
-        id: OrganisationId,
-    ) -> ProofFuture<'a, ()> {
-        Box::pin(async move {
-            if self.0.load(Ordering::SeqCst) && actor.tenant() == 1 && id.get() == 1 {
-                Ok(())
-            } else {
-                Err(bilibi_database::Error::Forbidden)
-            }
-        })
-    }
-}
 async fn show(
     settings: &Settings,
     client: &tokio_postgres::Client,
@@ -74,6 +50,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| bilibi_database::Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()
@@ -85,8 +62,16 @@ async fn main() -> Result<()> {
     services.install(&modules)?;
     let settings = services.get::<Settings>("base/settings.store")?;
     let parties = services.get::<PartyProofs>("base/tenancy.parties")?;
-    let provider = Arc::new(FixtureCompany(AtomicBool::new(true)));
-    parties.bind_organisations(provider.clone())?;
+    // Company (linked with Core) proves organisations: the walkthrough uses
+    // fixture company 2 and revokes it by archiving the row below. A rerun
+    // restores it first.
+    db.get()
+        .await?
+        .execute(
+            "UPDATE companies SET deleted_at=NULL WHERE tenant_id=1 AND id=2",
+            &[],
+        )
+        .await?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
     let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
     let mut client = db.get().await?;
@@ -94,9 +79,9 @@ async fn main() -> Result<()> {
         .authenticate(&**client, 1, 1, "walkthrough".into())
         .await?;
     let company =
-        Target::Company(OrganisationId::new(1).map_err(|_| bilibi_database::Error::Invalid)?);
+        Target::Company(OrganisationId::new(2).map_err(|_| bilibi_database::Error::Invalid)?);
     let user = Target::User {
-        company: Some(OrganisationId::new(1).map_err(|_| bilibi_database::Error::Invalid)?),
+        company: Some(OrganisationId::new(2).map_err(|_| bilibi_database::Error::Invalid)?),
     };
     if std::env::args().nth(1).as_deref() == Some("inspect") {
         let state = settings
@@ -299,7 +284,12 @@ async fn main() -> Result<()> {
             .err()
     );
     tx.rollback().await?;
-    provider.0.store(false, Ordering::SeqCst);
+    client
+        .execute(
+            "UPDATE companies SET deleted_at=now() WHERE tenant_id=1 AND id=2",
+            &[],
+        )
+        .await?;
     println!(
         "revoked company read refusal: {:?}",
         settings

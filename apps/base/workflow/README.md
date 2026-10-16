@@ -266,7 +266,8 @@ owner workbench count, and execution repeats every check.
 ## Running proof (no unit tests)
 
 Use an explicitly disposable PostgreSQL database, never the normal development
-database. Migrate and seed the app fixture, then run the private owner example.
+database. Migrate it, then run the private owner example, which installs the
+walkthrough fixture accounts itself.
 It links a reference subject, guard, action and flow that production never
 contributes (`examples/reference/mod.rs`, shared with the Web fixture
 executable `apps/web/examples/w7-workflow-reference.rs`).
@@ -275,7 +276,6 @@ executable `apps/web/examples/w7-workflow-reference.rs`).
 export DATABASE_URL='postgres://.../disposable'
 export BILIBI_DISPOSABLE_WORKFLOW_DEMO=yes
 cargo run -p bilibi-web -- migrate
-cargo run -p bilibi-web -- seed
 cargo run -p bilibi-workflow --example owner -- init
 cargo run -p bilibi-workflow --example owner -- available 4 1
 cargo run -p bilibi-workflow --example owner -- approve 4 1
@@ -403,7 +403,7 @@ On record 3, `reference.review.submit` is offered for the `review` item of the
 `publish` and the action is no longer offered. The viewer (user 2) is offered
 nothing. `{"handler_fail":true}` as the payload makes the handler refuse.
 
-Arguments are `command [user-id] [record-id]`; user 4 is the seeded admin.
+Arguments are `command [user-id] [record-id]`; user 4 is the fixture admin.
 For `run`, `run-drift`, `events` and the lifecycle commands, the record-ID
 position takes a process run ID. Lifecycle commands then take a step key,
 signal name or reason; `complete` also takes an optional outcome.
@@ -449,14 +449,14 @@ generic action, pending-work and history adapter ported from Bilimbi's
   `FlexTable`; the `When` column keeps its typed timestamp.
 
 The route requires `admin.reference.record.approve`, which this module declares
-and grants to no system role; the seeded admin holds it through grant-all. The
+and grants to no system role; the fixture admin holds it through grant-all. The
 `reference.record` subject is contributed only by the fixture executables, so
 a production install shows the generic "Workflow could not complete the request. Refresh the page and review the record." there; do not turn
 the page into a generic workflow administration product.
 
 To run the page against the disposable reference owner, in a fresh disposable
 database after `init` (and optionally `start-human 4 1` for a work-bound
-entry), serve the fixture executable and sign in as the seeded admin:
+entry), serve the fixture executable and sign in as the fixture admin:
 
 ```sh
 export BILIBI_DISPOSABLE_WORKFLOW_DEMO=yes
@@ -505,9 +505,9 @@ cannot overwrite a newer attempt. Failures retain a bounded error code and
 retry after `2^min(attempt,10)` seconds (maximum 1,024 seconds). Pending rows
 have no terminal retry limit: maintenance recovers them even if their immediate
 queue job exhausts retries or its original user is no longer eligible.
-The immediate job needs `workflow.transition.deliver` (contributed to manager;
-admin grant-all also permits it). Reconcile role contributions through the
-normal explicit seed path when upgrading.
+The immediate job needs `workflow.transition.deliver`, which no product role
+carries: grant it to the roles that deliver (`core_admin`'s grant-all permits
+it; the walkthrough fixture's manager holds it).
 
 `base/workflow-maintenance` appears on `/system/schedule` with a once-per-minute
 UTC recurrence, coalesced downtime and forbidden overlap. It stays unreviewed

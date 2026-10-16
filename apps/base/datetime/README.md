@@ -52,5 +52,5 @@ definitions and the request-scoped display context presentation renders with.
   browser zone without a reload. A page validates it through `Clock::resolve`.
 
 Run `BILIBI_DISPOSABLE_P4_DEMO=yes cargo run -p bilibi-web --example
-p4-locale-datetime` against a migrated, seeded disposable database (it appoints
+p4-locale-datetime` against a migrated disposable database (it appoints
 tenant 1 operator and resets only the keys it uses).

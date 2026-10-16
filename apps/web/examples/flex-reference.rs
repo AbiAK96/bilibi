@@ -1,5 +1,5 @@
 //! Manual specimen for the flexible table, separate from product routes.
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL, APP_ORIGIN and BIND_ADDR.
+//! Run with an isolated, migrated DATABASE_URL, APP_ORIGIN and BIND_ADDR.
 //!
 //! `/flex-reference` runs `FlexTable` live in three hosts:
 //!
@@ -36,6 +36,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -389,6 +391,7 @@ inventory::submit! {
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

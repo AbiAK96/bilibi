@@ -131,8 +131,8 @@ and every function takes the instant as an argument:
 
 Replay any moment with `cargo run -p bilibi-schedule --example schedule-walkthrough -- dst [key instant]`
 (no database). The other modes use a disposable database
-(`BILIBI_DISPOSABLE_SCHEDULE_DEMO=yes`, `DATABASE_URL`, after `bilibi-web migrate`
-and `seed`); they link a private worker, handler and five definitions that
+(`BILIBI_DISPOSABLE_SCHEDULE_DEMO=yes`, `DATABASE_URL`, after `bilibi-web migrate`;
+they install the walkthrough fixture); they link a private worker, handler and five definitions that
 production does not have:
 
 ```sh

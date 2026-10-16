@@ -212,8 +212,8 @@ pub fn router(app: App) -> Router {
         )
         .route("/assets/ui-feedback.html", get(feedback_specimen))
         .route(
-            "/assets/ui-feedback-demo.js",
-            get(|| async { asset_response("ui-feedback-demo.js") }),
+            "/assets/ui-feedback-driver.js",
+            get(|| async { asset_response("ui-feedback-driver.js") }),
         )
         .route(
             "/assets/ui.js",

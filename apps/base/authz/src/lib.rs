@@ -25,25 +25,6 @@ pub use vocabulary::{
     VocabularyContribution, VOCABULARY,
 };
 
-#[derive(Clone, Copy)]
-pub enum Capability {
-    CompaniesView,
-    CompaniesUpdate,
-    NotificationsView,
-    NotificationsUpdate,
-    SessionLogout,
-}
-impl Capability {
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::CompaniesView => "companies.view",
-            Self::CompaniesUpdate => "companies.update",
-            Self::NotificationsView => "notifications.view",
-            Self::NotificationsUpdate => "notifications.update",
-            Self::SessionLogout => "session.logout",
-        }
-    }
-}
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
 /// Never call this from a contribution validator: catalog discovery runs every
 /// validator while this snapshot initializes, so the call deadlocks. Prove
@@ -80,13 +61,6 @@ impl Decision {
             Err(Error::Forbidden)
         }
     }
-}
-pub async fn authorize(
-    client: &impl GenericClient,
-    scope: &Scope,
-    capability: Capability,
-) -> Result<()> {
-    authorize_key(client, scope, capability.key()).await
 }
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
     decide(client, scope, key).await?.require()

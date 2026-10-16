@@ -1,5 +1,5 @@
 //! Opt-in manual service walkthrough. No test harness, assertions or unit tests.
-//! Uses a disposable migrated/seeded database and prints outcomes for inspection.
+//! Uses a disposable migrated database and prints outcomes for inspection.
 use bilibi_database::{pool, Error, Result};
 use bilibi_module_registry::Services;
 use bilibi_security::Scope;
@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;

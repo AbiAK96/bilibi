@@ -1,4 +1,4 @@
-//! Deterministic Data Mutations fixture for a disposable, migrated and seeded
+//! Deterministic Data Mutations fixture for a disposable, migrated
 //! database; no test harness. It inserts one fixed ledger of 40 mutations for
 //! a tenant (default 1) with explicit event times, so the Data Mutations
 //! screen and a record's History disclosure read the same on every run and
@@ -12,7 +12,7 @@
 //! identifier, timestamps with and without an offset, a calendar date, nested
 //! JSON, capture-redacted secrets, a change with no field differences, a
 //! six-field change (summary truncation) and enough company updates for a
-//! second page. For the withheld presentation it also makes the seeded
+//! second page. For the withheld presentation it also makes the fixture's
 //! `staff@example.test` an audit reader whose roles restrict
 //! `reference_items.unit_cost`: the admin sees the reference item's cost
 //! changes, staff sees "Restricted" in their place. It then prints what each
@@ -284,6 +284,7 @@ async fn main() -> Result<()> {
         .map_or(Ok(1), |t| t.parse())
         .map_err(|_| Error::Invalid)?;
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let client = db.get().await?;
     let rows = ledger();
     let total = rows.len();

@@ -18,10 +18,10 @@ are translated. To recapture it from the exact pinned checkout, run
 `node apps/base/ui/assets/capture-reference.cjs /path/to/bilimbi`. `vendor/icon-candidates.txt` includes all four Heroicons sizes,
 because runtime menu/action contributions carry bare names.
 
-`css/demo-compat.css` temporarily styles the untranslated demo pages inside the
+`css/legacy-compat.css` temporarily styles the untranslated legacy pages inside the
 shell's `#app-content`, using the shared semantic colors; it stops at a
 `[data-shared-ui]` subtree. The shell chrome itself uses source classes. Remove
-this compatibility sheet when the demo pages have been translated; new
+this compatibility sheet when the legacy pages have been translated; new
 components use shared source classes rather than extending it.
 
 The bounded Rust `static_asset` allowlist owns font/favicon/specimen serving.

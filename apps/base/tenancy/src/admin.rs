@@ -1,8 +1,8 @@
 //! Tenant administration (Bilimbi `Bilimbi.Base.Tenancy` `list_tenants/0`,
 //! `count_tenants/0`, `fetch_tenant/1`, `create_tenant/1`): live tenants as
 //! stable identities, and the audited create. Every read and write here takes
-//! an explicit [`OperatorProof`]; a numeric tenant id, `grant_all` or demo
-//! tenant 1 never stands in for it. The capability on top of that identity is
+//! an explicit [`OperatorProof`]; a numeric tenant id (tenant 1 included) or
+//! `grant_all` never stands in for it. The capability on top of that identity is
 //! the route's (`LIST`) or the page's (`CREATE`) to prove through the bound
 //! [`crate::OperatorAuthorizer`]; this service only refuses to run without the
 //! identity proof and re-proves it on the write's own transaction.

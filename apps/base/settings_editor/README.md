@@ -56,8 +56,8 @@ see Bilimbi's "You do not have permission to manage company settings."
 
 ## Manual walkthrough
 
-On a disposable migrated and seeded database, appoint tenant 1 as operator
-(`INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1)`), set
+On a disposable migrated database, install the walkthrough fixture
+(`cargo run -p bilibi-walkthrough-fixture`; tenant 1 is its operator), set
 `BILIBI_SETTINGS_KEY` to 64 hex characters, run the app and sign in as a
 tenant 1 account with `base.settings.global.manage` (an admin role with
 `grant_all`). Then:

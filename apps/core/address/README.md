@@ -70,8 +70,8 @@ action commit in one `MutationTransaction`. `subscribe()` publishes the tenant,
 address and affected owners after commit only. Grid links: `addresses.country`,
 `companies.addresses`, `companies.primary_address` and `persons.addresses`.
 Existing installations run `bilibi-web authz-reconcile` to grant the new
-capabilities to contributed roles: tenant owner and manager all, staff all but
-delete, viewer view/list.
+capabilities to contributed roles: the tenant owner gets all of them. The
+walkthrough fixture's manager gets all, staff all but delete, viewer view/list.
 
 ## Platform-operator locale bootstrap
 
@@ -107,7 +107,7 @@ K15 passes these facts to `Locales::resolve`/`adopt_inferred`.
 
 ## Runtime walkthrough (no unit tests)
 
-On a fresh disposable database: `migrate`, `seed`, then import the Geonames
+On a fresh disposable database: `migrate`, then import the Geonames
 sample (`apps/core/geonames/sample`, served by any static server with the
 `export/dump` and `export/zip` layout, `cities15000.txt` and `MY.txt` zipped):
 

@@ -1,4 +1,4 @@
-//! Running-app authorization walkthrough. Use only a disposable migrated/seeded
+//! Running-app authorization walkthrough. Use only a disposable migrated
 //! database: this command changes demo grants and temporarily appoints tenant 1
 //! operator. No test runner or mock services. Run with DATABASE_URL and
 //! BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz.
@@ -13,11 +13,13 @@ use bilibi_base::{
 use bilibi_database::{pool, Result};
 use serde_json::json;
 use tokio_postgres::Client;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 inventory::submit! { Contribution::new(VOCABULARY,"p6.runtime",Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
     domains:&["reference"],verbs:&["view"],
     capabilities:&[C::tenant("reference.records.view"), C::tenant("reference.extended.view"), C::platform("reference.platform.view")],
-    roles:&[RoleDefinition {code:"manager",name:"manager",description:"Demo extension of the existing manager seed",grant_all:false,capabilities:&["reference.extended.view"]}],system_principals:&[SystemPrincipalDefinition{name:"reference-reader",capabilities:&["reference.records.view","reference.platform.view"]}],
+    roles:&[RoleDefinition {code:"manager",name:"manager",description:"Extension of the fixture manager role",grant_all:false,capabilities:&["reference.extended.view"]}],system_principals:&[SystemPrincipalDefinition{name:"reference-reader",capabilities:&["reference.records.view","reference.platform.view"]}],
 }) }
 async fn show(client: &Client, scope: &Scope, key: &str) -> Result<()> {
     let d = authz::decide(client, scope, key).await?;
@@ -45,6 +47,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err("set BILIBI_AUTHZ_DEMO=disposable for this fixture walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35566")?;
     let auth = app
         .services
@@ -61,7 +64,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     for row in client.query("SELECT id,tenant_id,name,code,is_system FROM roles WHERE id BETWEEN 1 AND 5 ORDER BY id",&[]).await? {
         println!("role {} tenant {}: {} -> {} (system={})",row.get::<_,i64>(0),row.get::<_,i64>(1),row.get::<_,String>(2),row.get::<_,String>(3),row.get::<_,bool>(4));
     }
-    println!("== Contributed extension of the existing manager seed role");
+    println!("== Contributed extension of the fixture manager role");
     show(client, &manager, "reference.extended.view").await?;
     println!("== Live roles, direct allows and deny precedence");
     show(client, &manager, "companies.update").await?;

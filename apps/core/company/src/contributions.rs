@@ -43,18 +43,11 @@ const fn role(
         capabilities,
     }
 }
-// `tenant_owner` receives the whole set as the source grants it. The demo
-// roles are extended so the seeded accounts can try the K1 APIs: the manager
-// administers any company of the tenant, staff edits, the viewer reads.
+// `tenant_owner` receives the whole set as the source grants it.
 inventory::submit! { Contribution::new(VOCABULARY, "core/company", provenance!(), &VocabularyContribution {
     domains: &[], verbs: &[],
     capabilities: &[C::tenant(VIEW), C::tenant(LIST), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE), C::tenant(TENANT_WIDE)],
-    roles: &[
-        role("tenant_owner", "Tenant Owner", &CAPABILITIES),
-        role("manager", "manager", &CAPABILITIES),
-        role("staff", "staff", &[VIEW, LIST, UPDATE]),
-        role("viewer", "viewer", &[VIEW, LIST]),
-    ],
+    roles: &[role("tenant_owner", "Tenant Owner", &CAPABILITIES)],
     system_principals: &[],
 }) }
 
@@ -205,3 +198,15 @@ inventory::submit! {
         method: Method::Get, path: "/companies/create", service: "core/company.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
+
+// Development sample data (Bilimbi's `priv/dev_seed.exs`): the Engineering
+// and Operations department types, and one department of each on the
+// platform operator's primary company. Only `bilibi-web seed` runs it, on the
+// bootstrap that creates the operator.
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "core/company.development", provenance!(), &bilibi_module_registry::contributions::Seed {
+    version: "company-development-sample",
+    mode: bilibi_module_registry::contributions::SeedMode::Development,
+    action: bilibi_module_registry::contributions::SeedAction::Sql("INSERT INTO company_department_types(code,name,category) VALUES('ENG','Engineering','operational'),('OPS','Operations','operational') ON CONFLICT (code) DO NOTHING;
+INSERT INTO company_departments(tenant_id,company_id,department_type_id,status)
+SELECT p.tenant_id,p.company_id,t.id,'active' FROM platform_operator o JOIN tenant_primary_companies p ON p.tenant_id=o.tenant_id CROSS JOIN company_department_types t WHERE t.code IN ('ENG','OPS') ON CONFLICT (company_id,department_type_id) DO NOTHING"),
+}) }

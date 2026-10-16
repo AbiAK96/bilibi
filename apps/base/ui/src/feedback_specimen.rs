@@ -2,7 +2,7 @@
 //! modal and confirmation dialogs and the tab strip on one page, served
 //! unauthenticated at `/assets/ui-feedback.html`. It is the screenshot baseline
 //! for those components, not the Design Library. The dialogs are `<template>`
-//! fragments rendered by the same macros; `static/ui-feedback-demo.js` stands in
+//! fragments rendered by the same macros; `static/ui-feedback-driver.js` stands in
 //! for the server by inserting and removing them.
 use crate::section::sections;
 use crate::{FlashMap, Tab};

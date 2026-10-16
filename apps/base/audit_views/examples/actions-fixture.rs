@@ -1,4 +1,4 @@
-//! Deterministic Audit Actions fixture for a disposable, migrated and seeded
+//! Deterministic Audit Actions fixture for a disposable, migrated
 //! database; no test harness. It inserts one fixed ledger of 64 actions for a
 //! tenant (default 1) with explicit event times, so the Actions screen reads the
 //! same on every run and against any other implementation fed the same rows:
@@ -268,6 +268,7 @@ async fn main() -> Result<()> {
         .map_or(Ok(1), |t| t.parse())
         .map_err(|_| Error::Invalid)?;
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let client = db.get().await?;
     let rows = ledger();
     let total = rows.len();

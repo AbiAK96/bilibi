@@ -86,7 +86,7 @@ deploying. The tables are empty unless a walkthrough or fixture fills them.
 
 ## Running evidence
 
-No unit tests. On a disposable migrated and seeded database:
+No unit tests. On a disposable migrated database:
 
 ```sh
 BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g1-grid
@@ -138,7 +138,7 @@ the execution backstop. Owners must still index their sources and join keys.
 The query returns typed `QueryError`s and converts to the shared database error
 for page handlers. It does not sort/filter walked columns or persist layouts (G4).
 
-Run the live projection walkthrough against a **disposable** migrated/seeded
+Run the live projection walkthrough against a **disposable** migrated
 PostgreSQL database:
 
 ```sh
@@ -189,8 +189,8 @@ A host reads lenses in three steps, as Bilimbi's `PageColumns` does:
 The reference movements carry `moved_on` (date, the time field) and
 `recorded_at` (timestamptz) so every typed path has data.
 
-Run the live lens page against a **disposable** migrated/seeded database
-(sign in as a seeded manager after the example reconciles roles):
+Run the live lens page against a **disposable** migrated database
+(sign in as the fixture manager after the example reconciles roles):
 
 ```sh
 BILIBI_GRID_DEMO=disposable DATABASE_URL=... APP_ORIGIN=... BIND_ADDR=... \
@@ -257,15 +257,15 @@ by their label beside the catalog's columns. Rollup expansion in place
 (`expand`/`collapse`) is accepted and ignored until Grid has an expansion
 read; a rollup cell still shows its aggregate through every lens.
 
-Run the live page against a **disposable** migrated/seeded database (sign in
-as a seeded manager after the example reconciles roles):
+Run the live page against a **disposable** migrated database (sign in
+as the fixture manager after the example reconciles roles):
 
 ```sh
 BILIBI_GRID_DEMO=disposable DATABASE_URL=... APP_ORIGIN=... BIND_ADDR=... \
   cargo run -p bilibi-web --example g4-page-columns
 ```
 
-It replaces the reference fixture (`reference::DEMO_FIXTURE`, shared with
+It replaces the reference fixture (`reference::FIXTURE`, shared with
 `g3-lenses`) and serves `/g4-page-columns`: the tenant's reference items as the
 page's own list (search, category, sort, two pages) with Name, Category and
 Quantity drawn by the page. Open the notch, add `group.name`,

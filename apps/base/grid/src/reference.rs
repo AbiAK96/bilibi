@@ -2,14 +2,14 @@
 //! slice (query, lenses, page columns, Design Library specimen) has a catalog to
 //! run against. Groups, items and movements exercise a one-link, many-links, a
 //! chained one-link after a many-link, an enum, decimals, dates, a timestamp and a restrictable
-//! field (`reference_items.unit_cost`). A manager, viewer or staff member may read
-//! them after `authz-reconcile`.
+//! field (`reference_items.unit_cost`). A role granted [`READ`] may read them;
+//! no product role carries it, the walkthrough fixture's roles do.
 use crate::model::{
     Field, FieldType::*, GridContribution, LinkDecl, LinkKind::*, Source, TableDecl,
 };
-use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
+use bilibi_authz::{CapabilityDefinition as C, VocabularyContribution, VOCABULARY};
 
-const READ: &str = "grid.reference.view";
+pub const READ: &str = "grid.reference.view";
 
 static GRID: GridContribution = GridContribution {
     tables: &[
@@ -76,7 +76,7 @@ crate::contribute!("base/grid", "grid.reference", &GRID);
 /// tenant-1 items in three groups and fourteen months of movements relative to
 /// today on the UTC calendar, plus one tenant-2 item. It replaces whatever the
 /// reference tables hold; only run it on a disposable database.
-pub const DEMO_FIXTURE: &str = "DELETE FROM base_grid_ref_movements; DELETE FROM base_grid_ref_items; DELETE FROM base_grid_ref_groups;
+pub const FIXTURE: &str = "DELETE FROM base_grid_ref_movements; DELETE FROM base_grid_ref_items; DELETE FROM base_grid_ref_groups;
 INSERT INTO base_grid_ref_groups(id,tenant_id,name,region) VALUES (9301,1,'Harbour','north'),(9302,1,'Valley','south'),(9303,1,'Ridge','east'),(9304,2,'Elsewhere','west');
 INSERT INTO base_grid_ref_items(id,tenant_id,group_id,name,category,quantity,reorder_level,unit_cost,active) VALUES
  (9311,1,9301,'Anchor bolt','parts',240,50,0.85,true),
@@ -106,10 +106,6 @@ bilibi_module_registry::Provenance { module: "base/grid", source: file!(), line:
     domains: &["grid"],
     verbs: &["view"],
     capabilities: &[C::tenant(READ)],
-    roles: &[
-        RoleDefinition { code: "manager", name: "manager", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[READ] },
-        RoleDefinition { code: "viewer", name: "viewer", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[READ] },
-        RoleDefinition { code: "staff", name: "staff", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[READ] },
-    ],
+    roles: &[],
     system_principals: &[],
 }) }

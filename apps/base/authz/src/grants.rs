@@ -271,25 +271,22 @@ impl Grants {
         }
         Ok(())
     }
-    /// Reconcile one contributed system role in one tenant, as `reconcile_in`
-    /// does for every role, and return its id. The dev seed uses it to ensure
-    /// `core_admin` without rewriting the demo roles' extra grants.
-    pub async fn ensure_system_role_in(
-        &self,
-        tx: &Transaction<'_>,
-        tenant: i64,
-        code: &str,
-    ) -> Result<i64> {
-        let role = self.vocabulary.roles.get(code).ok_or(Error::Invalid)?;
+    /// Reconcile every contributed system role in one tenant, as
+    /// `reconcile_in` does for all of them; the development seed runs it for
+    /// the platform-operator tenant it has just provisioned.
+    pub async fn reconcile_tenant_in(&self, tx: &Transaction<'_>, tenant: i64) -> Result<()> {
         lock_roles(tx).await?;
-        reconcile_role(tx, tenant, role).await
+        for role in self.vocabulary.roles.values() {
+            reconcile_role(tx, tenant, role).await?;
+        }
+        Ok(())
     }
 }
 
 async fn lock_roles(tx: &Transaction<'_>) -> Result<()> {
     tx.execute("SELECT pg_advisory_xact_lock(841319)", &[])
         .await?;
-    // Existing demo roles used explicit IDs, which did not advance identity.
+    // Rows inserted with explicit IDs (older seeds, fixtures) never advance identity.
     tx.batch_execute("LOCK TABLE roles IN SHARE ROW EXCLUSIVE MODE; SELECT setval(pg_get_serial_sequence('roles','id'),GREATEST(COALESCE((SELECT max(id) FROM roles),1),nextval(pg_get_serial_sequence('roles','id'))),true)").await?;
     Ok(())
 }

@@ -4,13 +4,15 @@
 //! This executable links the disposable reference owner shared with
 //! `apps/base/workflow/examples/owner.rs` and serves the whole app over the
 //! same disposable database, so the page offers the owner's human actions.
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL after
+//! Run with an isolated, migrated DATABASE_URL after
 //! `cargo run -p bilibi-workflow --example owner -- init`; see
 //! `apps/base/workflow/README.md`.
 #[path = "../../base/workflow/examples/reference/mod.rs"]
 #[allow(dead_code)]
 mod reference;
 use bilibi_database::{Error, Result};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,6 +21,7 @@ async fn main() -> Result<()> {
         return Err(Error::Invalid);
     }
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     bilibi_web::migrate(&db).await?;

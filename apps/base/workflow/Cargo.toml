@@ -28,5 +28,6 @@ uuid.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }

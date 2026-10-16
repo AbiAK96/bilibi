@@ -30,7 +30,7 @@ use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
 use tokio_postgres::{GenericClient, Row};
 
-/// Frozen demo migration; `004` is K1's additive organisation schema.
+/// Frozen original migration; `004` is K1's additive organisation schema.
 pub const MIGRATION: (&str, &str) = ("003-company", include_str!("../migrations/003.sql"));
 pub const MIGRATION_ORGANISATION: (&str, &str) = (
     "core-company-004-organisation",
@@ -697,8 +697,9 @@ inventory::submit! {
 /// model (`relationship_roles`, `relationships`). Each write is one audited
 /// mutation transaction; a refusal is an outcome, never an `Error`.
 impl CompanyService {
-    /// The tenant's roles. A tenant whose catalog is empty (one created by
-    /// the demo seed after the migration ran) first receives the contributed
+    /// The tenant's roles. A tenant whose catalog is empty (one created
+    /// by raw SQL after the migration ran, as the walkthrough fixture does)
+    /// first receives the contributed
     /// defaults by code; an administered catalog is never touched here.
     pub async fn relationship_roles(
         &self,

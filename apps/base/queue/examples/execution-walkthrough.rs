@@ -12,6 +12,7 @@ use bilibi_queue::{
 use bilibi_tenancy::Authentication;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 
 fn allowlist(args: Value) -> Result<Value> {
     let object = args.as_object().ok_or(Error::Invalid)?;
@@ -144,6 +145,7 @@ async fn main() -> Result<()> {
         return Err(Error::Invalid);
     }
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let mut services = Services::default();
     let modules = bilibi_module_registry::discover()?;
     if std::env::args().nth(1).as_deref() == Some("prepare") {

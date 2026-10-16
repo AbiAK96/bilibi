@@ -106,7 +106,7 @@ housekeeping like a password-reset token and is not a business mutation.
 
 ## Walkthrough
 
-Against a disposable database after the host's `migrate` and `seed`, appoint
+Against a disposable database after the host's `migrate`, appoint
 the fixture operator (`INSERT INTO platform_operator(singleton,tenant_id)
 VALUES(true,1)`) so the setting writes succeed, then run
 

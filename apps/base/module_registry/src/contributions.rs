@@ -278,10 +278,13 @@ pub struct Embed {
     pub operation: &'static str,
     pub access: Access,
 }
-#[derive(Clone, Copy, Debug)]
+/// `Production` seeds run once per version through the durable ledger;
+/// `Development` seeds are idempotent sample data that only the development
+/// seed (`bilibi-web seed`) runs, Bilimbi's module `dev_seed` scripts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SeedMode {
     Production,
-    Demo,
+    Development,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum SeedAction {

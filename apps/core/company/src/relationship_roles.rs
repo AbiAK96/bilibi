@@ -89,7 +89,8 @@ pub async fn ensure_defaults(client: &impl GenericClient, tenant: i64) -> Result
 }
 
 /// The facade's read-side reconcile: only a tenant with no role at all (one
-/// the demo seed created after this migration ran) receives the defaults.
+/// created by raw SQL after this migration ran, as the walkthrough fixture
+/// does) receives the defaults.
 pub async fn ensure_defaults_if_empty(client: &impl GenericClient, tenant: i64) -> Result<u64> {
     let any = client
         .query_opt(

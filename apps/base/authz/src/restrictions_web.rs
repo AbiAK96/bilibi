@@ -19,8 +19,8 @@
 //! on its next event or refresh, and a write that slips between the two checks
 //! flashes a refusal instead of clearing anything.
 //!
-//! Rows the catalog no longer offers (a stale `table_id`, such as the demo's
-//! Companies restrictions before Company contributes a Grid table) stay
+//! Rows the catalog no longer offers (a stale `table_id`, such as a
+//! restriction on a table its module stopped contributing) stay
 //! listed with their ids, can be removed, and cannot be re-restricted.
 use crate::field_catalog::FieldCatalog;
 use crate::restrictions::{Removed, RestrictionSummary, RoleChoice};

@@ -5,7 +5,7 @@
 //! HTTP error, body limit, stream, connect failure, timeout), records incoming
 //! calls for a tenant and for the tenantless system path, then reads them back
 //! through every visibility and capability gate, deletes one with audit and
-//! prunes an aged payload. Run against a freshly seeded database.
+//! prunes an aged payload. Run against a freshly migrated database.
 use axum::{
     http::{header, StatusCode},
     response::IntoResponse,
@@ -89,6 +89,7 @@ async fn main() -> DbResult<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| bilibi_database::Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()

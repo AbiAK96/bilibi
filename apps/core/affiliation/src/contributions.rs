@@ -8,7 +8,7 @@ pub const CREATE: &str = "admin.affiliation.create";
 pub const UPDATE: &str = "admin.affiliation.update";
 pub const UNLINK: &str = "admin.affiliation.unlink";
 pub const PROVE: &str = "admin.affiliation.prove";
-const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, UNLINK, PROVE];
+pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, UNLINK, PROVE];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -25,7 +25,7 @@ const fn role(
 inventory::submit! { Contribution::new(VOCABULARY, "core/affiliation", Provenance { module: "core/affiliation", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &["unlink", "prove"],
     capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(UNLINK), C::tenant(PROVE)],
-    roles: &[role("tenant_owner", "Tenant Owner", CAPS), role("manager", "manager", CAPS), role("staff", "staff", &[LIST, VIEW, CREATE, UPDATE]), role("viewer", "viewer", &[LIST, VIEW])],
+    roles: &[role("tenant_owner", "Tenant Owner", CAPS)],
     system_principals: &[],
 }) }
 

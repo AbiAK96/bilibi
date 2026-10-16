@@ -1,4 +1,4 @@
-//! Manual owner walkthrough on a seeded disposable database; no test harness.
+//! Manual owner walkthrough on a migrated disposable database; no test harness.
 use bilibi_database::{pool, Change, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution, Provenance, Services};
 use bilibi_queue::{Queue, Worker, WORKERS};
@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     bilibi_database::migrate(
         &db,

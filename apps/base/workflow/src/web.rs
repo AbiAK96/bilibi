@@ -39,7 +39,7 @@ use bilibi_ui::{
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
-/// The route capability. Declared in the vocabulary; no seeded role holds it.
+/// The route capability. Declared in the vocabulary; no system role holds it.
 pub const APPROVE: &str = "admin.reference.record.approve";
 /// The bounded, non-business subject the reference adapters own.
 pub const SUBJECT: &str = "reference.record";

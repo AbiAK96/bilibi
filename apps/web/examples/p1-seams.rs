@@ -1,7 +1,7 @@
 //! Runnable demonstration of the Menu and PrincipalDirectory seams against the
 //! real installed services and the current account adapter. Not a test suite:
 //! it prints what each seam does and exits non-zero if the seam misbehaves.
-//! Needs DATABASE_URL for a migrated, seeded DISPOSABLE database; it adds two
+//! Needs DATABASE_URL for a migrated DISPOSABLE database; it adds two
 //! idempotent demo accounts (a role-less user and a deleted one) to tenant 1.
 //!
 //!     cargo run -p bilibi-web --example p1-seams
@@ -17,6 +17,8 @@ use bilibi_base::{
 };
 use bilibi_database::pool;
 use std::{collections::HashSet, sync::Arc};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -147,6 +149,7 @@ async fn visible(menu: &Menu, client: &tokio_postgres::Client, scope: &Scope) ->
 #[tokio::main]
 async fn main() -> Result {
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:3000")?;
     let modules = bilibi_web::modules()?;
     let client = db.get().await?;
@@ -194,8 +197,9 @@ async fn main() -> Result {
     ids.clear();
     flatten(&visible(menu, client, &manager).await, &mut ids);
     expect(
-        ids == ["admin", "admin.company"],
-        "a manager sees Administration > Companies only",
+        ids.starts_with(&["admin", "admin.company"])
+            && ids[2..].iter().all(|id| id.starts_with("admin.company.")),
+        "a manager sees Administration > Companies and its catalogs only",
     )?;
 
     println!("== Menu: contributor defects");
@@ -257,8 +261,8 @@ async fn main() -> Result {
         user(5)?,                                     // Other Manager: tenant 2, must not be named
         user(901)?,                                   // deleted account
         user(424242)?,                                // never existed
-        PrincipalRef::new(PrincipalKind::Agent, 1)?,  // no agent provider yet
-        PrincipalRef::new(PrincipalKind::Person, 1)?, // no person provider yet
+        PrincipalRef::new(PrincipalKind::Agent, 1)?,  // Person 1 is human, not an agent
+        PrincipalRef::new(PrincipalKind::Person, 1)?, // the fixture Person Ada Manager
         user(1)?,                                     // duplicate candidate
     ];
     let ranked: Ranked = directory
@@ -274,20 +278,21 @@ async fn main() -> Result {
     }
     let names: Vec<_> = ranked.named.iter().map(|n| n.name.as_str()).collect();
     expect(
-        names == ["Ada Manager", "Lee Viewer", "Sam Staff"],
+        // Account 1 and the fixture's Person 1 are both named Ada Manager.
+        names == ["Ada Manager", "Ada Manager", "Lee Viewer", "Sam Staff"],
         "named principals are ordered by name, once each",
     )?;
     expect(
-        ranked.unresolved.len() == 5,
-        "cross-tenant, deleted, unknown and unbound-kind principals stay present as unresolved",
+        ranked.unresolved.len() == 4,
+        "cross-tenant, deleted, unknown and unmatched-kind principals stay present as unresolved",
     )?;
     expect(
         ranked.label(user(5)?) == "User 5",
         "a cross-tenant account shows its durable kind and id, not its name",
     )?;
     expect(
-        ranked.label(PrincipalRef::new(PrincipalKind::Person, 1)?) == "Person 1",
-        "kind is part of identity: user 1 is not person 1",
+        ranked.label(PrincipalRef::new(PrincipalKind::Agent, 1)?) == "Agent 1",
+        "kind is part of identity: human Person 1 is not agent 1",
     )?;
 
     println!("== PrincipalDirectory: searches and failures stay visible");
@@ -318,34 +323,15 @@ async fn main() -> Result {
         outside.named.is_empty(),
         "search never reaches another tenant's account",
     )?;
-    for (what, result) in [
-        (
-            "search over a kind with no provider",
-            directory
-                .rank(
-                    client,
-                    &manager,
-                    &[user(1)?, PrincipalRef::new(PrincipalKind::Agent, 1)?],
-                    &Query::default().search("a"),
-                )
-                .await,
-        ),
-        (
-            "more candidates than the ceiling",
-            directory
-                .rank(client, &manager, &users, &Query::default().ceiling(3))
-                .await,
-        ),
-    ] {
-        match result {
-            Err(
-                error @ (DirectoryError::NameSearchUnavailable(_)
-                | DirectoryError::TooManyCandidates { .. }),
-            ) => {
-                println!("  refused: {what}: {error}");
-            }
-            other => expect(false, &format!("{what} must fail visibly, got {other:?}"))?,
+    let what = "more candidates than the ceiling";
+    match directory
+        .rank(client, &manager, &users, &Query::default().ceiling(3))
+        .await
+    {
+        Err(error @ DirectoryError::TooManyCandidates { .. }) => {
+            println!("  refused: {what}: {error}");
         }
+        other => expect(false, &format!("{what} must fail visibly, got {other:?}"))?,
     }
     println!("== PrincipalDirectory: providers bind only at boot");
     let late = directory.bind("core/user", Arc::new(Stub));

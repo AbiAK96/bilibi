@@ -131,14 +131,14 @@ below (adding `media.attachment_disk` is done for you); it prints outcomes for
 uploads, ULIDs, rejected files, tenant and owner rechecks, submit, retain,
 discard, immutability and audit, and finishes by printing ids. Then
 `-- serve` (with `APP_ORIGIN` and `BIND_ADDR`) runs the real host with the
-fixture owner registered: sign in with the seeded demo accounts and fetch
+fixture owner registered: sign in with the walkthrough fixture accounts and fetch
 `/media/attachments/{id}`, or change the ticket row with `psql` and watch the
 next request flip to 403. Backdated drafts can then be removed with
 `bilibi-web media-cleanup --tenant 1`.
 
 ### Assets and subject owners
 
-On a disposable database run the host's `migrate` and `seed`. Set
+On a disposable database run the host's `migrate`. Set
 `DATABASE_URL`, `BILIBI_DISPOSABLE_MEDIA_DEMO=yes`, `BILIBI_MEDIA_SIGNING_KEY`
 and `BILIBI_MEDIA_DEMO_ROOT` (a scratch directory the command makes `0700`), then
 run `cargo run -p bilibi-media --locked --example media-walkthrough`. It appoints

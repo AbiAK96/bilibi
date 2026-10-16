@@ -1,5 +1,5 @@
-//! Live Grid lens walkthrough. Only run against a disposable migrated and
-//! seeded PostgreSQL with BILIBI_GRID_DEMO=disposable, plus DATABASE_URL,
+//! Live Grid lens walkthrough. Only run against a disposable migrated
+//! PostgreSQL with BILIBI_GRID_DEMO=disposable, plus DATABASE_URL,
 //! APP_ORIGIN and BIND_ADDR. No test runner or mocks.
 //!
 //! It replaces the non-business reference fixture with twelve tenant-1 items
@@ -8,7 +8,7 @@
 //! walked columns are projected by `bilibi_grid::project_lenses` and drawn
 //! through `bilibi_grid::lens`. Switch a column's lens from its chip, set the
 //! change-since date, and flip the timestamp clock; every reply re-projects for
-//! the signed-in scope. Sign in as a seeded manager (grid.reference.view).
+//! the signed-in scope. Sign in as the fixture manager (grid.reference.view).
 //!
 //! With G3_DUMP=<file> it first writes every cell of every column through every
 //! lens it allows, with the raw value, range and extras it was prepared from, as
@@ -33,6 +33,8 @@ use bilibi_ui::{flex_table, Card, FlexRow, FlexTable, Header, Html};
 use jiff::civil;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, io::Write, sync::Arc};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 const ROOT: &str = "reference_items";
 
@@ -405,9 +407,10 @@ async fn dump(
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BILIBI_GRID_DEMO").as_deref() != Ok("disposable") {
-        return Err("set BILIBI_GRID_DEMO=disposable on a disposable seeded database".into());
+        return Err("set BILIBI_GRID_DEMO=disposable on a disposable migrated database".into());
     }
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN")?;
     let bind = std::env::var("BIND_ADDR")?;
     let app = bilibi_web::App::new(db.clone(), &origin)?;
@@ -417,7 +420,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await?;
     db.get()
         .await?
-        .batch_execute(grid::reference::DEMO_FIXTURE)
+        .batch_execute(grid::reference::FIXTURE)
         .await?;
     if let Ok(path) = std::env::var("G3_DUMP") {
         let auth = app

@@ -99,13 +99,13 @@ shows an em dash without reading. The open control goes to `/audit/mutations`.
 `examples/actions-fixture.rs` inserts a fixed 64-action ledger (every actor kind
 and event family, each result, diagnostic traffic, one bookmark) into a
 disposable tenant and prints what each filter returns; see its header. Then open
-`/audit/actions` as an account holding the capability (the demo `admin`).
+`/audit/actions` as an account holding the capability (the fixture `admin`).
 
 `examples/mutations-fixture.rs` inserts a fixed 40-mutation ledger (every actor
 kind, created/updated/deleted, impersonation, a system principal, a legacy row,
 timestamps, nested JSON, redacted secrets, a six-field change and a second
-page) and makes the demo `staff@example.test` an audit reader whose roles
+page) and makes the fixture account `staff@example.test` an audit reader whose roles
 restrict `reference_items.unit_cost`. Open `/audit/mutations` as `admin` for the
-values and as `staff` for "Restricted" in their place (the seed already
+values and as `staff` for "Restricted" in their place (the walkthrough fixture already
 restricts the company tax ID and revenue for staff, which the Companies rows
 show the same way); open `/companies/1` and press History for the trail.

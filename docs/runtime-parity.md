@@ -6,10 +6,10 @@ Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](
 
 1. Create a fresh disposable database for Bilibi and a separate fresh disposable database for the pinned Bilimbi reference. Never point either app at a developer, shared, or production database. Record how each disposable database is isolated and removed.
 2. Record the Bilibi commit, Bilimbi commit, fixture version, database identifiers (not credentials), runtime versions, and exact origins. Do not record passwords, cookies, session IDs, or tokens in evidence.
-3. For Bilibi, run `python3 scripts/discover-modules.py`, `cargo run -p bilibi-web -- migrate`, `cargo run -p bilibi-web -- seed`, then launch with the manifest's isolated database URL and a free local origin/port. Serve Bilibi on `127.0.0.1` and Bilimbi on `localhost`: cookies ignore ports, so distinct ports on the same host do not isolate their sessions.
-4. Confirm both apps are reachable and log in using only the manifest accounts. If the Bilimbi seed differs, create equivalent records in its isolated database and note every mapping; do not silently compare unlike data.
+3. For Bilibi, run `python3 scripts/discover-modules.py`, `cargo run -p bilibi-web -- migrate`, `cargo run -p bilibi-walkthrough-fixture`, then launch with the manifest's isolated database URL and a free local origin/port. Serve Bilibi on `127.0.0.1` and Bilimbi on `localhost`: cookies ignore ports, so distinct ports on the same host do not isolate their sessions.
+4. Confirm both apps are reachable and log in using only the manifest accounts. If the Bilimbi data differs, create equivalent records in its isolated database and note every mapping; do not silently compare unlike data.
 
-The current Bilibi seed creates tenants 1 and 2, five permission roles, seven demo accounts (three linked to demo Persons, two of them affiliated with a company), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone. Re-running `seed` is idempotent. The manifest's password is the local demo credential and must only be used against disposable local databases.
+The walkthrough fixture (`fixtures/walkthrough`) creates tenants 1 and 2, five permission roles, seven accounts (three linked to Persons, two of them affiliated with a company), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone; re-installing the fixture is idempotent. It is not product data: a real install's `seed` creates only the platform operator. The manifest's password is the fixture credential and must only be used against disposable local databases.
 
 ## Smoke and visual comparison
 

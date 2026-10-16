@@ -1,5 +1,5 @@
-//! Live Grid projection walkthrough. Only run against a disposable migrated and
-//! seeded PostgreSQL with BILIBI_GRID_DEMO=disposable. No test runner or mocks.
+//! Live Grid projection walkthrough. Only run against a disposable migrated
+//! PostgreSQL with BILIBI_GRID_DEMO=disposable. No test runner or mocks.
 use bilibi_base::{
     authz::grants::Grants,
     grid::{self, Field, FieldType::*, GridContribution, LinkDecl, LinkKind::*, Source, TableDecl},
@@ -7,6 +7,8 @@ use bilibi_base::{
 };
 use bilibi_database::pool;
 use serde_json::json;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 static EXTRA: GridContribution = GridContribution {
     tables: &[
@@ -42,9 +44,10 @@ grid::contribute!("base/grid", "g2.walkthrough", &EXTRA);
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BILIBI_GRID_DEMO").as_deref() != Ok("disposable") {
-        return Err("set BILIBI_GRID_DEMO=disposable on a disposable seeded database".into());
+        return Err("set BILIBI_GRID_DEMO=disposable on a disposable migrated database".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35567")?;
     let auth = app
         .services

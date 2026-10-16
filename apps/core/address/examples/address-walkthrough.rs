@@ -7,6 +7,8 @@ use bilibi_address::{
 };
 use bilibi_person::{PersonInput, PersonKind, PersonService};
 use std::fmt::Debug;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 type Failure = Box<dyn std::error::Error>;
 
 fn show(label: &str, value: impl Debug) {
@@ -44,9 +46,10 @@ fn place(country: &str, admin1: &str, postcode: &str, locality: &str) -> Locatio
 #[tokio::main]
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_ADDRESS_DEMO").as_deref() != Ok("disposable") {
-        return Err("set BILIBI_ADDRESS_DEMO=disposable for a migrated, seeded disposable DB with the Geonames sample imported".into());
+        return Err("set BILIBI_ADDRESS_DEMO=disposable for a migrated disposable DB with the Geonames sample imported".into());
     }
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:43110")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
@@ -54,7 +57,7 @@ async fn main() -> Result<(), Failure> {
         .await?;
     let addresses = app.services.get::<AddressService>(SERVICE)?;
     let people = app.services.get::<PersonService>(bilibi_person::SERVICE)?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let login = |email| app.user.login(email, password);
     let manager = app
         .security
@@ -295,8 +298,8 @@ async fn main() -> Result<(), Failure> {
     println!("\n== Organisation and Person attachments ==");
     let operator_company = organisation(1)?;
     let company2 = organisation(2)?;
-    // The demo seed provisions no operator; `platform-provision` would add a
-    // new tenant. Mark tenant 1 explicitly on this disposable database.
+    // The walkthrough fixture already marks tenant 1 the operator; keep the
+    // explicit marker so a reused disposable database gets it too.
     client
         .execute(
             "INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1) ON CONFLICT DO NOTHING",

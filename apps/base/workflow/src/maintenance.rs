@@ -47,7 +47,7 @@ inventory::submit! {Contribution::new(WORKERS,outbox::DELIVERY_WORKER,provenance
 inventory::submit! {Contribution::new(HANDLERS,outbox::DELIVERY_WORKER,provenance!(),&HandlerBinding {service:"base/workflow.delivery",capability:outbox::DELIVER})}
 inventory::submit! {Contribution::new(bilibi_authz::VOCABULARY,"workflow.delivery.vocabulary",provenance!(),&bilibi_authz::VocabularyContribution {
     domains:&[],verbs:&["deliver"],capabilities:&[bilibi_authz::CapabilityDefinition::tenant(outbox::DELIVER)],
-    roles:&[bilibi_authz::RoleDefinition {code:"manager",name:"manager",description:"Contributed manager capabilities",grant_all:false,capabilities:&[outbox::DELIVER]}],system_principals:&[],
+    roles:&[],system_principals:&[],
 })}
 inventory::submit! {Contribution::new(WORKERS,WORKER,provenance!(),&Worker {max_attempts:3,validate:|args|worker::validate(args,no_arguments)})}
 inventory::submit! {Contribution::new(HANDLERS,WORKER,provenance!(),&HandlerBinding {service:"base/workflow.maintenance",capability:EXECUTE})}

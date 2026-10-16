@@ -71,7 +71,7 @@ rename; `shared-layouts` and `shared` are reserved.
   outcome: `Layouts::publish` and `unpublish` check the same capability on the
   sealed scope. `/workspace/shared/{shared}` opens a shared layout for an
   account whose roles may see it; every tile still applies that account's own
-  route access. Audiences are role codes, with a code-less demo role known by
+  route access. Audiences are role codes, with a code-less tenant role known by
   its name.
 - Shared layouts live at company scope. The Core identity binder proves an
   account's organisation from its affiliation; for an unlinked account
@@ -147,7 +147,9 @@ following, the same click opens the company in the list's own tile.
 
 Then open the bookmark, save
 the tiles as "Orders desk" (the address becomes `/workspace/orders-desk`),
-reload it, make it the default and open `/workspace`; press `Ctrl+.` then `1`;
-as `admin@example.test`, use "Share current tiles" to publish it for the
+reload it, make it the default and open `/workspace`; press `Ctrl+.` then `1`.
+Sharing needs a second account: on a disposable database holding the
+walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`), sign in as
+`admin@example.test`, use "Share current tiles" to publish it for the
 `manager` role and open it as `manager@example.test` from the dialog's "Shared
 with you", then copy it.

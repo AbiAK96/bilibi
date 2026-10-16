@@ -51,7 +51,7 @@ started=$(date +%s)
 cargo build -p bilibi-web --timings
 echo "Initial Rust build took $(($(date +%s)-started))s. Timing report: target/cargo-timings/cargo-timing.html"
 ./target/debug/bilibi-web migrate
-./target/debug/bilibi-web seed
+./target/debug/bilibi-web seed --at-startup
 if "$root/scripts/local-https.sh"; then
     readarray -t instance < "$root/.local/https/instance"
     scheme=https
@@ -74,7 +74,7 @@ if [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; then
     echo "This checkout already has a listener at $APP_ORIGIN. Stop its dev command before starting another." >&2
     exit 1
 fi
-echo "Open $APP_ORIGIN — tenant 1, ai@agent.my / bilibi-dev."
+echo "Open $APP_ORIGIN — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
 # The asset build rewrites app.css (and npm may touch node_modules) under apps/;
 # watching them would make every rebuild trigger the next one.

@@ -77,9 +77,10 @@ cleanup; the enablement and delivery rules belong to Base Schedule.
 
 ## Try it
 
-On a migrated, demo-seeded disposable database, appoint the fixture tenant as
-operator (`INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1)`;
-the production migration appoints nobody) and sign in as `admin@example.test`
+On a migrated disposable database, install the walkthrough fixture
+(`cargo run -p bilibi-walkthrough-fixture`; it appoints tenant 1 as the
+platform operator, which the production migration never does), run the app
+and sign in as `admin@example.test`
 (role `admin`, grant-all). Open `/dashboard` for the Sessions strip and
 `/system/sessions` for the list. Sign in as another account in a second
 browser profile, then terminate its row: that browser's open page is sent to

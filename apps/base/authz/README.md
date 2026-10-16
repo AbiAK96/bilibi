@@ -12,26 +12,26 @@ role definitions/extensions, and named system-principal capability bounds.
 validates route, embed, menu and settings capability references during boot.
 Duplicate capability/principal keys, conflicting role definitions, malformed keys,
 and undeclared domain/verb/grant references refuse installation. Capability entries
-carry contributor provenance. Existing two-part demo keys remain supported; new
+carry contributor provenance. Two-part keys (`domain.action`) remain valid; new
 owners should use the source's `domain.resource.action` form.
 
-To extend a seeded role, contribute the same code, canonical name and grant-all
-flag, with additional capability keys. Capabilities are unioned across owners;
-Authz's built-in definitions retain their canonical metadata regardless of the
-extensions' catalog order.
+To extend a contributed system role, contribute the same code, canonical name
+and grant-all flag, with additional capability keys. Capabilities are unioned
+across owners; Authz's built-in definitions retain their canonical metadata
+regardless of the extensions' catalog order.
 Deploying a contribution does not change stored role grants automatically:
 
 ```sh
 cargo run -p bilibi-web -- authz-reconcile
 ```
 
-Reconciliation serializes runs, upgrades existing demo roles in place, and
+Reconciliation serializes runs, adopts an existing same-named role in place, and
 synchronizes contributed system-role metadata/capabilities. It preserves role IDs,
 assignments, custom roles, direct grants/denies and field restrictions. It removes
 obsolete grants from contributed roles, and clears redundant grants on grant-all
 roles. Run it again after installing contributions or provisioning new tenants.
 `seed-production` also supplies the initial versioned reconciliation through the
-Database seed ledger. Neither path runs at app boot. The current demo tenancy
+Database seed ledger. Neither path runs at app boot. The current tenancy
 schema requires one role instance per tenant; company-owned custom role binding
 remains K15's owner adapter, rather than a Base query of Core tables.
 
@@ -63,7 +63,7 @@ the execution tenant. `SystemScope::rehydrate` is a trusted worker/maintenance
 edge, never a browser constructor. Anonymous system identities always deny;
 declaration alone grants nothing. Removed declarations make old grants inert.
 Named identities hold no user roles, gain no grant-all bypass, and obey platform
-gates. The current storage seam follows the demo's tenant-scoped authorization;
+gates. The current storage seam follows the original tenant-scoped authorization;
 company/organisation resource binding is supplied by K15/K9 alongside the User
 binder, using Tenancy owner proofs. Queue execution must rehydrate at execution,
 rather than retaining a Scope captured when enqueued.
@@ -77,8 +77,8 @@ to change its roles or remove it, and the shared confirmation before removal.
 The route and every live event require `admin.authz.field.manage`; the service
 re-checks it inside each write, so a grant revoked while the page is open is
 refused and the host clears the page. Rows whose table the installed catalog no
-longer offers (the demo's `companies` restrictions until Company contributes a
-Grid table) stay listed by id, can be removed and cannot be re-restricted.
+longer offers (a restriction on a table its module stopped contributing) stay
+listed by id, can be removed and cannot be re-restricted.
 
 `restrictions_for` and `fields::restricted` read restrictions for any table ID;
 any held restricting role masks, even alongside an admin. `fields::mask` removes
@@ -92,17 +92,17 @@ that catalog as data, with no Authz→Grid dependency.
 
 ## Running evidence
 
-No unit tests. Use a private migrated/seeded database and run:
+No unit tests. Use a private migrated database and run:
 
 ```sh
 BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz
 ```
 
 This explicit runtime walkthrough prints role/direct grant decisions, live
-revocation, manager seed extension, unknown-key denial, admin-plus-viewer masking
+revocation, extension of the fixture manager role, unknown-key denial, admin-plus-viewer masking
 on Companies and a second table, restricted-null refusal, operator/grant
 independence, named/anonymous/cross-tenant system decisions and an audit-failure
-rollback. It temporarily appoints demo tenant 1 as operator and installs an audit
+rollback. It uses the walkthrough fixture, whose tenant 1 is the operator, and installs an audit
 refusal trigger, then removes both; never run against a real database. Decision
 and audit rows remain as evidence. It requires the real installed owner services.
 Compile with the workspace discovery/fmt/clippy checks; do not add a test runner.

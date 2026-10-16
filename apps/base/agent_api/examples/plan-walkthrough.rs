@@ -1,4 +1,4 @@
-//! Manual specimen using real app services and a disposable seeded database.
+//! Manual specimen using real app services and a disposable migrated database.
 //! No mocks, test runner, or assertions. Never prints tokens or plan codes.
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_authz::grants::Grants;
@@ -6,6 +6,8 @@ use bilibi_database::pool;
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use tokio_postgres::Transaction;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 struct Browser<'a> {
     app: &'a bilibi_web::App,
@@ -89,28 +91,29 @@ async fn attempt(
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BILIBI_AGENT_DEMO").as_deref() != Ok("disposable") {
         return Err(
-            "set BILIBI_AGENT_DEMO=disposable and DATABASE_URL to a disposable seeded database"
+            "set BILIBI_AGENT_DEMO=disposable and DATABASE_URL to a disposable migrated database"
                 .into(),
         );
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35562")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let grants = app.services.get::<Grants>("base/authz.grants")?;
     let login = app
         .user
-        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let other_login = app
         .user
         .login(
             "manager@other.example.test",
-            bilibi_web::seed::DEMO_PASSWORD,
+            bilibi_walkthrough_fixture::PASSWORD,
         )
         .await?;
     let second_login = app
         .user
-        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let admin = app.security.guard(&login.token).await?;
     let other = app.security.guard(&other_login.token).await?;

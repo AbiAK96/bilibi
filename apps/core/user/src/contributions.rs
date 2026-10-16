@@ -32,8 +32,7 @@ const fn role(
         capabilities,
     }
 }
-// Bilimbi's two user-management roles, plus the demo roles extended as the
-// other Core owners extend them so the seeded accounts can try the commands.
+// Bilimbi's two user-management roles, and the tenant owner's share.
 inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { module: "core/user", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &[],
     capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE)],
@@ -41,9 +40,6 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { mod
         role("user_viewer", "User Viewer", "Read-only access to user management.", READ),
         role("user_editor", "User Editor", "Read-write access to user management.", ALL),
         role("tenant_owner", "Tenant Owner", "Contributed system role; reconciled explicitly", ALL),
-        role("manager", "manager", "Contributed system role; reconciled explicitly", ALL),
-        role("staff", "staff", "Contributed system role; reconciled explicitly", READ),
-        role("viewer", "viewer", "Contributed system role; reconciled explicitly", READ),
     ],
     system_principals: &[],
 }) }
@@ -60,11 +56,11 @@ inventory::submit! {
     })
 }
 
-// No capability beyond reading one's own notifications: the page and its
-// writes act only on the signed-in account (Bilimbi guards it by sign-in).
+// No capability: the page and its writes act only on the signed-in account
+// (Bilimbi guards it by sign-in alone).
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
-        method: Method::Get, path: "/notifications", service: "core/user.pages", operation: "notifications", access: Access::Capability("notifications.view"), framed: true,
+        method: Method::Get, path: "/notifications", service: "core/user.pages", operation: "notifications", access: Access::SignedIn, framed: true,
     })
 }
 
@@ -72,6 +68,6 @@ inventory::submit! {
 // contribution itself, keyed by the slot's element id (`app-notifications`).
 inventory::submit! {
     Contribution::new(EMBEDS, "core/user.notifications", Provenance { module: "core/user", source: file!(), line: line!() }, &Embed {
-        slot: "shell.notifications", context: EmbedContext::Shell, service: "core/user.pages", operation: "bell", access: Access::Capability("notifications.view"),
+        slot: "shell.notifications", context: EmbedContext::Shell, service: "core/user.pages", operation: "bell", access: Access::SignedIn,
     })
 }

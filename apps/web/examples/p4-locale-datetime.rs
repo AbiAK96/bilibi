@@ -1,7 +1,7 @@
 //! Runnable demonstration of Locale provenance, regional numbers, IANA zones and
 //! DateTime display/period semantics against the real installed services. Not a
 //! test suite: it prints what each contract does. Needs DATABASE_URL for a
-//! migrated, seeded DISPOSABLE database; it appoints tenant 1 platform operator
+//! migrated DISPOSABLE database; it appoints tenant 1 platform operator
 //! and writes only `ui.*`/`localization.timezone` rows, which it resets first.
 //!
 //!     BILIBI_DISPOSABLE_P4_DEMO=yes cargo run -p bilibi-web --example p4-locale-datetime
@@ -15,30 +15,11 @@ use bilibi_base::{
     module_registry::Services,
     party_ids::OrganisationId,
     settings::{Settings, Target},
-    tenancy::{Authentication, OrganisationProvider, PartyProofs, ProofClient, ProofFuture, Scope},
+    tenancy::Authentication,
 };
 use jiff::Timestamp;
 use serde_json::json;
 use std::sync::Arc;
-
-/// Private fixture provider, not a production Company implementation.
-struct FixtureCompany;
-impl OrganisationProvider for FixtureCompany {
-    fn prove<'a>(
-        &'a self,
-        _client: &'a dyn ProofClient,
-        actor: &'a Scope,
-        id: OrganisationId,
-    ) -> ProofFuture<'a, ()> {
-        Box::pin(async move {
-            if actor.tenant() == 1 && id.get() == 1 {
-                Ok(())
-            } else {
-                Err(Error::Forbidden)
-            }
-        })
-    }
-}
 
 fn resolved_line(label: &str, r: &locale::Resolved) {
     println!(
@@ -62,6 +43,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
@@ -70,8 +52,7 @@ async fn main() -> Result<()> {
     let locales = services.get::<Locales>("base/locale.locales")?;
     let policy = services.get::<DisplayPolicy>("base/datetime.display")?;
     let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
-    let parties = services.get::<PartyProofs>("base/tenancy.parties")?;
-    parties.bind_organisations(Arc::new(FixtureCompany))?;
+    // Company, linked with the rest of Core, binds the organisation proofs.
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
     let mut client = db.get().await?;
     client

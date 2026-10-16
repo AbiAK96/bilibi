@@ -37,7 +37,7 @@ pub struct CapabilitySummary {
 }
 
 /// Key parts: the first segment is the domain, the last the action, and
-/// anything between the resource. Two-part demo keys (`companies.view`) have
+/// anything between the resource. Two-part keys (`domain.action`) have
 /// no resource.
 pub fn key_parts(key: &str) -> (&str, &str, &str) {
     let (domain, rest) = key.split_once('.').unwrap_or((key, ""));

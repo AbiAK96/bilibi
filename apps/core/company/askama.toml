@@ -1,4 +1,4 @@
-# The demo Company pages compose the shared Base UI macros they need in place
+# The Company pages compose the shared Base UI macros they need in place
 # (lists.html's record link, workspace.html's announcement).
 [general]
 dirs = ["templates", "../../base/ui/templates"]

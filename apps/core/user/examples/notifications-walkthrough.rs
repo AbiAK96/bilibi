@@ -1,5 +1,5 @@
 //! Manual walkthrough of the notification boundary against an explicitly
-//! supplied disposable database, run after `migrate` and `seed`. No test
+//! supplied disposable database, run after `migrate`. No test
 //! harness or assertions; prints each outcome for inspection.
 //!
 //! One business write notifies three accounts of tenant 1. Nothing reaches a
@@ -24,6 +24,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;

@@ -1,6 +1,6 @@
 //! Manual walkthrough of the device, consent, token, refresh, replay, expiry,
 //! revocation and PKCE flows against an explicitly supplied disposable
-//! database, run after the host's `migrate` and `seed`. No test harness or
+//! database, run after the host's `migrate`. No test harness or
 //! assertions; every outcome is printed for inspection. Clock-dependent waits
 //! are replaced by explicit SQL time travel on the disposable rows, and each
 //! such step says so. Raw codes and tokens are never printed in full.
@@ -130,6 +130,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()

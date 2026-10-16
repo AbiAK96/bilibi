@@ -26,6 +26,7 @@ tokio-postgres.workspace = true
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = "../../base" }
 bilibi-core = { path = ".." }
 axum.workspace = true

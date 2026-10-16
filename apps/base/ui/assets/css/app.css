@@ -16,7 +16,7 @@
 @source inline("hero-{building-library,building-office-2,chart-bar,circle-stack,clipboard-document-list,cog-6-tooth,flag,globe-alt,information-circle,lock-closed,map,map-pin,magnifying-glass,paint-brush,puzzle-piece,shield-check,squares-2x2,user-group,users}");
 
 @plugin "../vendor/heroicons.cjs";
-@import "./demo-compat.css";
+@import "./legacy-compat.css";
 
 /* Instrument Sans is vendored under SIL OFL 1.1 in priv/static/fonts/OFL.txt
  * from Instrument/instrument-sans at 7fa22308a3d0c94ee2b3cd537a1196b65db34a3e.

@@ -87,7 +87,7 @@ affiliations work with People absent.
 
 ## Runtime walkthrough (no unit tests)
 
-Migrate/seed a disposable DB, then run:
+Migrate a disposable DB, then run:
 
 ```sh
 BILIBI_AFFILIATION_DEMO=disposable cargo run -p bilibi-affiliation --example affiliation-walkthrough --locked
@@ -143,7 +143,7 @@ locking (`identity::preview_create`, `identity::preview_write`) and commits
 write inside the plan's audited transaction. Records flatten the work fields
 and list hidden contacts as `{"restricted":true}`.
 
-Migrate/seed a disposable DB, then run:
+Migrate a disposable DB (the walkthrough installs its fixture), then run:
 
 ```sh
 BILIBI_AFFILIATION_DEMO=disposable cargo run -p bilibi-affiliation --example k19-operations-walkthrough --locked

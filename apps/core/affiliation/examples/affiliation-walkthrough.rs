@@ -7,6 +7,8 @@ use bilibi_affiliation::{
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_person::{PersonInput, PersonKind, PersonService};
 use serde_json::json;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 type Failure = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
     println!("{label}: {value:?}");
@@ -27,11 +29,10 @@ fn input(person_id: PersonId, organisation: i64, title: &str) -> Result<Affiliat
 #[tokio::main]
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_AFFILIATION_DEMO").as_deref() != Ok("disposable") {
-        return Err(
-            "set BILIBI_AFFILIATION_DEMO=disposable for a migrated/seeded disposable DB".into(),
-        );
+        return Err("set BILIBI_AFFILIATION_DEMO=disposable for a migrated disposable DB".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35578")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
@@ -42,7 +43,7 @@ async fn main() -> Result<(), Failure> {
     let boundary = app
         .services
         .get::<MutationBoundary>("base/database.mutations")?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
     let staff_login = app.user.login("staff@example.test", password).await?;
@@ -225,7 +226,7 @@ async fn main() -> Result<(), Failure> {
     blocked.rollback().await?;
     tx.rollback().await?;
     // A temporary assignment transfer demonstrates that the proof never caches
-    // an own-company integer. Rollback leaves the seeded primary untouched.
+    // an own-company integer. Rollback leaves the fixture primary untouched.
     let tx = boundary
         .begin(
             &mut connection,

@@ -23,7 +23,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Never use `window.confirm` or a `data-confirm` attribute; an irreversible action renders `ConfirmDialog` while its request is pending and stops rendering it whatever the outcome. The server owns whether a dialog exists, so Escape and Cancel only raise the cancel event.
 - Browser behaviour is `assets/ui.js`: a component names its controller with `data-hook`, and a controller reports intent with a bubbling `bilibi:event` CustomEvent (`detail.event` plus values), which the transport turns into a server event. The transport reports the socket with `bilibi:disconnected` (`detail.kind` `client`/`server`) and `bilibi:connected` on `window`; new controllers register with `BilibiUI.registerHook`. Do not ship Phoenix hooks (`pushEvent`, `mounted`-only lifecycles) unchanged.
 - Pick a message kind by what it does: a completed write is `Success` (times out), a refusal or failure is `Error`, `Info` informs without confirming a write; only success carries auto-dismiss.
-- `/assets/ui-feedback.html` (`src/feedback_specimen.rs`) is the screenshot baseline for these; its `static/ui-feedback-demo.js` stands in for the server, so extend both when adding a variant, in a section under `templates/ui_feedback_specimen/` as above.
+- `/assets/ui-feedback.html` (`src/feedback_specimen.rs`) is the screenshot baseline for these; its `static/ui-feedback-driver.js` stands in for the server, so extend both when adding a variant, in a section under `templates/ui_feedback_specimen/` as above.
 
 ## Shell (`templates/shell.html`, `framed.html`, `assets/shell.js`)
 

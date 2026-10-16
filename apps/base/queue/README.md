@@ -83,11 +83,11 @@ caller-supplied audit attribution cannot create execution authority.
 
 Use an explicitly disposable PostgreSQL database, never the normal development
 database. Create it with your local PostgreSQL tools and set `DATABASE_URL` to
-that database. Seed the existing app fixture, then run the owner walkthrough:
+that database. Migrate it, then run the owner walkthrough, which installs the
+walkthrough fixture accounts itself:
 
 ```sh
 cargo run -p bilibi-web -- migrate
-cargo run -p bilibi-web -- seed
 BILIBI_DISPOSABLE_QUEUE_DEMO=yes cargo run -p bilibi-queue --example queue-walkthrough
 BILIBI_DISPOSABLE_QUEUE_DEMO=yes cargo run -p bilibi-queue --example queue-walkthrough -- inspect
 ```

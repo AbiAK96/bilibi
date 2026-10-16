@@ -14,7 +14,7 @@ mod verification;
 pub mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, Result};
-use bilibi_security::{authorize, guard, Capability, Sessions};
+use bilibi_security::{guard, Sessions};
 pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
@@ -107,8 +107,7 @@ pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Re
     if scope.csrf != csrf {
         return Err(Error::Forbidden);
     }
-    authorize(&**client, &scope, Capability::SessionLogout).await?;
-    // Through Session, so every other live page of this session is signed out.
+    // Any signed-in session may end itself, as in Bilimbi. Through Session, so every other live page of this session is signed out.
     sessions.delete(&**client, &scope, token).await
 }
 

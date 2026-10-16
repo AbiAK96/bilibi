@@ -173,7 +173,7 @@ Shows the fresh-install behaviour, then lookups over a few hand-inserted rows,
 hostile input and the Grid catalog entry.
 
 ```bash
-DATABASE_URL=<disposable seeded db> BILIBI_DISPOSABLE_GEONAMES_DEMO=yes \
+DATABASE_URL=<disposable migrated db> BILIBI_DISPOSABLE_GEONAMES_DEMO=yes \
   cargo run -p bilibi-geonames --example geonames-import-walkthrough
 ```
 
@@ -184,7 +184,7 @@ fallback, `force`, a no-valid-rows payload, a database failure in a late batch,
 the ETag-less cache lifetime and the capability gate.
 
 ```bash
-DATABASE_URL=<disposable seeded db> BILIBI_DISPOSABLE_GEONAMES_DEMO=yes \
+DATABASE_URL=<disposable migrated db> BILIBI_DISPOSABLE_GEONAMES_DEMO=yes \
   cargo run -p bilibi-geonames --example geonames-postcodes-walkthrough
 ```
 

@@ -1,4 +1,4 @@
-/* Temporary demo page compatibility; shell chrome uses source classes. The
+/* Temporary legacy page compatibility; shell chrome uses source classes. The
    element rules stop at a [data-shared-ui] subtree, where a ported page renders
    shared components styled by the source classes alone. */
 @scope (#app-content) to ([data-shared-ui]) {

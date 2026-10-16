@@ -1,4 +1,4 @@
-//! Company page read models and audited writes missing from the original demo.
+//! Company page read models and audited writes missing from the original slice.
 use crate::{organisation, CompanyService, CreateOutcome, Edit, NewCompany, UPDATE};
 use bilibi_database::{Change, Error, Result};
 use bilibi_tenancy::Scope;

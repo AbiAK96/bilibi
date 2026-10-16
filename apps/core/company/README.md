@@ -15,7 +15,7 @@ through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
-Additive over the frozen demo migration: every existing company keeps its
+Additive over the frozen original migration: every existing company keeps its
 id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
 `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
 `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
@@ -39,8 +39,8 @@ rows inserted with explicit ids.
 
 `contributions.rs` declares Belimbing's keys: `admin.company.view`, `.list`,
 `.create`, `.update`, `.delete` and `admin.company.tenant-wide.manage`, and
-extends `tenant_owner` (all), the demo `manager` (all), `staff` (view, list,
-update) and `viewer` (view, list). The demo seed grants the same set;
+extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
+(all), `staff` (view, list, update) and `viewer` (view, list) the same keys;
 `bilibi-web authz-reconcile` reconciles an older database. A write to a
 company or into it is authorized with `organisation::authorize_target`: the
 capability now, and either the company the actor is affiliated with
@@ -77,7 +77,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 - `primary::assign` locks the tenant row, then the company row, judges the
   company under that lock (archived refused) and assigns or transfers.
 
-Inline edits on the demo detail page (`save`) now accept code, legal name,
+Inline edits on the original detail page (`save`) now accept code, legal name,
 registration number, jurisdiction and website with the same rules; `status`
 is read-only there; K3 adds the lifecycle dialog. Forged generic status
 edits are rejected in the domain too.
@@ -108,13 +108,13 @@ seams. Ids come from PostgreSQL.
 
 ## Runtime inspection
 
-Migrate and seed a disposable database, then run
+Migrate a disposable database, then run
 
 ```sh
 BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k1-organisation-walkthrough --locked
 ```
 
-It prints identities and tenancy proofs for the seeded companies, refused and
+It prints identities and tenancy proofs for the fixture companies, refused and
 accepted creates, the administration search with and without restricted
 columns, the reference catalogs, departments on company 1, the archived
 refusals, primary assignment, the agent operations and a plan commit with
@@ -141,8 +141,8 @@ is to the target) and confers no capability; it is never an Authz role. The
 contributed defaults (`vendor`, `customer`, `prospect`, `partner`) are
 reconciled **by code** into each tenant: the migration does it for existing
 tenants, provisioning for new ones, and `CompanyService::relationship_roles`
-for a tenant whose catalog is still empty (the demo seed creates its tenants
-after the migration). An administered role is never overwritten; no default
+for a tenant whose catalog is still empty (the walkthrough fixture creates its
+tenants after the migration). An administered role is never overwritten; no default
 has a fixed id. Codes are trimmed, lower-cased, 1–64 characters of letters,
 digits, `_`, `-` and `.`, unique within the tenant under an advisory lock.
 `create` needs `admin.company.create`; `update` (a rename: id and code never
@@ -292,7 +292,7 @@ atomic write guard. Existing department writes already hold the company lock.
 User's historical read model; the caller authorizes the read separately, and
 these IDs grant no write/login authority.
 
-For manual runtime inspection (fresh disposable migrated/seeded database):
+For manual runtime inspection (fresh disposable migrated database):
 
 ```sh
 BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k2-lifecycle-walkthrough --locked
@@ -311,7 +311,7 @@ The list composes shared `FilterToolbar`, `Pagination` and Grid `PageColumns`:
 Name, Code, Parent, Status and unrestricted Jurisdiction are built-ins. Search
 matches only readable name/code/legal-name/email/jurisdiction fields. Search,
 status, sort, page and `per_page` live in the URL; the supported sizes are
-25/50/100/300. `q` and `size` remain accepted for old demo links. Column/lens/
+25/50/100/300. `q` and `size` remain accepted for old links. Column/lens/
 zoom URL parameters override the account's saved arrangement; resetting forgets
 it through Grid's `PageViews` service.
 

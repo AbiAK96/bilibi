@@ -1,5 +1,5 @@
 //! Compatibility facade. New modules use Tenancy, Session and Authz directly.
-pub use bilibi_authz::{authorize, restrictions, Capability};
+pub use bilibi_authz::restrictions;
 use bilibi_database::Result;
 pub use bilibi_session::{Policy, Sessions};
 pub use bilibi_tenancy::{

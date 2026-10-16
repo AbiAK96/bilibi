@@ -89,7 +89,7 @@ Relationship role IDs cannot be used as Authz role IDs.
 
 People Employment references an affiliation with **our own company** and obtains
 a fresh owner-issued proof under the actor scope. A client-provided AffiliationId,
-DTO, matching integer, or demo mapping is not that proof. K18/F3 implement the
+DTO or matching integer is not that proof. K18/F3 implement the
 sealed proof/provider seam and lock/revalidation boundary; K0 intentionally
 publishes no forgeable `OwnCompanyAffiliation` constructor. People must enforce
 scoped affiliation links and keep HR employment dates separate from affiliation
@@ -126,27 +126,14 @@ migration/link mapping is available. Do not alias employee_id to person_id by
 cast, or let the old create operation manufacture HR defaults. Existing system
 agents, user/employee links, integration and foreign keys need an explicit mapping.
 
-## Existing demo and legacy migration mapping
+## Legacy migration mapping
 
-`src/demo.rs` maps existing seeded records without SQL mutation:
-
-| Existing records | Mapping |
-| --- | --- |
-| tenant 1, companies 1..62 | same tenant, same `OrganisationId`, same `/companies/{id}` URL |
-| tenant 2, company 100 | tenant 2, `OrganisationId(100)`; never tenant 1 |
-| tenant 1, accounts 1..4 and 6; tenant 2, account 5 | existing account IDs and roles retained, Person link unset |
-| account 6, AI Agent | remains an account; future K7/K9 creates/links explicit agent Person |
-| Person/Affiliation/RelationshipRole/Relationship demo rows | none exist; do not invent mappings |
-
-`Company::organisation_id()` exposes the typed identity on existing Company
-read results without changing old route/edit contracts.
-
-This manifest describes the original deterministic demo, not a resolver for all
-companies. Production owner APIs resolve real records under Scope. K1 preserves
-all existing company IDs, including user-created rows outside the demo range,
-with an additive migration and fixes identity sequences after explicit imports.
-K9 explicitly resolves the two seeded manager emails in different tenants before
-introducing globally unique account login; never merge them silently.
+`Company::organisation_id()` exposes the typed identity on Company read
+results without changing route/edit contracts: a company keeps its numeric ID,
+tenant and `/companies/{id}` URL as its `OrganisationId`. Accounts are not
+people; a Person link is never inferred from an account. K9 resolves accounts
+that share an email across tenants before introducing globally unique account
+login; never merge them silently.
 
 Bilibi currently has no employee/HR tables to migrate. If legacy Bilimbi records
 are imported later, stage a durable `(source_system, source_tenant, source_kind,
@@ -162,11 +149,12 @@ No Laravel adoption or compatibility migration is introduced by this slice.
 
 Run `cargo run -p bilibi-party --example contact-contract` to print a deterministic
 contact, two work affiliations and concurrent vendor/customer relationships, plus
-existing demo mapping and ownership. These are contract specimens, not persisted
+ownership. These are contract specimens, not persisted
 records or enabled endpoints. No People module or login/grant is involved.
 
-Run the normal app against an isolated DB and inspect Companies 1 and 100 under
-their original tenants. Existing company pages/URLs and accounts are unchanged.
+Run the app against an isolated DB holding the walkthrough fixture
+(`fixtures/walkthrough`) and inspect Companies 1 and 100 under their tenants:
+company pages keep their URLs and accounts stay accounts.
 Actual persistence, UI contact creation and sealed proofs land in the named
 owner slices. No unit tests, test-only infrastructure or HR dependency belongs
 in this contract module.

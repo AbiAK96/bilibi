@@ -1,5 +1,5 @@
 //! Live PageColumns walkthrough: a list page that hosts walked columns. Only
-//! run against a disposable migrated and seeded PostgreSQL with
+//! run against a disposable migrated PostgreSQL with
 //! BILIBI_GRID_DEMO=disposable, plus DATABASE_URL, APP_ORIGIN and BIND_ADDR.
 //! No test runner or mocks.
 //!
@@ -15,10 +15,10 @@
 //! back without an address and the page opens as it was left; paste an address
 //! into another account's browser and it shows the sender's view without
 //! changing that account's memory. Reset returns the page's own columns and
-//! forgets what was kept. The demo control restricts `unit_cost` for the roles
+//! forgets what was kept. The restriction control restricts `unit_cost` for the roles
 //! the signed-in account holds, which prunes that column from the table, the
-//! address and the suggestions until the restriction is lifted. Sign in as a
-//! seeded manager (grid.reference.view) after the example reconciles roles.
+//! address and the suggestions until the restriction is lifted. Sign in as the
+//! fixture manager (grid.reference.view) after the example reconciles roles.
 use bilibi_base::{
     authz::grants::Grants,
     datetime::{DisplayContext, Mode},
@@ -44,6 +44,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 const ROOT: &str = "reference_items";
 const TABLE_ID: &str = "g4-items";
@@ -486,9 +488,10 @@ inventory::submit! {
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BILIBI_GRID_DEMO").as_deref() != Ok("disposable") {
-        return Err("set BILIBI_GRID_DEMO=disposable on a disposable seeded database".into());
+        return Err("set BILIBI_GRID_DEMO=disposable on a disposable migrated database".into());
     }
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN")?;
     let bind = std::env::var("BIND_ADDR")?;
     let app = bilibi_web::App::new(db.clone(), &origin)?;
@@ -498,7 +501,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await?;
     db.get()
         .await?
-        .batch_execute(grid::reference::DEMO_FIXTURE)
+        .batch_execute(grid::reference::FIXTURE)
         .await?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!("Page columns at {origin}/g4-page-columns");

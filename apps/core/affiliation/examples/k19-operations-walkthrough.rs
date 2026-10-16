@@ -11,6 +11,8 @@ use bilibi_person::{PersonInput, PersonKind, PersonService};
 use bilibi_tenancy::ProofFuture;
 use serde_json::{json, Value};
 use tokio_postgres::Transaction;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Failure = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
@@ -43,11 +45,10 @@ impl PlanAuthority for Browser<'_> {
 #[tokio::main]
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_AFFILIATION_DEMO").as_deref() != Ok("disposable") {
-        return Err(
-            "set BILIBI_AFFILIATION_DEMO=disposable for a migrated/seeded disposable DB".into(),
-        );
+        return Err("set BILIBI_AFFILIATION_DEMO=disposable for a migrated disposable DB".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35579")?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
@@ -56,7 +57,7 @@ async fn main() -> Result<(), Failure> {
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let people = app.services.get::<PersonService>(bilibi_person::SERVICE)?;
-    let password = bilibi_web::seed::DEMO_PASSWORD;
+    let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
     let manager = app.security.guard(&manager_login.token).await?;

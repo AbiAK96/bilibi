@@ -22,8 +22,8 @@ control declaration renders through its shared typed model in `controls.rs`.
 For manual runtime evidence, follow
 [`design-library-v1.json`](../../../../fixtures/parity/design-library-v1.json) and
 [`runtime-parity.md`](../../../../docs/runtime-parity.md). Use an isolated migrated
-and seeded database, then visit `/system/design-library/components` as the demo
-admin. Try the action link, modal/confirmation flow, live form, inline facts,
+database holding the walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`),
+then visit `/system/design-library/components` as its `admin@example.test`. Try the action link, modal/confirmation flow, live form, inline facts,
 company search/paging, FlexTable notch and Graphic's icon filter/copy tiles.
 Theme and Design Spec preserve the source's foundations and accepted decisions.
 No unit tests or test-only infrastructure belong to this module.

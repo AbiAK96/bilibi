@@ -62,7 +62,7 @@ pub struct Query {
 pub struct RoleSummary {
     pub id: i64,
     pub name: String,
-    /// Legacy demo roles may predate codes; reconciliation fills system ones.
+    /// Tenant-defined roles have no code; reconciliation fills system ones.
     pub code: Option<String>,
     pub description: String,
     pub is_system: bool,

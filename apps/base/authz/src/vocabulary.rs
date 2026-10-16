@@ -229,19 +229,6 @@ impl Vocabulary {
 inventory::submit! { Consumer::new::<VocabularyContribution>(VOCABULARY,"base/authz",|entries| Vocabulary::from_entries(entries).map(|_|())) }
 
 use CapabilityDefinition as C;
-const VIEW: &[&str] = &[
-    "companies.view",
-    "notifications.view",
-    "notifications.update",
-    "session.logout",
-];
-const EDIT: &[&str] = &[
-    "companies.view",
-    "companies.update",
-    "notifications.view",
-    "notifications.update",
-    "session.logout",
-];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -257,18 +244,15 @@ const fn role(
     }
 }
 inventory::submit! { Contribution::new(VOCABULARY,"authz.builtin",Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
-    // Two-segment demo keys remain valid during the Core port.
-    domains:&["admin","companies","notifications","session"],
-    verbs:&["view","list","create","update","delete","grant","revoke","manage","logout","impersonate"],
+    domains:&["admin"],
+    verbs:&["view","list","create","update","delete","grant","revoke","manage","impersonate"],
     capabilities:&[
-        C::tenant("companies.view"), C::tenant("companies.update"),
-        C::tenant("notifications.view"), C::tenant("notifications.update"), C::tenant("session.logout"),
         C::tenant("admin.authz.role.list"), C::tenant("admin.authz.role.view"), C::tenant("admin.authz.role.create"), C::tenant("admin.authz.role.update"), C::tenant("admin.authz.role.delete"),
         C::tenant("admin.authz.capability.list"), C::tenant("admin.authz.decision-log.list"),
         C::tenant("admin.authz.system-principal.list"), C::tenant("admin.authz.system-principal.grant"), C::tenant("admin.authz.system-principal.revoke"),
         C::tenant("admin.authz.field.manage"), C::tenant("admin.user.impersonate"),
     ],
-    roles:&[role("manager","manager",false,EDIT),role("viewer","viewer",false,VIEW),role("staff","staff",false,EDIT),role("admin","admin",true,&[]),
+    roles:&[
         RoleDefinition {
             description: "System role with all capabilities. New capabilities are automatically granted.",
             ..role("core_admin", "Core Administrator", true, &[])

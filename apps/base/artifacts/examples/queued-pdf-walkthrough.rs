@@ -7,7 +7,7 @@
 //! The specimen owner below is linked only into this example; production has no
 //! PDF owner yet. Needs the disposable-DB variables from the README plus
 //! `BILIBI_PDF_DEMO_OUT` (output directory), `BILIBI_PDF_CHROMIUM` and
-//! `BILIBI_PDF_QPDF` (absolute paths) and a migrated, seeded database.
+//! `BILIBI_PDF_QPDF` (absolute paths) and a migrated database.
 use bilibi_artifacts::{
     pdf, Artifacts, CompletionFuture, Error, HtmlFuture, HtmlOwner, Operation, Owner, PdfMode,
     PdfOptions, PdfOwner, PdfRequest, QueuedPdfOwner, Reference, RenderFuture, Rendered,
@@ -30,6 +30,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::TcpListener;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const MODULE: &str = "extensions/pdf-queue-specimen";
@@ -277,6 +279,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&root)?;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://127.0.0.1")?;
     let store_service = app.services.get::<Artifacts>("base/artifacts.store")?;
     let queue = app.services.get::<Queue>("base/queue.store")?;

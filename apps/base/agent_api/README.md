@@ -56,14 +56,14 @@ exact decimals as strings; Rust's JSON value type excludes functions and opaque
 runtime handles. Pages carry page/page_size/total metadata. Every envelope has
 the untrusted-content notice.
 
-For a runtime walkthrough, migrate and seed an isolated database, then run:
+For a runtime walkthrough, migrate an isolated database, then run:
 
 ```sh
 BILIBI_AGENT_DEMO=disposable cargo run -p bilibi-agent-api --example agent-walkthrough --locked
 ```
 
 Set `DATABASE_URL` to that disposable database. This runs real `bilibi_web::App`
-services and authenticates demo credentials. It prints search, schemas, guide,
+services and authenticates walkthrough fixture credentials. It prints search, schemas, guide,
 restricted results, malformed input, unavailable entries, direct-write refusal,
 live grant/revocation, cross-tenant denial, deny precedence and decision logs.
 Temporary grants and sessions are removed on successful completion. This is a
@@ -120,7 +120,7 @@ The non-business reference write demonstrates version fencing and audited
 mutation. There is no product UI; the HTTP endpoints are the host's `/api/v1`
 edge (`apps/web/README.md`).
 
-Run the real safe-write walkthrough after migrating and seeding an isolated DB:
+Run the real safe-write walkthrough after migrating an isolated DB:
 
 ```sh
 BILIBI_AGENT_DEMO=disposable cargo run -p bilibi-agent-api --example plan-walkthrough --locked

@@ -1,5 +1,5 @@
-//! Running-app Grid catalog walkthrough (G1). Use only a disposable migrated and
-//! seeded database: it adds reference rows, temporarily restricts and revokes
+//! Running-app Grid catalog walkthrough (G1). Use only a disposable migrated
+//! database: it adds reference rows, temporarily restricts and revokes
 //! grants, and removes them again. No test runner, no mocks: the real installed
 //! services and real PostgreSQL. Run with DATABASE_URL and
 //! BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g1-grid.
@@ -18,6 +18,8 @@ use bilibi_base::{
 use bilibi_database::pool;
 use grid::{Field, FieldType as T};
 use tokio_postgres::Client;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 // A table only managers may read, reached from the reference items through a
 // one-link: the viewer's catalog must not contain it, so no path reaches it.
@@ -120,6 +122,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err("set BILIBI_GRID_DEMO=disposable for this fixture walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35566")?;
     println!("== Boot validated the installed catalog (capabilities exist, links resolve)");
     let installed = grid::installed()?;

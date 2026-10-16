@@ -29,6 +29,7 @@ bilibi-tenancy = { path = "../base/tenancy" }
 http-body-util = "0.1.5"
 
 [dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../fixtures/walkthrough" }
 inventory.workspace = true
 bilibi-workflow = { path = "../base/workflow" }
 jiff = "0.2.38"

@@ -3,7 +3,7 @@
 //! `dst [key] [instant]` needs no database. It replays the recurrence at
 //! controlled clock input (an RFC 3339 instant) so DST gaps and folds can be read
 //! directly. Every other mode needs BILIBI_DISPOSABLE_SCHEDULE_DEMO=yes and a
-//! disposable PostgreSQL in DATABASE_URL (migrated and seeded by `bilibi-web`):
+//! disposable PostgreSQL in DATABASE_URL (migrated by `bilibi-web`):
 //!
 //! * `review`: fingerprint review, suppression, authorization and audit (Q3).
 //! * `prepare`: operator tenant, enabled definitions and the scheduler grant.
@@ -147,7 +147,7 @@ impl Handler for Walkthrough {
     }
 }
 
-/// A private owner so the walkthrough needs no HTTP host or seeded session.
+/// A private owner so the walkthrough needs no HTTP host or fixture session.
 fn show(zone: &TimeZone, at: Timestamp) -> String {
     format!(
         "{at} ({})",
@@ -680,6 +680,7 @@ async fn main() -> Result<()> {
     let url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://127.0.0.1/unused".into());
     let db = pool(&url)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     if command == "dst" {
         // No database: the schedule only needs the catalogs and an unbound boundary.
         let catalog = Catalog::discover(&modules)?;

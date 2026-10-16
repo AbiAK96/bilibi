@@ -8,7 +8,7 @@ capability-gated directory, create form and inline record/contact editor.
 
 The additive module migration creates tenant-scoped bigint identities, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
-It changes no demo company/account ID. No HR table exists to map in Bilibi.
+It changes no company or account ID. No HR table exists to map in Bilibi.
 No employee number, employment state/dates/type, department, supervisor, account,
 password or grant can be supplied in a Person input. It rejects unknown keys.
 
@@ -21,8 +21,8 @@ to 1–100, can exclude an existing ID and includes retired identities. It propo
 candidates without choosing, merging or linking them.
 
 Every public read and write gates on contributed `admin.person.*` capabilities.
-The manager/tenant-owner roles receive all Person commands, staff can create and
-edit, viewer can read/list. Existing installations run explicit
+The tenant-owner role receives all Person commands; the walkthrough fixture's
+manager does too, its staff can create and edit and its viewer can read/list. Existing installations run explicit
 `bilibi-web authz-reconcile` after migration; the walkthrough explicitly
 reconciles its disposable fixture before making calls.
 `admin.person.system.manage` additionally requires the explicit platform operator.
@@ -63,8 +63,10 @@ same record without overwriting edits. Its system key is not a general create
 field, its kind cannot become human, and it cannot retire or use the generic
 account-binding seam. Generic agents are ordinary contacts. Provisioning creates
 no credentials/account, no automatic login and no Authz system-principal grant.
-The demo seed links the AI Agent account to an ordinary agent Person; K17 owns
-bootstrap integration, including any privileged system-account workflow.
+A fresh install's `ai@agent.my` administrator is unlinked (Bilimbi's bootstrap
+creates no Person); the walkthrough fixture links its AI Agent account to an
+ordinary agent Person. K17 owns bootstrap integration, including any privileged
+system-account workflow.
 The reserved key is globally unique. Moving the operator marker to another
 tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.
@@ -88,7 +90,7 @@ tables directly; the providers contain the owning queries.
 
 ## Runtime walkthrough without unit tests
 
-Use a freshly migrated/seeded disposable database, then run:
+Use a freshly migrated disposable database, then run:
 
 ```sh
 BILIBI_PERSON_DEMO=disposable cargo run -p bilibi-person --example person-walkthrough --locked
@@ -140,7 +142,8 @@ guarded by the host. HTTP rendering leaves child anchors for live mounting.
 
 The manual `person-contact-panel` example serves an independent record host at
 `/person-contact-reference/{id}` so the shared contact embed can be tried outside
-Person detail. Run it with an existing migrated/seeded disposable `DATABASE_URL`:
+Person detail. Run it with a migrated disposable `DATABASE_URL` (it installs the walkthrough
+fixture):
 
 ```sh
 APP_ORIGIN=http://127.0.0.1:4499 BIND_ADDR=127.0.0.1:4499 \

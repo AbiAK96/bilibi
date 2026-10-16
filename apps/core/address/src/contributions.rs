@@ -26,7 +26,7 @@ const fn role(
 inventory::submit! { Contribution::new(VOCABULARY, "core/address", Provenance { module: "core/address", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &[],
     capabilities: &[C::tenant(VIEW), C::tenant(LIST), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE)],
-    roles: &[role("tenant_owner", "Tenant Owner", CAPS), role("manager", "manager", CAPS), role("staff", "staff", &[VIEW, LIST, CREATE, UPDATE]), role("viewer", "viewer", &[VIEW, LIST])],
+    roles: &[role("tenant_owner", "Tenant Owner", CAPS)],
     system_principals: &[],
 }) }
 

@@ -5,7 +5,7 @@ Run these cases against an isolated database as described in
 
 Register a small reference module through the normal inventory contracts, with
 its `PageService` rendering a recognizable operation label. Keep reference
-contributions in a separate fixture executable so production has no demo routes.
+contributions in a separate fixture executable so production has no fixture routes.
 
 | Case | Exercise | Expected observation |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ contributions in a separate fixture executable so production has no demo routes.
 | Capability | Visit a Capability page with a direct denial | 403; the page owner is not called. |
 | Operator | Visit OperatorCapability before and after adding the explicit operator identity to this disposable tenant | 403 before; allowed after only with the capability. Other tenants and explicit capability denials remain forbidden. |
 | Unsafe method | POST with missing Origin, then missing CSRF, then both valid | 403, 403, then owner dispatch. |
-| Shell isolation | Deny notifications.view and visit an unrelated allowed page | Page still renders; no notification data is read. |
+| Shell isolation | Deny the capability a shell or dashboard embed requires (`companies.view` on `dashboard-reference`) and visit an allowed page | Page still renders; the denied embed reads no data. |
 | Framing | Navigate an iframe to Companies | `#app-shell[data-framed=true] > main#app-content`, without menu, header or bell. One vertical scroller. |
 | Frame refusal | Navigate an iframe to a route declaring `framed: false` | 403 before owner dispatch. A top-level query `?framed=true` does not hide the shell. |
 | Live framing | Sort and wait for refresh inside the Company frame | Framed markup stays chromeless; typed URL state changes normally. |

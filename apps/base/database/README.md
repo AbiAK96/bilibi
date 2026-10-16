@@ -19,7 +19,7 @@ transaction and must propagate failure; `Capture::mutations` receives a whole
 bulk write so the implementation can batch. Rows, redaction, attribution and
 attempted/refused action semantics are owned by `base/audit`
 (see [apps/base/audit/README.md](../audit/README.md)). The historical
-`audit_mutations` and `bilibi_action_commits` demo ledgers are frozen; Audit
+`audit_mutations` and `bilibi_action_commits` legacy ledgers are frozen; Audit
 carried their rows over once in `006-audit-evidence`. `begin_with` also supports
 explicit deployment adapters.
 
@@ -41,7 +41,7 @@ than opening or committing an inner transaction.
 # Schema ownership
 
 `001-base`, `002-user` and `003-company` and their SQL files are frozen historical
-demo migrations. Do not split, rename, move their registration, or replay their
+migrations of the first slices. Do not split, rename, move their registration, or replay their
 DDL on databases where their versions were applied. `004-database-boundary` is
 an additive bridge and Database ledger migration; `006-audit-evidence` is Audit's. Future tenancy, session,
 authorization and audit DDL is contributed by those owning modules through
@@ -52,16 +52,21 @@ rolls back both DDL and migration ledger rows.
 
 # Production seeds
 
-`cargo run -p bilibi-web -- seed-production` is explicit and separate from the
-existing `seed` demo fixture. Application startup performs neither. There are no
-production reference-data contributions in the demo yet, so running the command
-currently applies none.
+`cargo run -p bilibi-web -- seed-production` runs only the production seeds;
+`seed`, the development seed, runs them before it bootstraps the platform
+operator. Application startup performs neither.
+
+`Development` seeds are Bilimbi's module `dev_seed` scripts: idempotent sample
+data that only `bilibi-web seed` runs, through `seeds::run_development` on the
+transaction that bootstraps the operator, so a repeat leaves what the operator
+changed. They keep no ledger and must find their own subject (Company's sample
+departments look up the operator's primary company).
 
 Contribute a typed `Seed` to the registry's `SEEDS` catalog with Production mode,
 an immutable version, and either trusted SQL or a service operation. The runner
 in [src/seeds.rs](src/seeds.rs) executes module dependencies first, then contribution
 IDs within each module. Publish separate dependent modules when order is needed
-between owners; within a module choose ordered IDs. Demo entries are excluded.
+between owners; within a module choose ordered IDs. Development entries are excluded.
 For a service seed, register `SeedService(Arc<dyn SeedExecutor>)` at the declared
 service ID. The executor receives the runner's transaction and must use it for
 all seed data. No extra checkout, transaction control or external IO is allowed.
@@ -80,9 +85,9 @@ stores SQL text, so put secrets behind service parameters rather than SQL litera
 
 F2 was demonstrated with external runtime fixture executables and a disposable
 PostgreSQL database, without unit tests. Evidence lives in Firstmate's task data
-folder `data/bilibi-f2/`: legacy upgrade without replay, repeat demo seed preserving
+folder `data/bilibi-f2/`: legacy upgrade without replay, repeat development seed preserving
 an edit, shared Company/notification trace and bell fan-out, explicit rollback,
 drop, swallowed capture failure, action-capture failure, cancelled owner/capture,
 deferred commit failure, system/impersonator attribution, failed seed rollback and
 retry, repeat seed skipping, definition drift refusal, SQL/service dependency
-ordering, concurrent seed serialization and exclusion of Demo contributions.
+ordering, concurrent seed serialization and exclusion of non-production contributions.

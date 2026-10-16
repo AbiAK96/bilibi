@@ -1,5 +1,5 @@
 //! Manual walkthrough of password, reset and verification flows against an
-//! explicitly supplied disposable database, run after `migrate` and `seed`.
+//! explicitly supplied disposable database, run after `migrate`.
 //! No test harness or assertions; prints each outcome for inspection, and reads
 //! the dev mailbox exactly as a developer would to follow an emailed link.
 use bilibi_database::{pool, Error, Result};
@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     let migrations: Vec<_> = modules
         .iter()
@@ -82,7 +83,7 @@ async fn main() -> Result<()> {
     let mailbox = Mailbox::new(mailbox_dir(), 100);
     let client = db.get().await?;
 
-    // Fixture account: Sam Staff, tenant 1. A rerun starts from the seeded password.
+    // Fixture account: Sam Staff, tenant 1. A rerun starts from the fixture password.
     let (email, seeded) = ("staff@example.test", "bilibi-dev");
     client
         .execute(

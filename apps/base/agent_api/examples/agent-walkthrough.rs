@@ -1,4 +1,4 @@
-//! Executes real app services against an explicitly disposable seeded database.
+//! Executes real app services against an explicitly disposable migrated database.
 //! No test runner, mock identities, or assertions. Output is runtime evidence.
 use bilibi_agent_api::{
     json::{Data, Output, Page},
@@ -8,6 +8,8 @@ use bilibi_authz::grants::Grants;
 use bilibi_database::pool;
 use serde_json::json;
 use std::collections::HashSet;
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -15,22 +17,23 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err("set BILIBI_AGENT_DEMO=disposable for this walkthrough".into());
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35571")?;
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let grants = app.services.get::<Grants>("base/authz.grants")?;
     let admin_login = app
         .user
-        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let viewer_login = app
         .user
-        .login("viewer@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("viewer@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let other_login = app
         .user
         .login(
             "manager@other.example.test",
-            bilibi_web::seed::DEMO_PASSWORD,
+            bilibi_walkthrough_fixture::PASSWORD,
         )
         .await?;
     let admin = app.security.guard(&admin_login.token).await?;

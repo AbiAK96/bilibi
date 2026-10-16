@@ -70,7 +70,7 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
 
 {#- Page container at the width of its workflow kind; data-page names the variant.
     Restore the source's base type size at the ported-page boundary: the
-    temporary demo scope sets 14px on an ancestor, and @scope's lower boundary
+    temporary legacy scope sets 14px on an ancestor, and @scope's lower boundary
     does not stop inherited font size. Explicit text-sm controls keep 14px. -#}
 {% macro page(id="", variant=bilibi_ui::PageVariant::List, class="") %}
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto text-base {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>

@@ -515,7 +515,7 @@ fn shared_target(scope: &Scope) -> Target {
 }
 
 /// The role codes the actor holds, which decide the shared layouts they see.
-/// A role without a code (the demo roles) is known by its name when that is a
+/// A role without a code (a tenant-defined role) is known by its name when that is a
 /// valid code.
 pub async fn role_codes(client: &impl GenericClient, scope: &Scope) -> Result<Vec<String>> {
     Ok(client

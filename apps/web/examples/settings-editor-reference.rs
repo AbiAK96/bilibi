@@ -5,7 +5,7 @@
 //! its own capability (withheld when denied). Production has no encrypted
 //! editable setting, so this is where the reveal flow can be exercised.
 //!
-//! Run with an isolated, migrated/demo-seeded DATABASE_URL, APP_ORIGIN,
+//! Run with an isolated, migrated DATABASE_URL, APP_ORIGIN,
 //! BIND_ADDR and (to store or show the token) BILIBI_SETTINGS_KEY. See
 //! `apps/base/settings_editor/README.md` for the walkthrough.
 use bilibi_base::authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
@@ -13,6 +13,8 @@ use bilibi_base::settings::{Definition, Editor, ScopeKind, Setting, ValueType, D
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{Contribution, Layer, Module, Provenance};
 use serde_json::{json, Value};
+bilibi_walkthrough_fixture::walkthrough_vocabulary!();
+bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 const MANAGE: &str = "reference.settings.manage";
 macro_rules! provenance {
@@ -68,6 +70,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "reference.settings.restrict
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
     let listener = tokio::net::TcpListener::bind(bind)

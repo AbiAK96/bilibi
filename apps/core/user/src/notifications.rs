@@ -10,7 +10,7 @@ use bilibi_database::{
     Change, Db, Error, MutationBoundary, MutationTransaction, Result as DbResult,
 };
 use bilibi_notifications::Notice;
-use bilibi_security::{authorize, guard, Capability, Scope, Sessions};
+use bilibi_security::{guard, Scope, Sessions};
 use bilibi_ui::page::{self, Subscription};
 use serde_json::json;
 use std::time::SystemTime;
@@ -111,7 +111,6 @@ pub async fn unread(client: &impl GenericClient, scope: &Scope) -> DbResult<i64>
 }
 
 pub async fn count(client: &impl GenericClient, scope: &Scope, status: Status) -> DbResult<i64> {
-    authorize(client, scope, Capability::NotificationsView).await?;
     let sql = format!(
         "SELECT count(*) FROM notifications WHERE tenant_id=$1 AND user_id=$2{}",
         status.clause()
@@ -130,7 +129,6 @@ pub async fn list(
     limit: i64,
     offset: i64,
 ) -> DbResult<Vec<Item>> {
-    authorize(client, scope, Capability::NotificationsView).await?;
     if !(1..=300).contains(&limit) || offset < 0 {
         return Err(Error::Invalid);
     }
@@ -211,7 +209,6 @@ pub async fn mark_read(
         )
         .await?;
     let scope = guard(tx.sql(), token, sessions).await?;
-    authorize(tx.sql(), &scope, Capability::NotificationsUpdate).await?;
     let (tenant, user) = (scope.tenant(), scope.user());
     let row = tx
         .sql()
@@ -272,7 +269,6 @@ pub async fn mark_all_read(
         )
         .await?;
     let scope = guard(tx.sql(), token, sessions).await?;
-    authorize(tx.sql(), &scope, Capability::NotificationsUpdate).await?;
     let (tenant, user) = (scope.tenant(), scope.user());
     // Lock the rows first so the bulk write changes exactly what was seen.
     let ids: Vec<i64> = tx
