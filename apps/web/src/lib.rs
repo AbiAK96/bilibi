@@ -304,8 +304,14 @@ async fn font_asset(Path(name): Path<String>) -> Response {
 
 /// Defaults only: a handler that sets its own policy, as signed media streams
 /// do with a sandboxing CSP, keeps it.
+/// A server-side failure is also logged here with its request line: the
+/// page shows only the error's public text.
 async fn response_headers(request: axum::extract::Request, next: Next) -> Response {
+    let line = format!("{} {}", request.method(), request.uri().path());
     let mut response = next.run(request).await;
+    if let Some(Failure(cause)) = response.extensions_mut().remove::<Failure>() {
+        eprintln!("error: {line} failed: {cause}");
+    }
     for (key,value) in [
         ("cache-control","no-store"),
         ("x-content-type-options","nosniff"),
@@ -316,6 +322,16 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
 }
 
 struct HttpError(Error);
+/// The cause of a server-side `HttpError`, for `response_headers` to log.
+#[derive(Clone)]
+struct Failure(String);
+/// Whether an error is the server's fault (logged), not the request's.
+pub(crate) fn server_fault(error: &Error) -> bool {
+    !matches!(
+        error,
+        Error::Unauthorized | Error::Forbidden | Error::NotFound | Error::Invalid | Error::Conflict
+    )
+}
 impl From<Error> for HttpError {
     fn from(error: Error) -> Self {
         Self(error)
@@ -331,7 +347,13 @@ impl IntoResponse for HttpError {
             Error::Conflict => StatusCode::CONFLICT,
             _ => StatusCode::SERVICE_UNAVAILABLE,
         };
-        (status, self.0.to_string()).into_response()
+        let mut response = (status, self.0.to_string()).into_response();
+        if server_fault(&self.0) {
+            response
+                .extensions_mut()
+                .insert(Failure(format!("{:?}", self.0)));
+        }
+        response
     }
 }
 fn render<T: Template>(template: T) -> Result<String> {

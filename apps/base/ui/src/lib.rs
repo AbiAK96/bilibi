@@ -33,8 +33,9 @@ pub use shell::{
 };
 
 pub use auth::{
-    AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, ResetForm, ResetPasswordPage,
-    CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, SESSION_EXPIRED,
+    AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, LoginWorkspace, ResetForm,
+    ResetPasswordPage, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    SESSION_EXPIRED,
 };
 pub use components::{card_flat, card_pads, stat_strip_columns};
 pub use components::{

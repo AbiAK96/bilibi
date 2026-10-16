@@ -4,8 +4,9 @@
     temporary credential lookup until K9 binds the global login; Bilimbi has
     email and password only. The failure is reported twice over, as Bilimbi
     does: the announced alert for assistive technology and the email field's
-    own error line. Without a platform-operator bootstrap (K17) the strip
-    always shows the unprovisioned state. -#}
+    own error line. The strip names the platform operator's primary company,
+    or shows the unprovisioned state until `platform-provision` (or the dev
+    seed's bootstrap) has run. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 <div class="flex flex-col gap-5">
@@ -17,5 +18,5 @@
 <div class="relative">{{ password }}<a href="/forgot-password" id="login-forgot-password" class="absolute inset-x-0 -top-0.5 text-right text-xs text-ink-subtle">Forgot your password?</a></div>
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-submit", class="w-full", button_type="submit", working="Signing in…") %}Log in{% endcall %}
 </form>
-<div id="login-workspace" data-state="unavailable" class="flex items-center justify-center gap-2 border-t border-low-contrast-line pt-4 text-xs text-ink-subtle"><span class="size-1.5 rounded-full bg-warning"></span><span>Platform workspace not provisioned</span></div>
+<div id="login-workspace" data-state="{{ workspace.state() }}" class="flex items-center justify-center gap-2 border-t border-low-contrast-line pt-4 text-xs text-ink-subtle">{% if let bilibi_ui::LoginWorkspace::Ready(company) = workspace %}<span class="size-1.5 rounded-full bg-success"></span><span class="truncate font-medium text-ink-muted">{{ company }}</span>{% else %}<span class="size-1.5 rounded-full bg-warning"></span><span>Platform workspace not provisioned</span>{% endif %}</div>
 </div>

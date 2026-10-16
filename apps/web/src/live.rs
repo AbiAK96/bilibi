@@ -413,6 +413,9 @@ impl Session {
                 Ok(body) => messages.push(fragment(&id, body)),
                 Err(Error::Unauthorized) => return Err(Error::Unauthorized),
                 Err(error) => {
+                    if crate::server_fault(&error) {
+                        eprintln!("error: live panel {id} on {} failed: {error:?}", self.path);
+                    }
                     self.panels.remove(&id);
                     messages.push(json!({"type":"error", "target":id, "message":error.to_string(), "clear":true}));
                 }
@@ -579,6 +582,12 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
         let (mut messages, close) = match result {
             Ok(messages) => (messages, false),
             Err(error) => {
+                if crate::server_fault(&error) {
+                    eprintln!(
+                        "error: live {target} event on {} failed: {error:?}",
+                        session.path
+                    );
+                }
                 let panel = target != "page" && target != "shell";
                 let clear = fatal(&error);
                 let parent_denied =

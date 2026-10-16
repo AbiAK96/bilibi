@@ -40,6 +40,32 @@ pub struct LoginForm {
     /// The announced failure above the form; the email field repeats it.
     pub form_error: String,
     pub session_expired: bool,
+    pub workspace: LoginWorkspace,
+}
+
+/// The workspace strip under the sign-in card (Bilimbi `assign_workspace`):
+/// the platform operator's company once provisioned, else why not. Every
+/// state but `Ready` reads "Platform workspace not provisioned"; `data-state`
+/// keeps the distinction.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum LoginWorkspace {
+    /// The operator's primary company display name.
+    Ready(String),
+    #[default]
+    NotProvisioned,
+    InvariantViolation,
+    DatabaseUnavailable,
+}
+
+impl LoginWorkspace {
+    pub fn state(&self) -> &'static str {
+        match self {
+            Self::Ready(_) => "ready",
+            Self::NotProvisioned => "not_provisioned",
+            Self::InvariantViolation => "invariant_violation",
+            Self::DatabaseUnavailable => "database_unavailable",
+        }
+    }
 }
 
 #[derive(Template)]
@@ -47,6 +73,7 @@ pub struct LoginForm {
 pub struct LoginPage {
     pub session_expired: bool,
     pub form_error: String,
+    pub workspace: LoginWorkspace,
     pub tenant: Html,
     pub email: Html,
     pub password: Html,
@@ -57,6 +84,7 @@ impl LoginPage {
         Ok(Self {
             session_expired: form.session_expired,
             form_error: form.form_error.clone(),
+            workspace: form.workspace.clone(),
             tenant: Html::render(&tenant_field("login", &form.tenant, &form.tenant_errors))?,
             email: Html::render(
                 &Field::in_form("login", "email")

@@ -23,8 +23,8 @@ watches for changes. The first login is `ai@agent.my` with password `bilibi-dev`
 Cargo diagnostics and wall-clock build times stay visible;
 `target/cargo-timings/cargo-timing.html` shows the compile breakdown.
 Changes under `apps/` (Rust, templates, CSS/JS, migrations and discovered module
-crates), workspace manifests/lockfile, and `scripts/` trigger a rebuild and app
-restart. In development, an open page shows “Rebuilding…” while the server is
+crates), workspace manifests/lockfile, and `scripts/` trigger a rebuild,
+pending migrations and an app restart. In development, an open page shows “Rebuilding…” while the server is
 restarting, reconnects with backoff, then reloads the same URL automatically.
 Release builds reconnect with the same backoff, remount the page in place so
 drafts survive, and say how many requests were in flight when the connection

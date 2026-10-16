@@ -44,6 +44,24 @@ pub async fn primary_company(client: &impl GenericClient, tenant: i64) -> Result
     }))
 }
 
+/// The platform operator's primary company (Bilimbi
+/// `Company.platform_operator_company/0`): platform-level identity, readable
+/// before sign-in for the login card's workspace strip. `None` until an
+/// active operator tenant with a primary company is provisioned
+/// (`platform-provision`, or the dev seed's one-time bootstrap).
+pub async fn platform_operator_company(client: &impl GenericClient) -> Result<Option<Identity>> {
+    let Some(row) = client
+        .query_opt(
+            "SELECT t.id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND t.status='active' AND t.deleted_at IS NULL",
+            &[],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    primary_company(client, row.get(0)).await
+}
+
 /// Whether `company_id` is the primary company of the scope's tenant.
 pub async fn is_primary(
     client: &impl GenericClient,

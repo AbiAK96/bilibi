@@ -14,8 +14,9 @@ use axum::{
 };
 use bilibi_database::Error;
 use bilibi_ui::{
-    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage, ResetForm,
-    ResetPasswordPage, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
+    LoginWorkspace, ResetForm, ResetPasswordPage, CREDENTIALS_REJECTED, PASSWORD_RESET,
+    RESET_LINK_INVALID, RESET_REQUESTED,
 };
 use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
@@ -206,23 +207,44 @@ pub async fn home(
         },
         ..FlashMap::default()
     };
-    let mut response = login_card(&form, flash, StatusCode::OK)?;
+    let mut response = login_card(&app, form, flash, StatusCode::OK).await?;
     if key.is_some() {
         clear_flash(&mut response);
     }
     Ok(response)
 }
-fn login_card(
-    form: &LoginForm,
+async fn login_card(
+    app: &App,
+    mut form: LoginForm,
     flash: FlashMap<'_>,
     status: StatusCode,
 ) -> std::result::Result<Response, HttpError> {
+    form.workspace = login_workspace(app).await;
     card(
         "Sign in",
-        LoginPage::new(form).map_err(|_| Error::Internal)?,
+        LoginPage::new(&form).map_err(|_| Error::Internal)?,
         flash,
         status,
     )
+}
+/// The sign-in card's workspace strip. A failed lookup degrades the strip and
+/// is logged; it never fails the sign-in card.
+async fn login_workspace(app: &App) -> LoginWorkspace {
+    let lookup = async {
+        let client = app.db.get().await.map_err(Error::from)?;
+        bilibi_core::company::primary::platform_operator_company(&**client).await
+    };
+    match lookup.await {
+        Ok(Some(company)) => LoginWorkspace::Ready(company.display_name),
+        Ok(None) => LoginWorkspace::NotProvisioned,
+        Err(error) => {
+            eprintln!("warning: platform operator company lookup failed: {error:?}");
+            match error {
+                Error::Database(_) | Error::Pool(_) => LoginWorkspace::DatabaseUnavailable,
+                _ => LoginWorkspace::InvariantViolation,
+            }
+        }
+    }
 }
 #[derive(Deserialize)]
 pub struct LoginSubmission {
@@ -251,7 +273,13 @@ pub async fn login(
     let Some(tenant) =
         tenant.filter(|_| form.email_errors.is_empty() && form.password_errors.is_empty())
     else {
-        return login_card(&form, FlashMap::default(), StatusCode::UNPROCESSABLE_ENTITY);
+        return login_card(
+            &app,
+            form,
+            FlashMap::default(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
     };
     match app
         .user
@@ -288,7 +316,7 @@ pub async fn login(
             // assistive technology and the email field's own error line.
             form.form_error = CREDENTIALS_REJECTED.into();
             form.email_errors = vec![CREDENTIALS_REJECTED.into()];
-            login_card(&form, FlashMap::default(), StatusCode::UNAUTHORIZED)
+            login_card(&app, form, FlashMap::default(), StatusCode::UNAUTHORIZED).await
         }
         Err(error) => Err(error.into()),
     }
