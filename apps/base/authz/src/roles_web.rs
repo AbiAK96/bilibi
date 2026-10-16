@@ -218,7 +218,7 @@ impl Pages {
         let can_create = crate::decide(&**client, scope, roles::CREATE)
             .await?
             .allowed;
-        let companies = self.visible_companies(&**client, scope).await?;
+        let companies = self.visible_companies(&client, scope).await?;
         let mut page = roles::list(&**client, scope, &companies, &query(state)).await?;
         // An out-of-range page (a stale link, a narrower search) lands on the
         // last real page instead of an empty one with no pager.
@@ -312,7 +312,7 @@ impl Pages {
         columns: &ListColumns,
     ) -> Result<(String, String)> {
         let client = self.db.get().await?;
-        let companies = self.visible_companies(&**client, scope).await?;
+        let companies = self.visible_companies(&client, scope).await?;
         // Another tenant's id and a missing id are the same answer.
         let details = roles::get(&**client, scope, &companies, id)
             .await?
