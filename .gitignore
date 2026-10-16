@@ -3,3 +3,13 @@
 /.local/
 __pycache__/
 /.amp/portals/
+# Mounted Domain and Extension containers are their own Git checkouts; only the
+# composition roots belong to the Platform (see apps/domains/AGENTS.md).
+/apps/domains/*
+!/apps/domains/Cargo.toml
+!/apps/domains/src/
+!/apps/domains/AGENTS.md
+/apps/extensions/*
+!/apps/extensions/Cargo.toml
+!/apps/extensions/src/
+!/apps/extensions/AGENTS.md
