@@ -189,9 +189,18 @@ impl Page<Scope, Error> for Pages {
                         input: LiveInput::Refresh,
                     })
                     .await?;
+                // The account page is titled by the account it shows, as
+                // Bilimbi's `page_title` is the user's name.
+                let title = if request.operation == "detail" {
+                    let id = crate::account_ui::record_id(request.path)?;
+                    Some(self.users.account(scope, id).await?.name)
+                } else {
+                    None
+                };
                 return Ok(PageBody {
                     html: body.html,
                     live: true,
+                    title,
                 });
             }
             match request.operation {
