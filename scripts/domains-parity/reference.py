@@ -187,7 +187,13 @@ def capture(args):
             return command(["chrome-devtools-axi", *argv], env=env, input=script, capture_output=True).stdout
         except subprocess.CalledProcessError as error:
             raise SystemExit(error.stderr or error.stdout or str(error)) from error
-    axi("newpage", args.base_url + "/")
+    # Explicit selection also works when the CLI cannot infer a unique page
+    # after redirects or when several tabs carry the same URL.
+    pages = axi("pages")
+    page_ids = re.findall(r"^\s*(\d+),", pages, re.M)
+    if not page_ids:
+        raise SystemExit("The isolated browser has no selectable tab")
+    axi("selectpage", page_ids[0])
     axi("emulate", "--viewport", "1440x1000x1", "--color-scheme", args.theme)
     identity = json.loads((evidence / "identity.json").read_text())
     # Login uses the real HTTP form; no session injection or authentication bypass.
@@ -204,9 +210,20 @@ console.log(await page.snapshot());
     (evidence / "login-snapshot.txt").write_text(axi("run", script=login))
     login = f"""
 if (await page.eval(() => !!document.querySelector('#login-email'))) {{
-  await page.fill('#login-email', {json.dumps(identity['email'])});
-  await page.fill('#login-password', {json.dumps(identity['password'])});
-  await page.click('#login-submit');
+  // Selector-based fill/click helpers in this installed CLI pass an IIFE
+  // where MCP expects a function. Use its working eval API for DOM events.
+  await page.eval(() => {{
+    for (const [selector, value] of [
+      ['#login-email', {json.dumps(identity['email'])}],
+      ['#login-password', {json.dumps(identity['password'])}]
+    ]) {{
+      const input = document.querySelector(selector);
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new Event('input', {{bubbles: true}}));
+      input.dispatchEvent(new Event('change', {{bubbles: true}}));
+    }}
+    document.querySelector('#login-submit').click();
+  }});
   await page.eval(async () => {{
     const deadline = Date.now() + 15000;
     while (location.pathname === '/' && Date.now() < deadline)
@@ -257,7 +274,7 @@ def main():
     parser.add_argument("--pg-bin", default="/usr/lib/postgresql/18/bin")
     parser.add_argument("--base-url", default="https://127.0.0.1:41461")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--session", default="bilibi-dom-r1")
+    parser.add_argument("--session", default=f"bilibi-dom-r1-{int(datetime.now().timestamp())}")
     args = parser.parse_args()
     args.evidence = args.evidence.resolve()
     if args.evidence.is_relative_to(HERE.parents[1]):
