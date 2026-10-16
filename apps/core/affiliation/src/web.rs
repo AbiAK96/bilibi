@@ -100,6 +100,7 @@ impl Page<Scope, Error> for Pages {
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title: None,
             })
         })
     }
