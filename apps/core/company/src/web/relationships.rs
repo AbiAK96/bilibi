@@ -81,10 +81,18 @@ inventory::submit! {
 }
 // The Relationships card of a record page. The host names the party in the
 // panel path; the embed reads under Company's view capability whichever
-// module's page mounts it.
+// module's page mounts it. The company detail page mounts the first by
+// name; Person's detail page discovers the second by its record kind and
+// mounts it with its own path (`person_id`, `kinds: person`).
 inventory::submit! {
     Contribution::new(EMBEDS, "company.relationships", provenance!(), &Embed {
         slot: "record.relationships", context: EmbedContext::Record { kind: "*" },
+        service: SERVICE, operation: "panel", access: Access::Capability(VIEW),
+    })
+}
+inventory::submit! {
+    Contribution::new(EMBEDS, "company.person-relationships", provenance!(), &Embed {
+        slot: "record.relationships", context: EmbedContext::Record { kind: "core/person" },
         service: SERVICE, operation: "panel", access: Access::Capability(VIEW),
     })
 }
@@ -157,16 +165,23 @@ impl RelationshipPages {
                     .filter(|id| !id.is_empty() && id.len() <= 128)
                     .ok_or(Error::Invalid)?
                     .clone();
-                let party = match request.path.get("kind").map(String::as_str) {
-                    Some("organisation") => PartyId::Organisation(
+                // `kind` + `id` is this module's own host; `kinds: person` +
+                // `person_id` is how Person's detail page names its record.
+                let kind = request.path.get("kind").map(String::as_str);
+                let kinds = request.path.get("kinds").map(String::as_str);
+                let party = match (kind, kinds) {
+                    (Some("organisation"), None) => PartyId::Organisation(
                         OrganisationId::new(id("id")?).map_err(|_| Error::Invalid)?,
                     ),
-                    Some("person") => {
+                    (Some("person"), None) => {
                         PartyId::Person(PersonId::new(id("id")?).map_err(|_| Error::Invalid)?)
                     }
+                    (None, Some("person")) => PartyId::Person(
+                        PersonId::new(id("person_id")?).map_err(|_| Error::Invalid)?,
+                    ),
                     _ => return Err(Error::Invalid),
                 };
-                if request.path.len() != 3 || !request.query.is_empty() {
+                if request.path.len() > 4 || !request.query.is_empty() {
                     return Err(Error::Invalid);
                 }
                 Box::new(Panel {
@@ -290,17 +305,11 @@ fn access(error: Error, flash: &mut Flash) -> Result<()> {
         other => Err(other),
     }
 }
+/// A form's or button's values, without the event name.
 fn values_of(value: &Value) -> HashMap<String, String> {
-    value
-        .as_object()
-        .map(|object| {
-            object
-                .iter()
-                .filter(|(k, _)| *k != "type")
-                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
-                .collect()
-        })
-        .unwrap_or_default()
+    let mut values = bilibi_ui::params::string_values(value);
+    values.remove("type");
+    values
 }
 fn get<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")

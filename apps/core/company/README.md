@@ -227,10 +227,12 @@ UI (`core/company.relationship_pages`):
   `{panel: <element id>, kind: organisation|person, id}`. The company
   detail page mounts it for the company (`web.rs` `panels()`, slot
   `#company-relationships` in `views::detail`) with a Manage link to the
-  administration page; a Person detail page (K8) mounts the same embed with
-  `kind: person` and gets the companies that relate to the person. The
-  card's `FlexTable` targets the panel, so its column and zoom events reach
-  the panel's own state.
+  administration page. The same panel is also registered as
+  `company.person-relationships` for record kind `core/person`, which
+  Person's detail page discovers and mounts with its own path (`person_id`,
+  `kinds: person`), showing the companies that relate to the person with a
+  link to each. The card's `FlexTable` targets the panel, so its column and
+  zoom events reach the panel's own state.
 
 The pages hold no client-chosen version: edits, unlinks and retirements
 carry the version of the row read when the dialog opened, so a concurrent
