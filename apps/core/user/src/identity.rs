@@ -347,14 +347,8 @@ impl UserService {
         client: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<Scope> {
-        let fresh = self
-            .authentication
-            .authenticate(client, scope.tenant(), scope.user(), scope.csrf.clone())
-            .await?;
-        Ok(match scope.agent() {
-            Some(agent) => fresh.for_agent(agent.connection(), agent.trace().into()),
-            None => fresh,
-        })
+        // Keeps the impersonator and agent facet the edge sealed.
+        self.authentication.reprove(client, scope).await
     }
     /// Names the Person an account signs in as, without an affiliation. The
     /// Person owner proves and locks a live, non-system identity; an account

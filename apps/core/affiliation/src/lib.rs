@@ -54,15 +54,8 @@ impl AffiliationService {
         client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
     ) -> Result<Scope> {
-        let fresh = self
-            .authentication
-            .authenticate(client, scope.tenant(), scope.user(), scope.csrf.clone())
-            .await?;
-        Ok(if let Some(agent) = scope.agent() {
-            fresh.for_agent(agent.connection(), agent.trace().into())
-        } else {
-            fresh
-        })
+        // Keeps the impersonator and agent facet the edge sealed.
+        self.authentication.reprove(client, scope).await
     }
     pub async fn read(&self, scope: &Scope, id: AffiliationId) -> Result<Affiliation> {
         let client = self.db.get().await?;

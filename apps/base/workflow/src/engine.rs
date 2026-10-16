@@ -335,10 +335,7 @@ impl Engine {
         Ok(fact)
     }
     pub(crate) async fn live(&self, sql: &Transaction<'_>, scope: &Scope) -> Result<Scope> {
-        let current = self
-            .authentication
-            .authenticate(sql, scope.tenant(), scope.user(), scope.csrf.clone())
-            .await?;
+        let current = self.authentication.reprove(sql, scope).await?;
         if current.actor().person() != scope.actor().person()
             || current.actor().organisation() != scope.actor().organisation()
             || current.actor().affiliation() != scope.actor().affiliation()

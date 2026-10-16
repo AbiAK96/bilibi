@@ -271,9 +271,7 @@ impl FieldRestrictions {
         client: &(impl GenericClient + Sync),
         actor: &Scope,
     ) -> Result<()> {
-        self.authentication
-            .authenticate(client, actor.tenant(), actor.user(), String::new())
-            .await?;
+        self.authentication.reprove(client, actor).await?;
         authorize_key(client, actor, MANAGE).await
     }
 }

@@ -435,12 +435,7 @@ impl<O: Owner> Owned<'_, O> {
         let live = self
             .store
             .authentication
-            .authenticate(
-                client,
-                self.scope.tenant(),
-                self.scope.user(),
-                String::new(),
-            )
+            .reprove(client, self.scope)
             .await?;
         if live.actor().person() != self.scope.actor().person()
             || live.actor().organisation() != self.scope.actor().organisation()

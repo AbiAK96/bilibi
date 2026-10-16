@@ -901,6 +901,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tokio-postgres",
+ "uuid",
 ]
 
 [[package]]

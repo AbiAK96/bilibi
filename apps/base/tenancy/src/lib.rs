@@ -98,6 +98,23 @@ impl AgentFacet {
         &self.trace
     }
 }
+/// The operator behind an impersonated session (Bilimbi `impersonator_id`),
+/// sealed from the durable session row and re-proved live with the actor on
+/// every authentication. The actor is the account acted as; this is who acts.
+#[derive(Clone, Debug)]
+pub struct Impersonator {
+    user: i64,
+    name: String,
+}
+impl Impersonator {
+    pub fn user(&self) -> i64 {
+        self.user
+    }
+    /// Display only, from the operator's own live account.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
 /// Private tenant + actor cannot be spliced, constructed, or deserialized by callers.
 /// Display fields are compatibility data and never authority.
 #[derive(Clone, Debug)]
@@ -105,6 +122,7 @@ pub struct Scope {
     tenant: i64,
     actor: Actor,
     agent: Option<AgentFacet>,
+    impersonator: Option<Impersonator>,
     pub tenant_name: String,
     pub user_name: String,
     pub email: String,
@@ -125,6 +143,12 @@ impl Scope {
     pub fn agent(&self) -> Option<&AgentFacet> {
         self.agent.as_ref()
     }
+    /// Present only on a browser session an operator entered through
+    /// impersonation. Self-service writes of the account's own preferences,
+    /// credentials and grants refuse a scope that carries it.
+    pub fn impersonator(&self) -> Option<&Impersonator> {
+        self.impersonator.as_ref()
+    }
     /// Seals the grant onto a scope its owner just proved live for that grant's
     /// tenant and account. Only adds a restriction, so no new authority follows;
     /// the browser CSRF value is replaced so no form check can match.
@@ -137,6 +161,10 @@ impl Scope {
     }
     pub fn mutation_context(&self, action: impl Into<String>) -> Context {
         let mut context = Context::user(self.tenant, self.user(), action);
+        context.impersonator = self
+            .impersonator
+            .as_ref()
+            .map(|impersonator| bilibi_database::Principal::user(impersonator.user));
         if let Some(agent) = &self.agent {
             context.trace_id.clone_from(&agent.trace);
         }
@@ -168,6 +196,11 @@ impl Authentication {
         scope: &Scope,
         password: &str,
     ) -> Result<bool> {
+        // The operator behind an impersonated session does not hold the
+        // account's credential, and a re-proof must never be lent to them.
+        if scope.impersonator().is_some() {
+            return Err(Error::Forbidden);
+        }
         self.verifier
             .get()
             .ok_or(Error::Unauthorized)?
@@ -183,7 +216,22 @@ impl Authentication {
         user: i64,
         csrf: String,
     ) -> Result<Scope> {
-        if tenant <= 0 || user <= 0 {
+        self.authenticate_session(client, tenant, user, None, csrf)
+            .await
+    }
+    /// The durable session edge: `impersonator` is the operator the session
+    /// row names, never a value from the browser. Both accounts are re-proved
+    /// live in the same tenant, so a removed or frozen operator ends the
+    /// impersonated session as surely as a removed target does.
+    pub async fn authenticate_session(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        impersonator: Option<i64>,
+        csrf: String,
+    ) -> Result<Scope> {
+        if tenant <= 0 || user <= 0 || impersonator.is_some_and(|id| id <= 0 || id == user) {
             return Err(Error::Unauthorized);
         }
         let row = client
@@ -193,17 +241,20 @@ impl Authentication {
             )
             .await?
             .ok_or(Error::Unauthorized)?;
-        let identity = self
-            .verifier
-            .get()
-            .ok_or(Error::Unauthorized)?
-            .verify(client, tenant, user)
-            .await?;
+        let verifier = self.verifier.get().ok_or(Error::Unauthorized)?;
+        let identity = verifier.verify(client, tenant, user).await?;
         if identity.affiliation.is_some()
             && (identity.person.is_none() || identity.organisation.is_none())
         {
             return Err(Error::Unauthorized);
         }
+        let impersonator = match impersonator {
+            Some(operator) => Some(Impersonator {
+                user: operator,
+                name: verifier.verify(client, tenant, operator).await?.name,
+            }),
+            None => None,
+        };
         Ok(Scope {
             tenant,
             actor: Actor {
@@ -213,10 +264,33 @@ impl Authentication {
                 affiliation: identity.affiliation,
             },
             agent: None,
+            impersonator,
             tenant_name: row.get(0),
             user_name: identity.name,
             email: identity.email,
             csrf,
+        })
+    }
+    /// Re-proves a scope an edge already sealed, keeping its impersonator and
+    /// agent facet: owners refresh eligibility with this rather than
+    /// `authenticate`, which would drop the operator from the audit pair.
+    pub async fn reprove(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Scope> {
+        let fresh = self
+            .authenticate_session(
+                client,
+                scope.tenant(),
+                scope.user(),
+                scope.impersonator().map(Impersonator::user),
+                scope.csrf.clone(),
+            )
+            .await?;
+        Ok(match scope.agent() {
+            Some(agent) => fresh.for_agent(agent.connection(), agent.trace().into()),
+            None => fresh,
         })
     }
 }

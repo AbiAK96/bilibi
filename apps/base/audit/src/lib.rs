@@ -66,14 +66,15 @@ pub struct Attribution {
     pub trace_id: Option<String>,
 }
 impl Attribution {
-    /// Sealed session identity. Impersonation and party facets bind through
-    /// later owner adapters; `trace_id` is minted per recorded action.
+    /// Sealed session identity: the account acted as and, under
+    /// impersonation, the operator behind it. `trace_id` is minted per
+    /// recorded action.
     pub fn from_scope(scope: &Scope) -> Self {
         Self {
             tenant: Some(scope.tenant()),
             actor_type: "user",
             actor_id: scope.user(),
-            impersonator_id: None,
+            impersonator_id: scope.impersonator().map(|operator| operator.user()),
             system_principal: None,
             trace_id: None,
         }

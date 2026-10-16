@@ -124,6 +124,14 @@ pub struct ListPage {
     pub entries: Vec<Summary>,
     pub total_entries: u64,
 }
+/// Who a session acts as: the account, and the operator behind it while
+/// impersonating. A switch names the identity it expects to replace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Holder {
+    pub user: i64,
+    pub impersonator: Option<i64>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Termination {
     Terminated,
@@ -324,7 +332,8 @@ impl Sessions {
         }
     }
     /// Ends a user's sessions inside the caller's own write, except the one
-    /// named: a credential change keeps the session that made it. Returns the
+    /// named: a credential change keeps the session that made it. A session
+    /// the user holds as an impersonating operator ends too. Returns the
     /// ended ids for [`Sessions::announce`] after the caller's commit. The
     /// caller's audit row (the credential change) covers the sign-outs.
     pub async fn end_user_sessions(
@@ -338,7 +347,7 @@ impl Sessions {
         }
         let rows = sql
             .query(
-                "DELETE FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND ($3::text IS NULL OR id<>$3) RETURNING id",
+                "DELETE FROM sessions WHERE tenant_id=$1 AND (user_id=$2 OR impersonator_id=$2) AND ($3::text IS NULL OR id<>$3) RETURNING id",
                 &[&tenant, &user, &except],
             )
             .await?;
@@ -358,6 +367,43 @@ impl Sessions {
             self.announce(vec![id.to_owned()]);
         }
         Ok(())
+    }
+    /// Moves a live session to another identity inside the caller's
+    /// transaction: the impersonation switch, both ways. The row must still be
+    /// valid and still hold `from`, so a stale or replayed switch (the
+    /// session already moved, ended or expired) is `Conflict` and changes
+    /// nothing. The CSRF secret is rotated, so every form, method link and
+    /// live socket issued to the old identity is refused from now on.
+    /// Returns the new CSRF secret. Nothing is announced: the host's live
+    /// sockets bind the secret they were opened with and reload once it moves.
+    pub async fn switch(
+        &self,
+        sql: &(impl GenericClient + Sync),
+        token: &str,
+        tenant: i64,
+        from: Holder,
+        to: Holder,
+    ) -> Result<String> {
+        if token.is_empty()
+            || tenant <= 0
+            || [from, to].iter().any(|holder| {
+                holder.user <= 0
+                    || holder
+                        .impersonator
+                        .is_some_and(|id| id <= 0 || id == holder.user)
+            })
+        {
+            return Err(Error::Invalid);
+        }
+        let policy = self.policy(sql).await?;
+        let csrf = uuid::Uuid::new_v4().simple().to_string();
+        let moved = sql
+            .query_opt(
+                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
+            )
+            .await?;
+        moved.map(|_| csrf).ok_or(Error::Conflict)
     }
     /// Publishes terminations the caller already committed.
     pub fn announce(&self, ids: Vec<String>) {
@@ -395,10 +441,10 @@ impl Sessions {
             return Err(Error::Unauthorized);
         }
         let policy = self.policy(client).await?;
-        let row = client.query_opt("SELECT tenant_id,user_id,csrf FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
+        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
         let scope = self
             .authentication
-            .authenticate(client, row.get(0), row.get(1), row.get(2))
+            .authenticate_session(client, row.get(0), row.get(1), row.get(3), row.get(2))
             .await?;
         if activity {
             // Lock the valid row, even when renewal is throttled. The UPDATE
@@ -425,7 +471,10 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/session", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/settings", "base/authz", "base/queue", "base/schedule", "base/ui", "base/menu", "base/dashboard", "base/principal_directory"],
-        migrations: &[("base-session-001-client", include_str!("../migrations/001-client.sql"))],
+        migrations: &[
+            ("base-session-001-client", include_str!("../migrations/001-client.sql")),
+            ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),
+        ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?))) },
             bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(expiry::Expiry {

@@ -75,15 +75,8 @@ impl AddressService {
         client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
     ) -> Result<Scope> {
-        let fresh = self
-            .authentication
-            .authenticate(client, scope.tenant(), scope.user(), scope.csrf.clone())
-            .await?;
-        Ok(if let Some(agent) = scope.agent() {
-            fresh.for_agent(agent.connection(), agent.trace().into())
-        } else {
-            fresh
-        })
+        // Keeps the impersonator and agent facet the edge sealed.
+        self.authentication.reprove(client, scope).await
     }
     /// Normalize and check the location against Geonames: the only way to a
     /// `ValidAddress`, which every store write takes.
