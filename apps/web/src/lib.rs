@@ -1,4 +1,5 @@
-//! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
+//! Axum host: routes and downloads, cookie/Origin boundary, and one server-held
+//! page per socket.
 mod api;
 mod auth;
 mod errors;
@@ -28,6 +29,7 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Clone)]
 pub struct App {
     routes: Arc<Vec<routes::BoundRoute>>,
+    downloads: Arc<Vec<routes::BoundDownload>>,
     pub db: Db,
     pub origin: Arc<str>,
     /// The host the server listens on, for the development status bar only;
@@ -64,10 +66,12 @@ impl App {
             eprintln!("warning: {dropped}");
         }
         let routes = Arc::new(routes::bind(&services)?);
+        let downloads = Arc::new(routes::bind_downloads(&services, &routes)?);
         let api = Arc::new(api::Edge::new(&services)?);
         let webhooks = Arc::new(webhooks::Boundary::bind(&services)?);
         Ok(Self {
             routes,
+            downloads,
             db,
             origin: origin.into(),
             listen_address: None,
@@ -179,7 +183,7 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
-    routes::install(Router::new(), &app.routes)
+    routes::install(Router::new(), &app.routes, &app.downloads)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
         .route("/", get(auth::home).post(auth::login))

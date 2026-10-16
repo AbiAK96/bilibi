@@ -168,6 +168,14 @@ fn describe(app: &App, seen: &Seen) -> DebugReport {
                 route.push(("Page service".into(), bound.route.service.into()));
                 route.push(("Access".into(), format!("{:?}", bound.route.access)));
                 route.push(("Framed".into(), bound.route.framed.to_string()));
+            } else if let Some(bound) = app
+                .downloads
+                .iter()
+                .find(|bound| bound.download.path == pattern && seen.method == Method::GET)
+            {
+                route.push(("Download operation".into(), bound.download.operation.into()));
+                route.push(("Download service".into(), bound.download.service.into()));
+                route.push(("Access".into(), format!("{:?}", bound.download.access)));
             }
         }
         None => route.push(("Matched route".into(), "none (router fallback)".into())),

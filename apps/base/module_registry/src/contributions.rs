@@ -205,6 +205,9 @@ impl Catalog {
         for entry in self.entries.get(EMBEDS).into_iter().flatten() {
             check(entry, entry.get::<Embed>()?.service)?;
         }
+        for entry in self.entries.get(DOWNLOADS).into_iter().flatten() {
+            check(entry, entry.get::<Download>()?.service)?;
+        }
         let mut versions = BTreeSet::new();
         for entry in self.entries.get(SEEDS).into_iter().flatten() {
             let seed = entry.get::<Seed>()?;
@@ -236,6 +239,7 @@ fn invalid(message: String) -> RegistryError {
 
 pub const ROUTES: &str = "base/module_registry.routes";
 pub const EMBEDS: &str = "base/module_registry.embeds";
+pub const DOWNLOADS: &str = "base/module_registry.downloads";
 pub const SEEDS: &str = "base/module_registry.seeds";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Method {
@@ -263,6 +267,21 @@ pub struct Route {
     pub operation: &'static str,
     pub access: Access,
     pub framed: bool,
+}
+/// A GET that answers with a file instead of a page: Bilimbi's download and
+/// export controllers (`/finance/attachments/{id}/download`, a return's CSV).
+/// The Web adapter establishes `access` again on every request and then calls
+/// the owner's `bilibi_ui::download::Download` service, whose facade authorizes
+/// once more, so a grant revoked after the link was rendered refuses the next
+/// click. A download is never public (anonymous bytes are Media's signed
+/// stream), never framed and never live. Register one with
+/// `Contribution::new(DOWNLOADS, ...)`, not a `Route` whose page writes bytes.
+#[derive(Clone, Copy, Debug)]
+pub struct Download {
+    pub path: &'static str,
+    pub service: &'static str,
+    pub operation: &'static str,
+    pub access: Access,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum EmbedContext {
@@ -307,32 +326,51 @@ fn access_valid(access: Access) -> bool {
         Access::Capability("") | Access::OperatorCapability("")
     )
 }
+fn path_valid(path: &str, operation: &str, access: Access) -> bool {
+    path.starts_with('/')
+        && !path.contains(['?', '#'])
+        && !operation.is_empty()
+        && access_valid(access)
+}
+/// Parameter names do not distinguish route patterns.
+fn normalized(path: &str) -> String {
+    path.split('/')
+        .map(|part| {
+            if part.starts_with('{') && part.ends_with('}') {
+                "{}"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
 fn validate_routes(entries: &[Entry]) -> Result<()> {
     let mut paths = BTreeSet::new();
     for entry in entries {
         let route = entry.get::<Route>()?;
-        if !route.path.starts_with('/')
-            || route.path.contains(['?', '#'])
-            || route.operation.is_empty()
-            || !access_valid(route.access)
-        {
+        if !path_valid(route.path, route.operation, route.access) {
             return Err(invalid(format!("invalid route {}", entry.id)));
         }
-        // Parameter names do not distinguish route patterns.
-        let normalized = route
-            .path
-            .split('/')
-            .map(|part| {
-                if part.starts_with('{') && part.ends_with('}') {
-                    "{}"
-                } else {
-                    part
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("/");
-        if !paths.insert((route.method, normalized)) {
+        if !paths.insert((route.method, normalized(route.path))) {
             return Err(invalid(format!("duplicate route {}", route.path)));
+        }
+    }
+    Ok(())
+}
+/// Downloads are GETs that need a signed-in person; the Web adapter also
+/// refuses one that intersects a page route or a host path.
+fn validate_downloads(entries: &[Entry]) -> Result<()> {
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        let download = entry.get::<Download>()?;
+        if !path_valid(download.path, download.operation, download.access)
+            || matches!(download.access, Access::Public)
+        {
+            return Err(invalid(format!("invalid download {}", entry.id)));
+        }
+        if !paths.insert(normalized(download.path)) {
+            return Err(invalid(format!("duplicate download {}", download.path)));
         }
     }
     Ok(())
@@ -352,4 +390,5 @@ fn validate_embeds(entries: &[Entry]) -> Result<()> {
 }
 inventory::submit! { Consumer::new::<Route>(ROUTES, "base/module_registry", validate_routes) }
 inventory::submit! { Consumer::new::<Embed>(EMBEDS, "base/module_registry", validate_embeds) }
+inventory::submit! { Consumer::new::<Download>(DOWNLOADS, "base/module_registry", validate_downloads) }
 inventory::submit! { Consumer::new::<Seed>(SEEDS, "base/module_registry", |_| Ok(())) }

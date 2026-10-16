@@ -1,70 +1,71 @@
-//! Discovered HTTP pages: validate/bind once, authorize before owner dispatch.
+//! Discovered HTTP pages and downloads: validate/bind once, authorize before
+//! owner dispatch, on every request.
 use crate::{origin, token, App, HttpError};
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{on, MethodFilter},
+    routing::{get, on, MethodFilter},
     Router,
 };
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
-    contributions::{Access, Method, Route, ROUTES},
+    contributions::{Access, Download, Method, Route, DOWNLOADS, ROUTES},
     RegistryError, Services,
 };
-use bilibi_ui::page::PageRequest;
+use bilibi_ui::{download::DownloadRequest, page::PageRequest};
 use std::{collections::HashMap, sync::Arc};
 
 type PageService = bilibi_ui::page::PageService<bilibi_security::Scope, Error>;
+type DownloadService = bilibi_ui::download::DownloadService<bilibi_security::Scope, Error>;
 
 #[derive(Clone)]
 pub struct BoundRoute {
     pub route: &'static Route,
     pub page: Arc<PageService>,
 }
+/// A `Download` contribution with its owner service. Downloads share the page
+/// routes' path rules and may not intersect a page or a host path.
+#[derive(Clone)]
+pub struct BoundDownload {
+    pub download: &'static Download,
+    pub service: Arc<DownloadService>,
+}
+
+/// The host paths no discovered route or download may overlap.
+const HOST_PATHS: [&str; 17] = [
+    "/",
+    "/login",
+    "/logout",
+    "/preferences",
+    "/forgot-password",
+    "/reset-password/{token}",
+    "/live",
+    "/fonts/{name}",
+    "/favicon.svg",
+    "/favicon.ico",
+    "/assets/{name}",
+    crate::media::STREAM,
+    crate::media::ATTACHMENT,
+    crate::pdf::RENDER,
+    crate::webhooks::PATH,
+    crate::impersonation::ENTER,
+    crate::impersonation::LEAVE,
+];
 
 /// Router-owned paths cannot be shadowed, even by another method. Literal
 /// siblings beat parameters; crossed patterns and parameter renames fail boot.
 pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
-    let mut bound = Vec::new();
+    let mut bound: Vec<BoundRoute> = Vec::new();
     for entry in services.catalog()?.entries::<Route>(ROUTES)? {
         let route = entry.get::<Route>()?;
-        validate_pattern(route.path)?;
-        if crate::api::reserved(route.path) {
-            return Err(invalid(format!(
-                "{} at {}:{} claims the host agent path {}",
-                entry.id, entry.provenance.source, entry.provenance.line, route.path
-            )));
-        }
-        for reserved in [
-            "/",
-            "/login",
-            "/logout",
-            "/preferences",
-            "/forgot-password",
-            "/reset-password/{token}",
-            "/live",
-            "/fonts/{name}",
-            "/favicon.svg",
-            "/favicon.ico",
-            "/assets/{name}",
-            crate::media::STREAM,
-            crate::media::ATTACHMENT,
-            crate::pdf::RENDER,
-            crate::webhooks::PATH,
-            crate::impersonation::ENTER,
-            crate::impersonation::LEAVE,
-        ] {
-            if intersects(route.path, reserved) {
-                return Err(invalid(format!(
-                    "{} at {}:{} overlaps host path {reserved}",
-                    entry.id, entry.provenance.source, entry.provenance.line
-                )));
-            }
-        }
+        validate_host_free(entry, route.path)?;
         for previous in &bound {
-            validate_pair(previous, route)?;
+            validate_pair(
+                (previous.route.method, previous.route.path),
+                (route.method, route.path),
+            )?;
         }
         bound.push(BoundRoute {
             route,
@@ -72,6 +73,52 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
         });
     }
     Ok(bound)
+}
+
+/// Downloads are bound after the pages and checked against them: a download
+/// is a GET like a page, so the two share one pattern space.
+pub fn bind_downloads(services: &Services, pages: &[BoundRoute]) -> Result<Vec<BoundDownload>> {
+    let mut bound: Vec<BoundDownload> = Vec::new();
+    for entry in services.catalog()?.entries::<Download>(DOWNLOADS)? {
+        let download = entry.get::<Download>()?;
+        validate_host_free(entry, download.path)?;
+        for page in pages {
+            validate_pair(
+                (page.route.method, page.route.path),
+                (Method::Get, download.path),
+            )?;
+        }
+        for previous in &bound {
+            validate_pair(
+                (Method::Get, previous.download.path),
+                (Method::Get, download.path),
+            )?;
+        }
+        bound.push(BoundDownload {
+            download,
+            service: services.get(download.service)?,
+        });
+    }
+    Ok(bound)
+}
+
+fn validate_host_free(entry: &bilibi_module_registry::Entry, path: &str) -> Result<()> {
+    validate_pattern(path)?;
+    if crate::api::reserved(path) {
+        return Err(invalid(format!(
+            "{} at {}:{} claims the host agent path {path}",
+            entry.id, entry.provenance.source, entry.provenance.line
+        )));
+    }
+    for reserved in HOST_PATHS {
+        if intersects(path, reserved) {
+            return Err(invalid(format!(
+                "{} at {}:{} overlaps host path {reserved}",
+                entry.id, entry.provenance.source, entry.provenance.line
+            )));
+        }
+    }
+    Ok(())
 }
 fn invalid(message: String) -> Error {
     RegistryError::Contribution(message).into()
@@ -114,39 +161,56 @@ fn intersects(a: &str, b: &str) -> bool {
             .zip(b)
             .all(|(a, b)| a == &b || parameter(a) || parameter(b))
 }
-fn validate_pair(previous: &BoundRoute, route: &Route) -> Result<()> {
-    let other = previous.route;
+fn validate_pair(other: (Method, &str), route: (Method, &str)) -> Result<()> {
+    let (other_method, other_path) = other;
+    let (method, path) = route;
     // Axum shares parameter nodes even for disjoint methods and suffixes.
-    for (a, b) in other.path.split('/').zip(route.path.split('/')) {
+    for (a, b) in other_path.split('/').zip(path.split('/')) {
         if parameter(a) && parameter(b) && a != b {
             return Err(invalid(format!(
-                "conflicting parameter names: {} and {}",
-                other.path, route.path
+                "conflicting parameter names: {other_path} and {path}"
             )));
         }
         if a != b && !(parameter(a) && parameter(b)) {
             break;
         }
     }
-    if other.method != route.method || !intersects(other.path, route.path) {
+    if other_method != method || !intersects(other_path, path) {
         return Ok(());
     }
     let mut left = false;
     let mut right = false;
-    for (a, b) in other.path.split('/').zip(route.path.split('/')) {
+    for (a, b) in other_path.split('/').zip(path.split('/')) {
         left |= !parameter(a) && parameter(b);
         right |= parameter(a) && !parameter(b);
     }
     if left == right {
         return Err(invalid(format!(
-            "ambiguous page routes: {} and {}",
-            other.path, route.path
+            "ambiguous routes: {other_path} and {path}"
         )));
     }
     Ok(())
 }
 
-pub fn install(mut router: Router<App>, routes: &[BoundRoute]) -> Router<App> {
+pub fn install(
+    mut router: Router<App>,
+    routes: &[BoundRoute],
+    downloads: &[BoundDownload],
+) -> Router<App> {
+    for bound in downloads {
+        let bound = bound.clone();
+        router = router.route(
+            bound.download.path,
+            get(
+                move |State(app): State<App>,
+                      headers: HeaderMap,
+                      Path(path): Path<HashMap<String, String>>,
+                      Query(query): Query<HashMap<String, String>>| {
+                    download(app, bound, headers, path, query)
+                },
+            ),
+        );
+    }
     for bound in routes {
         let bound = bound.clone();
         let method = match bound.route.method {
@@ -308,6 +372,57 @@ async fn dispatch(
         );
     }
     *response.status_mut() = StatusCode::OK;
+    Ok(response)
+}
+
+/// A download: access is proven for this request, then the owner reads the
+/// bytes through its facade, then the file's own headers go out. Nothing is
+/// rendered into the shell and no missing-record redirect applies: a refused
+/// or missing file is a bare 403 or 404, as Bilimbi's controllers answer.
+async fn download(
+    app: App,
+    bound: BoundDownload,
+    headers: HeaderMap,
+    path: HashMap<String, String>,
+    query: HashMap<String, String>,
+) -> std::result::Result<Response, HttpError> {
+    let credential = token(&headers).ok();
+    let scope = match check_access(&app, bound.download.access, credential.as_deref()).await {
+        Err(Error::Unauthorized) => {
+            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
+        }
+        result => result?,
+    };
+    // Registration refuses a public download; a scope is always proven here.
+    let (Some(scope), Some(credential)) = (scope, credential) else {
+        return Err(Error::Forbidden.into());
+    };
+    let file = bound
+        .service
+        .0
+        .serve(DownloadRequest {
+            operation: bound.download.operation,
+            scope: &scope,
+            path: &path,
+            query: &query,
+        })
+        .await?;
+    // A download is user activity; the guard above never renewed the session.
+    let client = app.db.get().await.map_err(Error::from)?;
+    app.security
+        .sessions
+        .activity(&**client, &credential)
+        .await?;
+    let delivery = file.headers();
+    let mut response = (StatusCode::OK, file.bytes).into_response();
+    for (name, value) in delivery {
+        // `FileBody::headers` cleans every value; an unrepresentable one is a
+        // host fault, not a reason to send the file under default headers.
+        let value = HeaderValue::from_str(&value).map_err(|_| Error::Internal)?;
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(name), value);
+    }
     Ok(response)
 }
 
