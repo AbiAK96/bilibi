@@ -43,4 +43,8 @@ rustup default stable
 cargo fetch --locked
 cargo build -p bilibi-web --locked
 # Dependencies for the CI lint gate; check artifacts are separate from build ones.
-cargo clippy --workspace --all-targets --locked -- -D warnings
+# Claude Code cloud only snapshots a setup that finishes in about 5 minutes, and the
+# workspace clippy run would push it over, so there the task runs clippy itself.
+if [[ ${CLAUDE_CODE_REMOTE:-} != true ]]; then
+    cargo clippy --workspace --all-targets --locked -- -D warnings
+fi
