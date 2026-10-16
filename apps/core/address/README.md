@@ -83,7 +83,8 @@ Any missing step is `None`, never an error. Base Locale does not query Core:
 the service factory binds `bootstrap::Source` as Locale's `BootstrapSource`
 (K15), so every `Locales::resolve(.., None)` infers from these facts until a
 global locale is stored; `adopt_inferred` persists them once under operator
-proof (K17 owns that setup step).
+proof; the shell does so on the first operator page that finds these facts
+(`adopt_installation_locale` in `apps/web/src/shell.rs`).
 
 ## Pages and owner panels (K12)
 

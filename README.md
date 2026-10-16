@@ -64,7 +64,10 @@ installed production seeds, then provisions the platform operator once: tenant
 development sample data (two departments) is added in the same run. That is
 everything a fresh install contains. The bootstrap runs once (its
 `user_bootstrap` receipt): re-running preserves the account, its password and
-its roles, so a revoked grant stays revoked. A database that already holds accounts or a platform
+its roles, so a revoked grant stays revoked. Once per receipt the
+administrator also gets an agent Person affiliated with that company, which is
+how it signs in under it (`bilibi_user::bootstrap`); a database bootstrapped
+before that step gets it on its next seed, and a later unlink stands. A database that already holds accounts or a platform
 operator without that administrator is refused rather than promoted; the
 start-up form, `seed --at-startup`, reports the refusal and carries on.
 `seed-production` runs only the production seeds.

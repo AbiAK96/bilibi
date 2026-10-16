@@ -120,6 +120,28 @@ nor a second company. Both are deployment writes recorded as one retained
 through Tenancy's `admin::provision_tenant` / `provision_platform_operator`
 seams. Ids come from PostgreSQL.
 
+## Platform-operator setup and dashboard panels (K17)
+
+`/setup/platform-operator` (`src/web/setup.rs`, Bilimbi
+`PlatformOperatorSetupLive`) is the signed-in counterpart of
+`platform-provision`: an operator page (`OperatorCapability(admin.company.update)`,
+so another tenant gets the host's refusal rather than Bilimbi's redirect) that
+designates a live company of the operator tenant, or creates one, as its
+primary company. `CompanyService::designate_operator_company` and
+`create_operator_company` prove the operator again on their transaction; the
+create commits the company and the assignment together. Once the operator
+stands on a company the page sends the reader there. The shell's status bar
+links here as "Operator company not set" while the operator tenant has no
+primary company.
+
+`src/web/dashboard.rs` draws the `dashboard.companies` widget
+(`base-dashboard-company-stats`: total, active, the current company's code)
+and the `dashboard.company` section (`current-company`: name, code, status and
+Open company). The current company is the one the account signs in under
+through its affiliation, else the tenant's first live company. Neither needs a
+capability to read, as in Bilimbi; the links show only to a reader holding
+`admin.company.list` / `admin.company.view`.
+
 ## Runtime inspection
 
 Migrate a disposable database, then run

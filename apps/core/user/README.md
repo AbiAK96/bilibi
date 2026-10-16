@@ -279,6 +279,20 @@ statement over `users` and proves the embed's capability again.
   by `admin.user.list` and read once per refresh period; without the
   capability they show an em dash and read nothing.
 
+## Bootstrap administrator (`src/bootstrap.rs`)
+
+The development seed's one-time `user_bootstrap` receipt names the platform
+administrator and the operator company. `settle_bootstrap_affiliation` then
+binds that account to the company the way every account names one: an agent
+Person under the account's name, an affiliation with the company and
+`link_affiliation_in` (the transaction-level form of `link_affiliation`), all
+on one audited transaction as the administrator. `affiliation_settled_at`
+marks the receipt settled, also when the account already named a Person, and
+a settled receipt is never revisited, so a later unlink or retirement stands.
+A refusal (the administrator lost the capability, the company is archived)
+leaves it unsettled and the seed says why. Linking ends the account's open
+sessions, as any company change does.
+
 ## Audit
 
 Credential writes are audited as kind `user` with marker values

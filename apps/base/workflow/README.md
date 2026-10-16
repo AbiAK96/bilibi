@@ -409,7 +409,7 @@ position takes a process run ID. Lifecycle commands then take a step key,
 signal name or reason; `complete` also takes an optional outcome.
 `init` first marks tenant 1 as the platform operator in that disposable
 database, because `Engine::initialize` requires the platform capability
-`admin.workflow.definition.manage`; production operator bootstrap is K17.
+`admin.workflow.definition.manage`; production marks the operator through `bilibi-web platform-provision` or `seed`.
 Other commands: `show`, `initial`, `comment`, `adopt`, `guard-deny`,
 `action-fail`, `bad-persist` (persist wrote the wrong status), `stale`
 (expected version mismatch), `outer-fail` (owner facade write, then a failing
