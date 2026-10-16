@@ -2,6 +2,7 @@
 mod account_ui;
 pub mod accounts;
 mod appearance;
+pub mod bootstrap;
 pub mod contributions;
 pub mod database_queries;
 mod directory;
@@ -53,6 +54,10 @@ pub const IDENTITY_MIGRATION: (&str, &str) = (
 pub const IMPERSONATION_MIGRATION: (&str, &str) = (
     "core-user-009-impersonation",
     include_str!("../migrations/009-impersonation.sql"),
+);
+pub const BOOTSTRAP_AFFILIATION_MIGRATION: (&str, &str) = (
+    "core-user-010-bootstrap-affiliation",
+    include_str!("../migrations/010-bootstrap-affiliation.sql"),
 );
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
@@ -143,7 +148,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {

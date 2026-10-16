@@ -416,6 +416,25 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context("user.link_affiliation"))
             .await?;
+        let (links, changed) = self
+            .link_affiliation_in(&mut tx, scope, user, affiliation)
+            .await?;
+        if changed {
+            tx.commit().await?;
+        } else {
+            tx.rollback().await?;
+        }
+        Ok(links)
+    }
+    /// [`Self::link_affiliation`] on the caller's mutation transaction, which
+    /// the caller commits with its own writes; `true` when the links changed.
+    pub(crate) async fn link_affiliation_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        user: i64,
+        affiliation: AffiliationId,
+    ) -> std::result::Result<(AccountLinks, bool), LinkError> {
         let scope = self.fresh(tx.sql(), scope).await?;
         bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
         let account = read_account(tx.sql(), &scope, user, false)
@@ -439,7 +458,7 @@ impl UserService {
         let proven = {
             let proof = self
                 .affiliations
-                .lock_for_account_binding(&tx, &scope, affiliation)
+                .lock_for_account_binding(tx, &scope, affiliation)
                 .await
                 .map_err(|error| match error {
                     Error::NotFound => LinkError::NotFound,
@@ -462,12 +481,10 @@ impl UserService {
             organisation: Some(organisation),
         };
         if account.links == links {
-            tx.rollback().await?;
-            return Ok(links);
+            return Ok((links, false));
         }
-        let links = save_links(self, &mut tx, &account, links).await?;
-        tx.commit().await?;
-        Ok(links)
+        let links = save_links(self, tx, &account, links).await?;
+        Ok((links, true))
     }
     /// Removes the account's Person and affiliation links. The current company
     /// must be writable: an archived company's account stays frozen rather than
