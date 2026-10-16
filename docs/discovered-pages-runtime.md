@@ -23,6 +23,29 @@ contributions in a separate fixture executable so production has no fixture rout
 | Live framing | Sort and wait for refresh inside the Company frame | Framed markup stays chromeless; typed URL state changes normally. |
 | Forbidden mount | Connect an authorized socket, revoke companies.view, then send its mount | `Access denied`, `clear: true`, socket closes; no rows arrive. |
 
+## Download routes
+
+`apps/web/examples/download-reference.rs` serves the cases below on an isolated
+database with the walkthrough fixture (`manager@example.test` holds
+`reference.exports.view` through the fixture manager role; `viewer@example.test`
+does not).
+
+| Case | Exercise | Expected observation |
+| --- | --- | --- |
+| Attachment | Manager GETs `/reference/exports/1/csv` | 200, `text/csv; charset=utf-8`, `content-disposition: attachment; filename="…"; filename*=UTF-8''…`, `cache-control: private, no-store`, `nosniff`, `default-src 'none'; sandbox; frame-ancestors 'self'`. |
+| Inline | Manager GETs `/reference/exports/1/print` | 200 `text/html` shown in the tab; the page's inline script is blocked by `default-src 'none'`. |
+| Encoded name | GET return 3, whose name carries `é`, an em dash and quotes | ASCII fallback replaces them; `filename*` percent-encodes the UTF-8 name. |
+| Anonymous | GET a download with no session | 303 to sign in; the owner is not called. |
+| No capability | Viewer GETs a download | 403; the owner is not called. |
+| Revoked grant | Manager downloads, then a direct deny (or the role's unassignment) is written, then the same session GETs again | 200, then 403 without a new sign-in and with no owner line in the server log; lifting the deny restores 200. |
+| Missing file | Manager GETs `/reference/exports/9/csv` | Bare 404, no missing-record redirect. |
+| Overlap | Contribute a download at a page's path, or at `/live` | Startup fails naming both paths. |
+
+The D4 evidence run on 2026-10-16 (database `bilibi_d4_runtime`, origin
+`http://localhost:4344`) recorded every case above with `curl` and the browser;
+the probe script, its output, the server log and the screenshots are in
+`/home/kiat/repo/kunchenguid/firstmate/data/bilibi-dom-d4/evidence/`.
+
 The F4 evidence run on 2026-10-14 used the existing Companies fixture, a separate
 `extensions/dispatch_reference` runtime executable, and the disposable database
 `bilibi_f4_runtime`. Compiler, Clippy, discovery and format checks passed.

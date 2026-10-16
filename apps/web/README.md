@@ -37,6 +37,31 @@ CSP permits same-origin frames. The frame flag grants no authority. The legacy
 socket carries a cosmetic framing hint so mounts and refreshes keep that layout;
 it rechecks route access and framing eligibility on mount/events/refreshes.
 
+# Downloads
+
+A route that answers with a file (Bilimbi's download and export controllers:
+a source document, a return's CSV, a stored PDF, the auditor ZIP) is a
+`Contribution::new(DOWNLOADS, …, &Download { path, service, operation, access })`
+from `bilibi_module_registry::contributions`, never a `Route` whose page writes
+bytes, and never a host route of its own (that is `media.rs`'s signed stream).
+The service resolves to `bilibi_ui::download::DownloadService<Scope, Error>`
+wrapping the owner's `Download`, whose `serve` returns a `FileBody` (bytes, the
+media type the owner knows, the file's own name, `Attachment` or `Inline`).
+`apps/web/examples/download-reference.rs` is the running specimen.
+
+Downloads are GET only, share the page routes' path rules and pattern space
+(an intersecting page or host path fails boot), and are never `Public`: access
+is proven on every request exactly as for a page, so an anonymous browser is
+sent to sign in and a revoked grant refuses the next click with 403, and the
+owner's facade is expected to authorize once more. A successful download
+counts as session activity. The response headers come from
+`FileBody::headers` alone: the content type (a `text/*` type gets UTF-8), an
+RFC 6266 `content-disposition` with an ASCII fallback and `filename*`,
+`cache-control: private, no-store`, `nosniff`, and a policy that forbids
+scripts (sandboxing an attachment) and foreign framing. A refused or missing
+file is a bare 403 or 404 (the error layer renders the page for a browser);
+no missing-record redirect or shell applies.
+
 `PageBody.live` enables the browser socket adapter for owners implementing
 `Page::mount` and `LiveState`. See `docs/live-pages.md` for module-owned state,
 targeted panels, URL changes and guarded subscriptions. HTTP-only adapters should
