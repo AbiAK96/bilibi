@@ -451,6 +451,7 @@ dependencies = [
  "bilibi-artifacts",
  "bilibi-audit",
  "bilibi-authz",
+ "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-geonames",

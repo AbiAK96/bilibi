@@ -364,3 +364,58 @@ impl From<AssignmentError> for WriteError {
         }
     }
 }
+
+/// The platform-operator setup screen's two commands (Bilimbi
+/// `PlatformOperatorSetupLive`): each proves the scope's tenant is the
+/// platform operator on its own transaction, so the route guard is not the
+/// only gate, and refuses once the operator stands on a company.
+impl crate::CompanyService {
+    /// Designates one live company of the operator tenant as its primary
+    /// company (`assign_primary_company/2`); never a transfer.
+    pub async fn designate_operator_company(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+    ) -> std::result::Result<AssignmentStatus, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.platform_operator.designate"),
+            )
+            .await?;
+        bilibi_tenancy::prove_operator(tx.sql(), scope).await?;
+        crate::organisation::authorize_target(tx.sql(), scope, company_id, crate::UPDATE).await?;
+        let status = assign(&mut tx, scope.tenant(), company_id, false).await?;
+        tx.commit().await?;
+        Ok(status)
+    }
+    /// Creates the operator tenant's primary company (`create_company/3`
+    /// with `is_primary: true`): the company and the assignment commit
+    /// together, or neither does.
+    pub async fn create_operator_company(
+        &self,
+        scope: &Scope,
+        new: &NewCompany,
+    ) -> std::result::Result<crate::CreateOutcome, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.platform_operator.create"),
+            )
+            .await?;
+        bilibi_tenancy::prove_operator(tx.sql(), scope).await?;
+        let outcome = crate::organisation::create(&mut tx, scope, new).await?;
+        match &outcome {
+            crate::CreateOutcome::Created(company) => {
+                assign(&mut tx, scope.tenant(), company.id, false).await?;
+                tx.commit().await?;
+            }
+            crate::CreateOutcome::Refused(_) => tx.rollback().await?,
+        }
+        Ok(outcome)
+    }
+}

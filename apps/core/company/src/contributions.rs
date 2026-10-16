@@ -199,6 +199,15 @@ inventory::submit! {
     })
 }
 
+// Bilimbi gates the setup screen on `admin.company.update` and turns any
+// other tenant away in its mount; here the route is an operator page, so the
+// host refuses it before the page runs.
+inventory::submit! {
+    Contribution::new(ROUTES, "core/company.platform_operator_setup", provenance!(), &Route {
+        method: Method::Get, path: "/setup/platform-operator", service: "core/company.pages", operation: "platform_operator_setup", access: Access::OperatorCapability(UPDATE), framed: true,
+    })
+}
+
 // Development sample data (Bilimbi's `priv/dev_seed.exs`): the Engineering
 // and Operations department types, and one department of each on the
 // platform operator's primary company. Only `bilibi-web seed` runs it, on the
@@ -210,3 +219,48 @@ inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SE
 INSERT INTO company_departments(tenant_id,company_id,department_type_id,status)
 SELECT p.tenant_id,p.company_id,t.id,'active' FROM platform_operator o JOIN tenant_primary_companies p ON p.tenant_id=o.tenant_id CROSS JOIN company_department_types t WHERE t.code IN ('ENG','OPS') ON CONFLICT (company_id,department_type_id) DO NOTHING"),
 }) }
+
+// The dashboard entries (Bilimbi `dashboard.companies` and
+// `dashboard.company`, `crate::web::dashboard`). Neither requires a
+// capability, as Bilimbi's do not; each panel offers its link only to a
+// reader the linked page admits.
+macro_rules! dashboard_embed {
+    ($id:literal, $slot:literal, $operation:literal) => {
+        inventory::submit! {
+            Contribution::new(bilibi_module_registry::contributions::EMBEDS, $id, provenance!(), &bilibi_module_registry::contributions::Embed {
+                slot: $slot, context: bilibi_module_registry::contributions::EmbedContext::Dashboard, service: "core/company.pages", operation: $operation, access: Access::SignedIn,
+            })
+        }
+    };
+}
+dashboard_embed!(
+    "company.dashboard-companies",
+    "dashboard.companies",
+    "dashboard_companies"
+);
+dashboard_embed!(
+    "company.dashboard-company",
+    "dashboard.company",
+    "dashboard_company"
+);
+bilibi_dashboard::contribute!(
+    "core/company",
+    bilibi_dashboard::Widget::new(
+        "base-dashboard-company-stats",
+        "Companies",
+        "company.dashboard-companies"
+    )
+    .order(10)
+    .refresh(60_000)
+);
+bilibi_dashboard::contribute!(
+    "core/company",
+    bilibi_dashboard::Widget::new(
+        "current-company",
+        "Your Company",
+        "company.dashboard-company"
+    )
+    .section()
+    .order(10)
+    .refresh(60_000)
+);

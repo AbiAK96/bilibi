@@ -1,10 +1,14 @@
 //! Company owns its page state, Grid arrangement and all business events:
 //! the list/create/detail pages here, the two reference catalogs in
 //! `reference_types`, a company's departments in `departments` and the
-//! relationship-role catalog, relationship page and panel in `relationships`.
+//! relationship-role catalog, relationship page and panel in `relationships`
+//! the platform-operator setup page in `setup` and the two dashboard entries
+//! in `dashboard`.
+mod dashboard;
 mod departments;
 mod reference_types;
 pub mod relationships;
+mod setup;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
 use bilibi_database::{Db, Error, Result};
@@ -124,6 +128,13 @@ impl Pages {
                 self.company.clone(),
                 &reference_types::DEPARTMENT_TYPES,
             )?),
+            "platform_operator_setup" => {
+                Box::new(setup::Setup::new(self.db.clone(), self.company.clone()))
+            }
+            "dashboard_companies" => Box::new(dashboard::Stats::new(self.db.clone(), request)?),
+            "dashboard_company" => {
+                Box::new(dashboard::CurrentCompany::new(self.db.clone(), request)?)
+            }
             "departments" => Box::new(departments::Departments::new(
                 self.db.clone(),
                 self.company.clone(),
@@ -180,6 +191,7 @@ impl Page<Scope, Error> for Pages {
             "legal_entity_types" => "Legal Entity Types",
             "department_types" => "Department Types",
             "departments" => "Departments",
+            "platform_operator_setup" => "Set Up Platform Operator",
             _ => "Companies",
         })
     }

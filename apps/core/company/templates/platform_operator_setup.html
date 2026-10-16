@@ -1,0 +1,27 @@
+{#- Set Up Platform Operator (Bilimbi `PlatformOperatorSetupLive` render): the
+    header, controls and buttons are rendered by src/web/setup.rs through the
+    shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="platform-operator-setup", variant=bilibi_ui::PageVariant::Form) %}
+{{ header|safe }}
+<p id="platform-operator-notice" class="rounded-lg border border-line bg-surface-sunken px-4 py-3 text-sm text-ink-muted">The platform operator is the party running this deployment. Its company is recorded as the operator tenant’s primary company; numeric tenant and company IDs have no special meaning.</p>
+{% if select_mode && has_companies %}<section id="platform-operator-select" class="rounded-xl border border-line bg-surface px-6 py-5">
+<h2 class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Select Existing Company</h2>
+<p class="mt-2 text-xs text-ink-muted">Only companies already belonging to the platform-operator tenant can be selected.</p>
+<form id="platform-operator-designate-form" data-event="designate" class="mt-4 max-w-md space-y-4">{{ company|safe }}{{ designate|safe }}</form>
+<p class="mt-4 text-xs text-ink-muted">Or <button id="platform-operator-switch-create" type="button" data-event="set_mode" data-value-mode="create" class="text-action hover:underline">create a new company</button></p>
+</section>{% endif %}
+{% if !select_mode || !has_companies %}<section id="platform-operator-create" class="rounded-xl border border-line bg-surface px-6 py-5">
+<h2 class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Create Primary Company</h2>
+<form id="platform-operator-create-form" data-event="create" class="mt-4 space-y-4">
+<div class="grid gap-x-4 sm:grid-cols-2">{% for field in identity %}{{ field|safe }}{% endfor %}</div>
+<div class="grid gap-x-4 sm:grid-cols-3">{% for field in contacts %}{{ field|safe }}{% endfor %}</div>
+{{ save|safe }}
+</form>
+{% if has_companies %}<p class="mt-4 text-xs text-ink-muted">Or <button id="platform-operator-switch-select" type="button" data-event="set_mode" data-value-mode="select" class="text-action hover:underline">select an existing company</button></p>{% endif %}
+</section>{% endif %}
+{% endcall %}
+</div>
