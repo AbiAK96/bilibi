@@ -27,9 +27,36 @@ macro_rules! setting {
         })) }
     };
 }
-setting!("artifacts.storage_root",String,json!(""),false,None,None,"Private document directory","Existing absolute 0700 directory, outside public/static/assets. Old documents keep their original root.");
-setting!("artifacts.retention_days",Integer,Value::Null,true,Some(1.0),Some(36500.0),"Document retention days","Required before publication; expiry is captured at reservation. Records-grade documents carry a retain-until instead.");
-setting!("artifacts.max_bytes",Integer,json!(10_485_760),false,Some(1.0),Some(536_870_912.0),"Maximum document bytes","Maximum buffered upload/generated document size, up to 512 MiB. Owners validate content before storage.");
+setting!(
+    "artifacts.storage_root",
+    String,
+    json!(""),
+    false,
+    None,
+    None,
+    "Private document directory",
+    "Existing absolute directory with permissions 0700, outside public/static/assets directories."
+);
+setting!(
+    "artifacts.retention_days",
+    Integer,
+    Value::Null,
+    true,
+    Some(1.0),
+    Some(36500.0),
+    "Document retention days",
+    "Required before storing documents. Applies to new documents; expiry is fixed when stored."
+);
+setting!(
+    "artifacts.max_bytes",
+    Integer,
+    json!(10_485_760),
+    false,
+    Some(1.0),
+    Some(536_870_912.0),
+    "Maximum document bytes",
+    "Maximum size of an uploaded or generated document."
+);
 setting!(
     "artifacts.purge_batch_size",
     Integer,
@@ -60,8 +87,38 @@ setting!(
     "Document purge attempts before hold",
     "Failed or refused purges after which a document is held for an operator to retry or resolve."
 );
-setting!("pdf.chromium.binary",String,json!("chromium"),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(|name| !name.is_empty() && name.len() <= 1024 && (!name.contains('/') || name.starts_with('/'))), message: "must be an executable name on PATH or an absolute path" }),"PDF Chromium executable","Sandbox-capable Chromium or Chrome for HTML printing. A bare name is searched on PATH. Never run it with its sandbox disabled.");
-setting!("pdf.qpdf.binary",String,json!("qpdf"),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(|name| !name.is_empty() && name.len() <= 1024 && (!name.contains('/') || name.starts_with('/'))), message: "must be an executable name on PATH or an absolute path" }),"PDF qpdf executable","qpdf 10.6 or newer, used to protect PDFs with AES-256. A bare name is searched on PATH. Without it password-protected rendering is refused, never stored unprotected.");
+setting!(
+    "pdf.chromium.binary",
+    String,
+    json!("chromium"),
+    false,
+    None,
+    None,
+    Some(Validator {
+        accepts: |value| value.as_str().is_some_and(|name| !name.is_empty()
+            && name.len() <= 1024
+            && (!name.contains('/') || name.starts_with('/'))),
+        message: "must be an executable name on PATH or an absolute path"
+    }),
+    "PDF Chromium executable",
+    "Sandboxed Chromium executable for HTML printing."
+);
+setting!(
+    "pdf.qpdf.binary",
+    String,
+    json!("qpdf"),
+    false,
+    None,
+    None,
+    Some(Validator {
+        accepts: |value| value.as_str().is_some_and(|name| !name.is_empty()
+            && name.len() <= 1024
+            && (!name.contains('/') || name.starts_with('/'))),
+        message: "must be an executable name on PATH or an absolute path"
+    }),
+    "PDF qpdf executable",
+    "qpdf 10.6 or newer for AES-256 protection."
+);
 setting!(
     "pdf.qpdf.timeout_seconds",
     Integer,
@@ -69,8 +126,8 @@ setting!(
     false,
     Some(1.0),
     Some(600.0),
-    "PDF protection timeout (seconds)",
-    "Maximum time one qpdf run may take; the tool is killed at the deadline."
+    "PDF encryption timeout (seconds)",
+    "Maximum runtime of one qpdf process."
 );
 setting!(
     "pdf.render_timeout_seconds",
@@ -80,9 +137,9 @@ setting!(
     Some(1.0),
     Some(600.0),
     "PDF render timeout (seconds)",
-    "Maximum time one Chromium render may run; the browser is killed at the deadline."
+    "Maximum runtime of one Chromium render."
 );
-setting!("pdf.render_origin",String,json!(""),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(valid_origin), message: "must be empty or an http(s) origin with a host name or IPv4 address, no path" }),"PDF render origin","Application origin the browser can reach, such as http://127.0.0.1:3000. Signed render URLs only work on the node that issued them. Empty disables signed-URL printing; inline printing needs no origin.");
+setting!("pdf.render_origin",String,json!(""),false,None,None,Some(Validator { accepts: |value| value.as_str().is_some_and(valid_origin), message: "must be empty or an http(s) origin with a host name or IPv4 address, no path" }),"PDF render origin","Application origin reachable from Chromium; signed render requests must reach the issuing node.");
 setting!(
     "pdf.signed_url_ttl_seconds",
     Integer,
@@ -91,7 +148,7 @@ setting!(
     Some(1.0),
     Some(600.0),
     "PDF render token lifetime (seconds)",
-    "How long a single-use signed render URL stays valid."
+    "Expiry of single-use signed render URLs."
 );
 setting!(
     "pdf.max_render_tokens",
@@ -101,7 +158,7 @@ setting!(
     Some(1.0),
     Some(10000.0),
     "Maximum pending PDF render tokens",
-    "Maximum signed render requests held in memory on each node."
+    "Maximum sensitive render requests held in memory on each node."
 );
 setting!(
     "pdf.paper.format",
@@ -115,7 +172,7 @@ setting!(
         message: "must be A4, A3, A5, Letter, Legal or Tabloid"
     }),
     "PDF paper format",
-    "Paper size for HTML PDFs: A4, A3, A5, Letter, Legal or Tabloid."
+    "A4, A3, A5, Letter, Legal or Tabloid."
 );
 setting!(
     "pdf.paper.print_background",

@@ -71,7 +71,7 @@ setting!(
     0.0,
     60_000.0,
     "Minimum duration",
-    "Ignore observations faster than this many milliseconds."
+    "Ignore faster observations."
 );
 setting!(
     SAMPLE_RATE,
@@ -89,7 +89,7 @@ setting!(
     1.0,
     3_600_000.0,
     "Slow threshold",
-    "Latency used by regression diagnostics."
+    "Threshold used by regression diagnostics."
 );
 setting!(
     KEEP_DAYS,

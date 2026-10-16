@@ -106,5 +106,5 @@ webhook_setting!(
     15_000,
     120_000.0,
     "Webhook read timeout",
-    "Maximum wait in milliseconds for the body."
+    "Maximum wait in milliseconds for each body read."
 );

@@ -50,7 +50,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_disk", pro
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.max_bytes", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(10_485_760), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(536_870_912.0), validator: None,
-    editor: Some(Editor { group: "Media", label: "Maximum upload bytes", help: "Maximum size of new media uploads and attachments, up to 512 MiB.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Media", label: "Maximum upload bytes", help: "Maximum size of new media uploads and attachments.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_allowed_types", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Array, scopes: GLOBAL, default: || Value::from(ALLOWED.to_vec()), nullable: false, encrypted: false, minimum: None, maximum: None,
