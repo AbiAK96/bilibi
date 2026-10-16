@@ -224,12 +224,20 @@ if (await page.eval(() => !!document.querySelector('#login-email'))) {{
     }}
     document.querySelector('#login-submit').click();
   }});
-  await page.eval(async () => {{
-    const deadline = Date.now() + 15000;
-    while (location.pathname === '/' && Date.now() < deadline)
-      await new Promise(resolve => setTimeout(resolve, 100));
-    if (location.pathname === '/') throw new Error('Login did not finish');
-  }});
+  // Poll from the driver: the real session form navigates and destroys the
+  // old page's execution context while the durable cookie is being set.
+  const deadline = Date.now() + 15000;
+  let authenticated = false;
+  while (Date.now() < deadline) {{
+    try {{
+      authenticated = await page.eval(() => location.pathname !== '/');
+      if (authenticated) break;
+    }} catch (error) {{
+      if (!String(error).includes('context was destroyed')) throw error;
+    }}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }}
+  if (!authenticated) throw new Error('Login did not finish');
 }}
 console.log(await page.snapshot());
 """
@@ -244,26 +252,41 @@ console.log(await page.snapshot());
 const response = await page.open({json.dumps(args.base_url + path)});
 await page.eval(async () => {{
   await document.fonts.ready;
+}});
+if (response.status < 400) await page.eval(async () => {{
   const deadline = Date.now() + 15000;
   while (!document.querySelector('.phx-connected') && Date.now() < deadline)
     await new Promise(resolve => setTimeout(resolve, 100));
-  if (!document.querySelector('.phx-connected')) throw new Error('LiveView did not connect');
 }});
 console.log(JSON.stringify({{response, location: await page.eval(() => location.pathname),
   title: await page.eval(() => document.title),
+  connected: await page.eval(() => !!document.querySelector('.phx-connected')),
+  theme: await page.eval(() => document.documentElement.dataset.theme ||
+    (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')),
   timezone: await page.eval(() => Intl.DateTimeFormat().resolvedOptions().timeZone)}}));
 console.log(await page.snapshot());
 """
         snapshot = axi("run", script=script)
         (screens / f"{filename}.txt").write_text(snapshot)
         # Do not certify an auth redirect or an error page as a successful capture.
-        if f'"location":"{path}"' not in snapshot:
+        observed = json.loads(snapshot.splitlines()[0])
+        if observed["location"] != path:
             raise SystemExit(f"Route redirected unexpectedly: {path}")
+        status = observed["response"]["status"]
+        if not isinstance(status, int):
+            raise SystemExit(f"Browser did not report the HTTP status for {path}")
+        outcome = "reference-error" if status >= 400 or not observed["connected"] else "rendered"
+        if outcome == "reference-error" and not args.record_reference_errors:
+            raise SystemExit(f"Reference returned {observed['response']['status']}: {path}; "
+                             "use --record-reference-errors to preserve explicit defect evidence")
+        if observed["timezone"] != "Asia/Kuala_Lumpur" or observed["theme"] != args.theme:
+            raise SystemExit(f"Unexpected browser timezone/theme: {observed}")
         axi("screenshot", str(screens / f"{filename}.png"), "--full-page")
-        rows.append({**route, "screenshot": f"screens/{args.theme}/{filename}.png"})
+        rows.append({**route, "outcome": outcome, "observed": observed,
+                     "screenshot": f"screens/{args.theme}/{filename}.png"})
         write_json(screens / "manifest.json", {"captured_at": datetime.now(timezone.utc).isoformat(),
                    "theme": args.theme, "viewport": "1440x1000@1", "routes": rows})
-        print(f"Captured {len(rows)}/44: {route['path']}", flush=True)
+        print(f"Captured {len(rows)}/44 ({outcome}): {route['path']}", flush=True)
 
 
 def main():
@@ -275,9 +298,11 @@ def main():
     parser.add_argument("--base-url", default="https://127.0.0.1:41461")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
     parser.add_argument("--session", default=f"bilibi-dom-r1-{int(datetime.now().timestamp())}")
+    parser.add_argument("--record-reference-errors", action="store_true",
+                        help="Capture HTTP errors as explicit defect evidence, never as successful UI")
     args = parser.parse_args()
     args.evidence = args.evidence.resolve()
-    if args.evidence.is_relative_to(HERE.parents[1]):
+    if (HERE.parents[1] / "Cargo.toml").is_file() and args.evidence.is_relative_to(HERE.parents[1]):
         parser.error("Evidence must be outside the Bilibi repository")
     if args.action == "export" and args.projects is None:
         parser.error("export requires --projects")

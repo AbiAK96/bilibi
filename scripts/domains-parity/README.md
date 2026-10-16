@@ -58,8 +58,8 @@ light theme, and Asia/Kuala_Lumpur timezone. It signs in through the real form,
 requires a connected LiveView, and saves an accessibility snapshot beside each
 full-page screenshot. Use `--theme dark` for another capture set. The inventory
 contains all 44 live routes and five controllers; controller downloads belong to
-later populated proofs. Detail routes with no fixture use the valid but absent
-ID `2147483647` and are explicitly marked `missing-record`, so a refusal capture
+later populated proofs. The 34 non-parameterized routes retain empty domain data. The ten detail
+routes with no fixture use the valid but absent ID `2147483647` and are explicitly marked `missing-record`, so a refusal capture
 cannot be confused with a populated detail page.
 
 ## Initial composition obstacle
@@ -86,3 +86,30 @@ The action writes `reference-compatibility.patch` and `reference-repair.json`,
 including before/after hashes. Never apply this repair to the source domain
 repositories. The duplicate registration is a real Bilimbi composition defect
 to file separately; it is not a change to the Rust port.
+
+
+## Browser driver compatibility
+
+Each capture gets a fresh named `CHROME_DEVTOOLS_AXI_SESSION` by default and
+explicitly selects a tab. Set `CHROME_DEVTOOLS_AXI_PORT` to a free task port if
+the CLI's hashed session port collides with another worker; do not stop that
+worker's bridge. Reusing this task's signed-in session for another theme is
+supported with `--session`.
+
+The installed CLI's selector-based `page.fill`, `page.click`, and `page.wait`
+helpers pass evaluated expressions where its MCP backend expects a function.
+The harness uses the working `page.eval` API to send normal input/change/click
+events and waits for actual LiveView connection. Login navigation is polled
+from the driver because replacing the document destroys its old execution
+context. This uses the real sign-in flow and durable cookie throughout.
+
+
+## Reference failures
+
+By default capture refuses an HTTP error. For an unmodified reference defect,
+`--record-reference-errors` keeps the screenshot and accessibility snapshot,
+records `outcome: reference-error`, HTTP status and disconnected state in the
+manifest, and continues the inventory. A reference error is never certified as
+a rendered LiveView. The missing-account Matching page in the pinned baseline
+raises `KeyError: :lines`; preserve and report that separately rather than
+changing the baseline UI.
