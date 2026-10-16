@@ -220,12 +220,12 @@ impl LiveState<Scope, Error> for Create {
             if let LiveInput::Event(value) = request.input {
                 match event(value)? {
                     "validate" => self.take(value).await?,
-                    "save" if !self.created => {
+                    "create" if !self.created => {
                         self.flash.clear();
                         self.take(value).await?;
                         self.save(request.scope).await?;
                     }
-                    "save" => {}
+                    "create" => {}
                     "clear-flash" => self.flash.dismiss(value.get("key").and_then(Value::as_str)),
                     _ => return Err(Error::Invalid),
                 }

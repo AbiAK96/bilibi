@@ -7,7 +7,7 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="address-create-page", variant=bilibi_ui::PageVariant::Form) %}
 {{ header|safe }}
-<form id="address-form" data-event="validate" data-change data-submit-event="save" class="space-y-5" novalidate>
+<form id="address-form" data-event="validate" data-change data-submit-event="create" class="space-y-5" novalidate>
 <section class="rounded-xl border border-line bg-surface px-6 py-5" aria-labelledby="address-contact-heading"><h2 id="address-contact-heading" class="mb-4 text-sm font-semibold text-ink">Address details</h2>
 <div class="grid gap-x-4 sm:grid-cols-2">{% for field in contact %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}{% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}</div>
 {% for field in lines %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}

@@ -4,5 +4,5 @@
 {{ header }}
 {{ identity }}
 {{ contacts }}
-{% for panel in panels %}<div id="{{ panel.id }}" data-live-ignore></div>{% endfor %}
+{% for panel in panels %}<div id="{{ panel.id }}-slot" data-live-ignore><div id="{{ panel.id }}"></div></div>{% endfor %}
 {{ dialog }}
