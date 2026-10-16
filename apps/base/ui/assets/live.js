@@ -53,8 +53,6 @@
   // A page shown in a workspace tile shares the tab's history with the
   // workspace around it (see "Framed pages" below).
   const framed = window.parent !== window;
-  // The path the mounted page was rendered for, to tell Back within a page
-  // from Back to another.
 
   const params = () => Object.fromEntries(new URLSearchParams(location.search));
   const mountIntent = () => ({type: 'mount', path: location.pathname, params: params()});
@@ -626,9 +624,23 @@
   // answers with is pushed. A different page is a navigation instead.
   document.addEventListener('bilibi:patch', (event) => {
     const {path, params: values} = event.detail || {};
-    if (path !== livePath || !document.querySelector('#app[data-live]')) return;
+    if (path !== location.pathname || !document.querySelector('#app[data-live]')) return;
     event.preventDefault();
     enqueue({type: 'params', params: values || {}}, {loading: true});
+  });
+
+  // A link marked `data-patch` (a tab of the page's own views, Bilimbi's
+  // `patch=`) is that patch on a plain click; a modified click opens it as
+  // the link it is.
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target instanceof Element && event.target.closest('a[data-patch][href]');
+    if (!link) return;
+    const url = new URL(link.href, location.href);
+    if (url.origin !== location.origin) return;
+    const patch = new CustomEvent('bilibi:patch', {cancelable: true,
+      detail: {path: url.pathname, params: Object.fromEntries(url.searchParams)}});
+    if (!document.dispatchEvent(patch)) event.preventDefault();
   });
 
   // Component adapters send module intent through this bounded transport entry

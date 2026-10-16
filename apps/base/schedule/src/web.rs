@@ -353,13 +353,6 @@ impl Board {
         let key = get("key").unwrap_or_default().to_owned();
         let schedule = self.core.schedule.clone();
         match get("type").ok_or(Error::Invalid)? {
-            "tab" => {
-                self.tab = TABS
-                    .iter()
-                    .find(|(id, _)| Some(*id) == get("tab"))
-                    .map(|(id, _)| *id)
-                    .ok_or(Error::Invalid)?
-            }
             "filter_tasks" => {
                 let posted = params::form_values(value, "task");
                 let mut mapped = HashMap::new();
@@ -559,9 +552,20 @@ impl Board {
                 StatusKind::Info => flash.info = message,
             }
         }
-        let tab_paths: Vec<(String, &str, &str)> = TABS
+        // Each tab is the current address with its own `tab`, as Bilimbi's
+        // `tab_path`, so a view can be linked and Back returns to it.
+        let tab_paths: Vec<(String, String, &str, &str)> = TABS
             .iter()
-            .map(|(id, label)| (format!("schedule-tab-{id}"), *id, *label))
+            .map(|(id, label)| {
+                let mut query = self.query();
+                query.insert("tab".into(), (*id).into());
+                (
+                    format!("schedule-tab-{id}"),
+                    params::address("/system/schedule", &query),
+                    *id,
+                    *label,
+                )
+            })
             .collect();
         let tabs = render(Tabs {
             id: "schedule-tabs",
@@ -569,9 +573,9 @@ impl Board {
             class: "mt-5",
             tabs: tab_paths
                 .iter()
-                .map(|(dom, id, label)| Tab {
+                .map(|(dom, href, id, label)| Tab {
                     id: dom,
-                    ..Tab::button("tab", id, label, self.tab == *id)
+                    ..Tab::patch(href, label, self.tab == *id)
                 })
                 .collect(),
         })?;

@@ -3,8 +3,9 @@
     stay on one line and what does not fit scrolls inside the strip: the strip's
     inline size ignores its labels (contain-inline-size), and data-hook="TabStrip"
     in assets/ui.js shows an edge control only while a tab sits outside it. A tab
-    with an href is a link; one without is a button that raises its event with
-    data-value-tab. Horizontal overflow makes the other axis auto in CSS, so
+    with an href is a link (data-patch: a live patch of its own page, read in
+    place by assets/live.js); one without is a button that raises its event
+    with data-value-tab. Horizontal overflow makes the other axis auto in CSS, so
     overflow-y is clipped: the tab underline overlaps the border by 1px. -#}
 {% import "components.html" as c %}
 
@@ -13,7 +14,7 @@
 <div id="{{ id }}-scroller" data-tab-scroller class="flex w-full min-w-0 max-w-full flex-nowrap gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-px-8 border-b border-line [scrollbar-width:thin]">
 {%- for tab in items -%}
 {%- if !tab.href.is_empty() -%}
-<a href="{{ tab.href }}"{% if !tab.id.is_empty() %} id="{{ tab.id }}"{% endif %} data-tab class="{{ tab.class() }}"{% if tab.current %} aria-current="page"{% endif %}>{{ tab.label|safe }}</a>
+<a href="{{ tab.href }}"{% if !tab.id.is_empty() %} id="{{ tab.id }}"{% endif %}{% if tab.patch %} data-patch{% endif %} data-tab class="{{ tab.class() }}"{% if tab.current %} aria-current="page"{% endif %}>{{ tab.label|safe }}</a>
 {%- else -%}
 <button type="button"{% if !tab.id.is_empty() %} id="{{ tab.id }}"{% endif %} data-tab class="{{ tab.class() }}"{% if tab.current %} aria-current="page"{% endif %}{% if !tab.event.is_empty() %} data-event="{{ tab.event }}"{% endif %}{% if !tab.value.is_empty() %} data-value-tab="{{ tab.value }}"{% endif %}>{{ tab.label|safe }}</button>
 {%- endif -%}

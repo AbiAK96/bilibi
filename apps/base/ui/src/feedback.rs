@@ -309,11 +309,14 @@ pub struct ConfirmDialog<'a> {
 }
 
 /// One tab. A tab with an `href` is a link; one without is a button that
-/// raises `event` with `value`.
+/// raises `event` with `value`. A `patch` link names its own page with other
+/// params (Bilimbi's `patch=`): live.js reads it in place as a params update
+/// and the address is pushed, so each tab is addressable and Back returns to it.
 #[derive(Clone, Debug, Default)]
 pub struct Tab<'a> {
     pub id: &'a str,
     pub href: &'a str,
+    pub patch: bool,
     pub current: bool,
     pub event: &'a str,
     pub value: &'a str,
@@ -327,6 +330,14 @@ impl<'a> Tab<'a> {
             current,
             label: Html::text(label),
             ..Self::default()
+        }
+    }
+
+    /// A link to this page's own address with the tab's params.
+    pub fn patch(href: &'a str, label: &str, current: bool) -> Self {
+        Self {
+            patch: true,
+            ..Self::link(href, label, current)
         }
     }
 
