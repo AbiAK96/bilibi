@@ -41,7 +41,7 @@ const FLASH_KEYS: [&str; 2] = [FLASH_RESET, FLASH_EXPIRED];
 /// an error flash, as Bilimbi's `put_flash` + `push_navigate` do:
 /// (flash key, record route, list route, message). A route not listed here
 /// answers its missing record with the 404 page.
-const MISSING_RECORDS: [(&str, &str, &str, &str); 2] = [
+const MISSING_RECORDS: [(&str, &str, &str, &str); 8] = [
     (
         "exchange-missing",
         "/system/api-exchanges/{id}",
@@ -53,6 +53,42 @@ const MISSING_RECORDS: [(&str, &str, &str, &str); 2] = [
         "/authz/roles/{id}",
         "/authz/roles",
         "That role does not exist in this tenant.",
+    ),
+    (
+        "company-missing",
+        "/companies/{id}",
+        "/companies",
+        "That company does not exist in this workspace.",
+    ),
+    (
+        "company-departments-missing",
+        "/companies/{id}/departments",
+        "/companies",
+        "Company not found.",
+    ),
+    (
+        "company-relationships-missing",
+        "/companies/{id}/relationships",
+        "/companies",
+        "Company not found.",
+    ),
+    (
+        "person-missing",
+        "/persons/{id}",
+        "/persons",
+        "Contact not found.",
+    ),
+    (
+        "user-missing",
+        "/users/{id}",
+        "/users",
+        "That user does not exist in this workspace.",
+    ),
+    (
+        "address-missing",
+        "/addresses/{id}",
+        "/addresses",
+        "Address not found.",
     ),
 ];
 
