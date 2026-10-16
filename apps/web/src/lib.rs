@@ -444,8 +444,10 @@ async fn upgrade(
     // nobody else (an impersonation switch moves the session underneath it).
     let identity = live::Identity::of(&app.security.guard(&token).await?);
     Ok(ws
-        .max_message_size(16 * 1024)
-        .max_frame_size(16 * 1024)
+        // A JSON intent is small; the limit leaves room for one upload chunk
+        // frame (bilibi_ui::upload::CHUNK_SIZE plus its eight-byte header).
+        .max_message_size(live::FRAME_LIMIT)
+        .max_frame_size(live::FRAME_LIMIT)
         .on_upgrade(move |socket| {
             live::run(
                 app,

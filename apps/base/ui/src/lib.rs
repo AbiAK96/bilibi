@@ -29,6 +29,7 @@ pub mod params;
 mod section;
 mod shell;
 mod specimen;
+pub mod upload;
 pub mod workspace;
 pub use shell::{
     navigation, navigation_unpinned, AppShell, DisplayPreferences, Framed, NavNode, ShellContext,
@@ -75,6 +76,10 @@ pub use lists::{
     ToolbarControl,
 };
 pub use specimen::ComponentsSpecimen;
+pub use upload::{
+    ChunkOutcome, ClientEntry, FileInput, Registration, UploadEntry, UploadError, UploadSpec,
+    UploadedFile, Uploads,
+};
 
 /// The HTML document around a page. `title` follows Bilimbi's live title:
 /// the page's own name, or the product name when a page has none.
@@ -94,13 +99,15 @@ pub const JS: &str = include_str!("../assets/live.js");
 pub const SHELL_JS: &str = include_str!("../assets/shell.js");
 pub const UI_JS: &str = include_str!("../assets/ui.js");
 /// The `data-hook` browser behaviour of the shared form controls, the inline
-/// editors, tiling, the flexible table and timestamp display (`DateTime`,
-/// `BrowserTimeZone`).
+/// editors, tiling, the flexible table, timestamp display (`DateTime`,
+/// `BrowserTimeZone`) and the live file input (`FileUpload`).
 pub const HOOKS_JS: &str = concat!(
     include_str!("../assets/hooks.js"),
     // Both files are semicolon-free IIFEs; without this the second calls the first.
     "\n;\n",
     include_str!("../assets/inline.js"),
+    "\n;\n",
+    include_str!("../assets/upload.js"),
     "\n;\n",
     include_str!("../assets/tiling.js"),
     "\n;\n",

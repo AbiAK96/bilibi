@@ -1,5 +1,6 @@
 //! Module-owned page adapters. Web establishes access before calling an adapter.
 //! Framing is presentation only: it never grants a capability or an identity.
+pub use crate::upload::Uploads;
 use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
 pub type PageFuture<'a, Error> = Pin<Box<dyn Future<Output = Result<PageBody, Error>> + Send + 'a>>;
@@ -118,5 +119,12 @@ pub trait LiveState<Context, Error>: Send {
     }
     fn subscriptions(&mut self) -> Vec<Subscription> {
         Vec::new()
+    }
+    /// The file inputs this state accepts (Bilimbi `allow_upload`): the
+    /// [`Uploads`] it declared at mount, which the host fills from the
+    /// browser's frames and the owner consumes in the event that acts on the
+    /// files. `None` refuses every upload aimed at this state.
+    fn uploads(&mut self) -> Option<&mut Uploads> {
+        None
     }
 }

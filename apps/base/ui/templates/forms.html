@@ -1,7 +1,7 @@
 {#- Shared form controls: the one markup source for input (text and every
     native type, checkbox, select, textarea, hidden, password with reveal),
     secret input, code input, combobox, multi-select, radio group, restricted
-    value and restricted field, with the field classes, described-by wiring
+    value, restricted field and the live file input, with the field classes, described-by wiring
     and error lines they share. Classes, data attributes, ARIA and anatomy
     mirror Bilimbi apps/base/ui/lib/ui/components/forms.ex at the pinned
     source; typed models and class decisions live in src/forms.rs. Browser
@@ -99,4 +99,16 @@
 {#- A form row for a field the viewer may not see (Bilimbi `restricted_field`); field is a bilibi_ui::RestrictedField. -#}
 {% macro restricted_field(field) %}
 <div id="{{ field.id }}" class="{{ field.wrapper() }}" data-restricted-field><span id="{{ field.id }}-label" class="mb-1.5 block text-sm font-medium text-ink">{{ field.label }}</span><div id="{{ field.id }}-value" role="group" aria-labelledby="{{ field.id }}-label" aria-readonly="true" aria-description="{{ field.tooltip() }}" title="{{ field.tooltip() }}" class="flex min-h-10 w-full items-center rounded-lg border border-line bg-surface-sunken px-3 py-2 text-sm text-ink-muted">{% call restricted(marker=field.marker()) %}{% endcall %}</div></div>
+{% endmacro %}
+
+{#- A live file input with its entry list (Bilimbi `live_file_input` and the
+    `@uploads.name.entries` loop its pages render); input is a
+    bilibi_ui::FileInput from Uploads::input. The FileUpload hook announces
+    the chosen files to the server, streams them in chunks over the live
+    socket, writes the percentage of each row as chunks are acknowledged,
+    removes an entry through its button and holds the form's submit until
+    every file has arrived. The server renders the rows and errors from the
+    state it holds, so a refresh never disagrees with the hook. -#}
+{% macro file_input(input) %}
+<div id="{{ input.id }}-field" class="{{ input.wrapper() }}" data-file-input="{{ input.id }}">{% if !input.label.is_empty() %}{% call label(id=input.id, text=input.label, class="mb-1.5 block text-sm font-medium text-ink", required=input.required) %}{% endcall %}{% endif %}<input type="file" id="{{ input.id }}" name="{{ input.name() }}"{% if !input.spec.accept.is_empty() %} accept="{{ input.spec.accept_attr() }}"{% endif %}{% if input.multiple() %} multiple{% endif %} data-hook="FileUpload" data-upload="{{ input.name() }}" data-max-entries="{{ input.spec.max_entries }}" data-max-file-size="{{ input.spec.max_file_size }}"{% call aria(invalid=input.invalid(), described_by=input.described_by()) %}{% endcall %}{% if input.required %} required{% endif %}{% if input.disabled %} disabled{% endif %} class="{{ input.control_class() }}" />{% call hint(id=input.id, text=input.hint) %}{% endcall %}<div id="{{ input.id }}-entries">{% for entry in input.entries %}<div id="{{ input.id }}-entry-{{ entry.id }}" data-upload-entry="{{ entry.id }}" class="mt-2 flex flex-wrap items-center gap-2 text-sm"><span class="min-w-0 truncate text-ink">{{ entry.name }}</span><span aria-hidden="true" class="text-ink-muted">·</span><span data-upload-progress class="tabular-nums text-ink-muted">{{ entry.progress() }}%</span>{% call ui::button(button_type="button", name="upload-cancel", value=entry.id.to_string(), aria_label="Cancel upload", disabled=input.disabled) %}Remove{% endcall %}{% if let Some(message) = input.entry_message(entry) %}{% call error(id=input.id, index=0, numbered=false) %}{{ message }}{% endcall %}{% endif %}</div>{% endfor %}</div>{% call errors(id=input.id, errors=input.error_messages()) %}{% endcall %}</div>
 {% endmacro %}

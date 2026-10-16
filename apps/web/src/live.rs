@@ -9,12 +9,19 @@ use bilibi_ui::page::{
     Change, LiveBody, LiveInput, LiveRequest, LiveState, PageRequest, PanelSpec,
 };
 use bilibi_ui::params;
+use bilibi_ui::upload::{ClientEntry, CHUNK_SIZE, MAX_ENTRIES};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, task::JoinSet};
 
 type State = Box<dyn LiveState<Scope, Error>>;
+/// The largest socket message: one upload chunk frame (`u32 id, u32 offset,
+/// bytes`) with room to spare; every JSON intent is far smaller.
+pub const FRAME_LIMIT: usize = CHUNK_SIZE + 1024;
+/// The header of a binary upload frame: the entry id and the offset the bytes
+/// start at, both big-endian `u32`.
+const CHUNK_HEADER: usize = 8;
 type Service = bilibi_ui::page::PageService<Scope, Error>;
 fn page_target() -> String {
     "page".into()
@@ -45,6 +52,21 @@ enum Event {
         #[serde(default = "page_target")]
         target: String,
         payload: Value,
+    },
+    /// The files chosen in one of the target's file inputs (Bilimbi's upload
+    /// preflight): the target's `Uploads` registers each or refuses it, and
+    /// the reply names the id to stream each accepted one under.
+    Upload {
+        #[serde(default = "page_target")]
+        target: String,
+        upload: String,
+        entries: Vec<ClientEntry>,
+    },
+    /// The person removed an entry before acting on it.
+    UploadCancel {
+        #[serde(default = "page_target")]
+        target: String,
+        id: u64,
     },
 }
 fn decode(text: &str) -> (Option<u64>, Result<Event>) {
@@ -176,6 +198,9 @@ struct Session {
     /// page reply keeps in place of the canonical one when that only adds
     /// values the address left out (Bilimbi patches the URL only on change).
     address: Option<HashMap<String, String>>,
+    /// The last upload entry id handed out; ids are unique per socket, so a
+    /// frame can never reach another state's entry.
+    uploads: u64,
 }
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
@@ -484,6 +509,130 @@ impl Session {
         }
         Ok(messages)
     }
+    /// The mounted state a target names: the page, a shell panel or a page
+    /// panel. A panel's access is rechecked by the caller through `update`.
+    fn mounted_mut(&mut self, target: &str) -> Result<&mut Mounted> {
+        if target == "page" {
+            return self.page.as_mut().ok_or(Error::Invalid);
+        }
+        match self.shell.get_mut(target) {
+            Some(panel) => Ok(&mut panel.mounted),
+            None => self
+                .panels
+                .get_mut(target)
+                .map(|panel| &mut panel.mounted)
+                .ok_or(Error::Invalid),
+        }
+    }
+    /// The target whose `Uploads` holds the entry `id`, if any still does.
+    fn upload_owner(&mut self, id: u64) -> Option<String> {
+        let holds = |mounted: &mut Mounted| {
+            mounted
+                .state
+                .uploads()
+                .is_some_and(|uploads| uploads.contains(id))
+        };
+        if self.page.as_mut().is_some_and(holds) {
+            return Some("page".into());
+        }
+        for (target, panel) in self.shell.iter_mut().chain(self.panels.iter_mut()) {
+            if holds(&mut panel.mounted) {
+                return Some(target.clone());
+            }
+        }
+        None
+    }
+    /// Registers the files chosen in one input of `target` (Bilimbi's upload
+    /// preflight), then re-renders the target so the rows appear. The page's
+    /// guard runs first; a panel's own access is rechecked by the render.
+    async fn upload(
+        &mut self,
+        app: &App,
+        token: &str,
+        target: &str,
+        upload: &str,
+        entries: Vec<ClientEntry>,
+    ) -> Result<Vec<Value>> {
+        if entries.is_empty()
+            || entries.len() > MAX_ENTRIES
+            || entries.iter().any(|entry| {
+                entry.name.is_empty() || entry.name.len() > 255 || entry.content_type.len() > 255
+            })
+        {
+            return Err(Error::Invalid);
+        }
+        self.scope(app, token).await?;
+        let mut next = self.uploads;
+        let mounted = self.mounted_mut(target)?;
+        let registrations = mounted
+            .state
+            .uploads()
+            .and_then(|uploads| uploads.register(upload, entries, &mut next))
+            .ok_or(Error::Invalid)?;
+        self.uploads = next;
+        let mut messages = vec![
+            json!({"type":"upload", "target":target, "upload":upload, "entries":registrations}),
+        ];
+        messages.extend(self.update(app, token, target, LiveInput::Refresh).await?);
+        Ok(messages)
+    }
+    async fn upload_cancel(
+        &mut self,
+        app: &App,
+        token: &str,
+        target: &str,
+        id: u64,
+    ) -> Result<Vec<Value>> {
+        self.scope(app, token).await?;
+        let cancelled = self
+            .mounted_mut(target)?
+            .state
+            .uploads()
+            .is_some_and(|uploads| uploads.cancel(id));
+        if !cancelled {
+            return Err(Error::Invalid);
+        }
+        self.update(app, token, target, LiveInput::Refresh).await
+    }
+    /// Appends one binary frame to the entry it names. The reply carries the
+    /// bytes now held, so the browser sends the next chunk; a completed or
+    /// refused entry also re-renders its owner, under the owner's guard.
+    async fn chunk(&mut self, app: &App, token: &str, frame: &[u8]) -> Result<Vec<Value>> {
+        if frame.len() < CHUNK_HEADER || frame.len() > CHUNK_HEADER + CHUNK_SIZE {
+            return Err(Error::Invalid);
+        }
+        let id = u64::from(u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]));
+        let offset = u64::from(u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]));
+        let Some(target) = self.upload_owner(id) else {
+            // Removed or consumed meanwhile; the hook stops streaming it.
+            return Ok(vec![json!({"type":"chunk", "id":id, "error":"unknown"})]);
+        };
+        let outcome = self
+            .mounted_mut(&target)?
+            .state
+            .uploads()
+            .ok_or(Error::Invalid)?
+            .append(id, offset, &frame[CHUNK_HEADER..]);
+        match outcome {
+            Ok(outcome) => {
+                let mut messages = vec![
+                    json!({"type":"chunk", "id":id, "received":outcome.received, "size":outcome.size, "done":outcome.done}),
+                ];
+                if outcome.done {
+                    messages.extend(self.update(app, token, &target, LiveInput::Refresh).await?);
+                }
+                Ok(messages)
+            }
+            Err(error) => {
+                let code = error.map_or("unknown", |error| error.code());
+                let mut messages = vec![json!({"type":"chunk", "id":id, "error":code})];
+                if error.is_some() {
+                    messages.extend(self.update(app, token, &target, LiveInput::Refresh).await?);
+                }
+                Ok(messages)
+            }
+        }
+    }
     /// Perf identity for an accepted event: the page it mounts, or the page it
     /// acts on. No identity (an unroutable path, nothing mounted) is not recorded.
     fn identity(&self, app: &App, event: &Event) -> Option<String> {
@@ -523,6 +672,14 @@ impl Session {
             Event::Action { target, payload } => {
                 self.update(app, token, &target, LiveInput::Event(&payload))
                     .await?
+            }
+            Event::Upload {
+                target,
+                upload,
+                entries,
+            } => self.upload(app, token, &target, &upload, entries).await?,
+            Event::UploadCancel { target, id } => {
+                self.upload_cancel(app, token, &target, id).await?
             }
         };
         let client = app.db.get().await?;
@@ -583,6 +740,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         sender,
         canonical: String::new(),
         address: None,
+        uploads: 0,
     };
     // A termination of this socket's session (logout elsewhere, an operator,
     // a credential change) signs this page out at once: the browser is sent
@@ -604,7 +762,10 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                     request_id = id;
                     match event {
                         Ok(event) => {
-                            if let Event::Action {target: id, ..} = &event {target = id.clone();}
+                            match &event {
+                                Event::Action {target: id, ..} | Event::Upload {target: id, ..} | Event::UploadCancel {target: id, ..} => target = id.clone(),
+                                _ => {}
+                            }
                             if matches!(event, Event::Navigate {..} | Event::Params {..} | Event::Action {..}) {history = "push";}
                             let identity = session.identity(&app, &event);
                             app.perf.observe(Kind::Event, identity.as_deref(), session.event(&app, &token, event), |result| {
@@ -614,6 +775,8 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                         Err(error) => Err(error),
                     }
                 },
+                // An upload chunk: bytes for an entry the socket registered.
+                Some(Ok(Message::Binary(frame))) => session.chunk(&app, &token, &frame).await,
                 Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() {break;} continue; },
                 Some(Ok(Message::Pong(_))) => continue,
                 _ => break,

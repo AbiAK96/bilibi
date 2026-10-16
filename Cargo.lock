@@ -1004,6 +1004,7 @@ dependencies = [
  "askama",
  "bilibi-module-registry",
  "inventory",
+ "serde",
  "serde_json",
  "tokio",
 ]

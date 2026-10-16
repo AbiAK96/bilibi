@@ -221,6 +221,9 @@
       const target = document.getElementById(message.target);
       if (target) patch(target, message.html, options);
       if (message.notice) feedback.textContent = message.notice;
+    } else if (message.type === 'chunk') {
+      // The upload hook that streams this entry reads its progress or error.
+      window.dispatchEvent(new CustomEvent('bilibi:upload', {detail: message}));
     } else if (message.type === 'error') {
       feedback.textContent = message.message;
       if (message.clear) {
@@ -493,28 +496,21 @@
   }
 
   // ---- Intent sources ------------------------------------------------------
-  // A form's values as the server reads them. A control named with a `[]`
-  // suffix (a multi-select's checkboxes, Bilimbi's list parameter spelling)
-  // posts every checked value as one array; any other name keeps its last
-  // value, as Object.fromEntries would.
-  function formValues(form) {
-    const values = {};
-    for (const [name, value] of new FormData(form)) {
-      if (name.endsWith('[]')) (values[name] ||= []).push(value);
-      else values[name] = value;
-    }
-    return values;
-  }
-
   // A form names its event with data-event: `params` sends the list query,
   // `save` the Company edit shape, anything else an event of that name
   // carrying the form's values. data-target picks a mounted panel. A
   // data-change form submits as one more change, unless data-submit-event
   // names the event its submission raises instead (Bilimbi's phx-submit
   // beside phx-change: validate as values change, save on Enter or Save).
+  // A form's values as the server reads them. A control named with a `[]`
+  // suffix (a multi-select's checkboxes, Bilimbi's list parameter spelling)
+  // posts every checked value as one array; any other name keeps its last
+  // value, as Object.fromEntries would. A file input's File travels through
+  // the upload stream (upload.js), never inside an intent.
   function formValues(form) {
     const values = {};
     for (const [key, value] of new FormData(form)) {
+      if (value instanceof File) continue;
       if (key.endsWith('[]')) (values[key] ||= []).push(value);
       else values[key] = value;
     }
@@ -660,6 +656,25 @@
     enqueue({type: 'event', target: detail.target || (owner && owner.dataset.target) || 'page', payload},
       {onReply: typeof detail.onReply === 'function' ? detail.onReply : null, history: detail.history});
   });
+
+  // ---- Uploads -------------------------------------------------------------
+  // The file input hook (upload.js) announces chosen files and removals as
+  // transport intents, queued and acknowledged like any other, and streams the
+  // bytes as binary frames outside the queue: the server processes a socket in
+  // order, so a frame sent after the announcement's reply reaches the entry it
+  // named. A frame cannot wait for a remount, since the remounted state holds
+  // no entries; sendBytes reports whether it went.
+  window.BilibiLive = {
+    send(intent, meta = {}) {
+      if (!['upload', 'upload_cancel'].includes(intent.type)) return;
+      enqueue(intent, {source: meta.source, onReply: typeof meta.onReply === 'function' ? meta.onReply : null});
+    },
+    sendBytes(bytes) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+      socket.send(bytes);
+      return true;
+    },
+  };
 
   // ---- Framed pages --------------------------------------------------------
   // A page in a workspace tile shares the tab's history with the workspace, so
