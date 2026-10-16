@@ -212,14 +212,22 @@ impl Page<Scope, Error> for Pages {
                     title: None,
                 });
             }
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
             let mut state = self.state(&request).await?;
-            let body = state
-                .draw(request.scope.ok_or(Error::Unauthorized)?)
-                .await?;
+            let body = state.draw(scope).await?;
+            // The detail page is titled by the company it shows, as Bilimbi's
+            // `page_title` is the company's display name.
+            let title = if request.operation == "detail" {
+                let client = self.db.get().await?;
+                let (company, _) = crate::detail(&**client, scope, record_id(&request)?).await?;
+                Some(company.display_name())
+            } else {
+                None
+            };
             Ok(PageBody {
                 html: body.html,
                 live: true,
-                title: None,
+                title,
             })
         })
     }

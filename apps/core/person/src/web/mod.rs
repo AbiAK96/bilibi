@@ -123,10 +123,17 @@ impl Page<Scope, Error> for Pages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
+            // The detail page is titled by the person it shows, as Bilimbi's
+            // `page_title` is the person's full name.
+            let title = if request.operation == "detail" {
+                Some(self.persons.read(scope, id(request.path)?).await?.name)
+            } else {
+                None
+            };
             Ok(PageBody {
                 html: body.html,
                 live: true,
-                title: None,
+                title,
             })
         })
     }
