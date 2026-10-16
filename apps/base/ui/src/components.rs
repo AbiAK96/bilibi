@@ -283,7 +283,7 @@ impl Badge<'_> {
 /// shows while the click's round trip is in flight.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, event=event, working=working) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, aria_busy=aria_busy, event=event, working=working) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Button<'a> {
@@ -296,6 +296,9 @@ pub struct Button<'a> {
     pub value: &'a str,
     pub disabled: bool,
     pub busy: bool,
+    /// Announces an in-flight control while retaining its disabled appearance.
+    /// `busy` also adds a spinner; Bilimbi's in-flight specimen does not.
+    pub aria_busy: bool,
     pub event: &'a str,
     pub working: &'a str,
     pub body: Html,

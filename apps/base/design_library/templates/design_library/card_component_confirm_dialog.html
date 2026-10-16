@@ -10,7 +10,7 @@
                 Example legal entity types; changes stay in this preview. The first deletes; the second refuses because companies still use it, so the failure and the way out can be seen too. In production the outcome is the page's flash or the panel's notice; here it stays inside this card.
               </p>
               <div class="flex flex-wrap items-center gap-3">
-                {% call ui::button(id="design-library-confirm-in-flight", button_type="button", variant=bilibi_ui::ButtonVariant::Danger, disabled=true) %}
+                {% call ui::button(id="design-library-confirm-in-flight", button_type="button", variant=bilibi_ui::ButtonVariant::Danger, disabled=true, aria_busy=true) %}
                   Deleting…
                 {% endcall %}
                 <p class="text-xs text-ink-muted">

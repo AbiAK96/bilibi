@@ -255,7 +255,8 @@ impl View<'_> {
                     string(c, "label"),
                     8,
                 )
-                .group_size(4),
+                .group_size(4)
+                .value(string(c, "value")),
             ),
             "restricted" => render(Restricted::new(&f.id).reason(string(c, "reason"))),
             "restricted_field" => {

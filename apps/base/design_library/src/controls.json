@@ -972,6 +972,7 @@
     "form": "",
     "key": "",
     "label": "Device code",
+    "value": "ABCD-EF23",
     "length": 8,
     "group_size": 4
   },
