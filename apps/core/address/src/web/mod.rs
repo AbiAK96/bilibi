@@ -117,9 +117,27 @@ impl Page<Scope, Error> for Pages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
+            // Bilimbi `ShowLive.page_title/1`: the label, else the number.
+            let title = match request.operation {
+                "detail" => {
+                    match path_id(request.path, "id").and_then(|id| AddressId::new(id).ok()) {
+                        Some(id) => Some(
+                            self.addresses
+                                .read(scope, id)
+                                .await?
+                                .address
+                                .label
+                                .unwrap_or_else(|| format!("Address #{id}")),
+                        ),
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title,
             })
         })
     }
