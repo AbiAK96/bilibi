@@ -309,7 +309,6 @@ fn editor_field(name: &str, id: &str, value: &str, placeholder: &str, class: &st
         .id(id)
         .value(value)
         .placeholder(placeholder)
-        .aria_label(name.replace('_', " "))
         .attr("data-debounce", "150")
         .wrapper_class("mb-0")
         .class(class)
