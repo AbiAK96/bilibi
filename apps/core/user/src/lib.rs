@@ -3,6 +3,7 @@ mod account_ui;
 pub mod accounts;
 mod appearance;
 pub mod bootstrap;
+pub mod company_accounts;
 pub mod contributions;
 pub mod database_queries;
 mod directory;

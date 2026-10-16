@@ -165,6 +165,30 @@ contractor's sign-in, open session, reset request and link commands, and the
 unique-email refusal. It archives a fixture company, so never run it on a
 working database.
 
+## Company accounts (C11; `src/company_accounts.rs`)
+
+The read other owners use to pick an account of one company (Production
+Execution's labour picker; Bilimbi `User.list_company_users/2` and
+`get_user/3`): `UserService::list_company_accounts(scope, company)` and
+`company_account(scope, company, user)`, or the same `list`/`get` over a
+caller's connection or transaction. Use these, not a query of `users`, so the
+proof below stays in one place. Reads only and no capability, as in Bilimbi:
+the caller authorizes the company target first. The scope's tenant bounds every
+answer; a missing, deleted or other-tenant company or account is `NotFound`.
+
+An account is listed only while `identity::standing`'s proof holds for the
+company: live and `active`, its affiliation still linked and naming that
+company, and its Person not retired. An account with no Person or affiliation
+belongs to no company. An archived company stays readable with its accounts,
+because archiving freezes sign-in, not history. Rows carry the Summary fields
+(no credential is selected) plus the Person, affiliation and organisation ids,
+ordered by id. Run the walkthrough against a fresh disposable migrated database
+(it archives Company 002):
+
+```sh
+BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example company-accounts-walkthrough --locked
+```
+
 ## Pages (`core/user.pages`)
 
 `/settings/profile`, `/settings/password` (`src/web.rs`,
