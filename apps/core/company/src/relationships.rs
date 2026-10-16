@@ -117,6 +117,8 @@ pub struct Entry {
     pub direction: Direction,
     pub other: PartyId,
     pub other_name: String,
+    /// The other company's code; a person has none.
+    pub other_code: Option<String>,
     pub role: RelationshipRole,
     /// What the other party is to this one.
     pub label: String,
@@ -127,6 +129,7 @@ impl Entry {
         value["direction"] = json!(self.direction);
         value["other"] = json!(self.other);
         value["other_name"] = json!(self.other_name);
+        value["other_code"] = json!(self.other_code);
         value["role_code"] = json!(self.role.code);
         value["role_name"] = json!(self.role.name);
         value["role_inverse_name"] = json!(self.role.inverse_name);
@@ -152,7 +155,7 @@ fn role_from_row(row: &Row) -> Result<RelationshipRole> {
     })
 }
 fn select(filter: &str) -> String {
-    format!("SELECT {COLUMNS},{ROLE_COLUMNS},s.name AS source_name,s.legal_name AS source_legal_name,o.name AS target_name,o.legal_name AS target_legal_name FROM company_relationships r JOIN company_relationship_roles t ON t.tenant_id=r.tenant_id AND t.id=r.role_id JOIN companies s ON s.tenant_id=r.tenant_id AND s.id=r.source_organisation_id LEFT JOIN companies o ON o.tenant_id=r.tenant_id AND o.id=r.target_organisation_id WHERE r.tenant_id=$1 AND {filter}")
+    format!("SELECT {COLUMNS},{ROLE_COLUMNS},s.name AS source_name,s.legal_name AS source_legal_name,s.code AS source_code,o.name AS target_name,o.legal_name AS target_legal_name,o.code AS target_code FROM company_relationships r JOIN company_relationship_roles t ON t.tenant_id=r.tenant_id AND t.id=r.role_id JOIN companies s ON s.tenant_id=r.tenant_id AND s.id=r.source_organisation_id LEFT JOIN companies o ON o.tenant_id=r.tenant_id AND o.id=r.target_organisation_id WHERE r.tenant_id=$1 AND {filter}")
 }
 /// Rows as entries from `party`'s perspective, person targets named through
 /// the Principal Directory (a retired or unnamed person keeps a durable label).
@@ -187,18 +190,22 @@ async fn entries(
         let relationship = Relationship::from_row(row)?;
         let role = role_from_row(row)?;
         let outgoing = PartyId::Organisation(relationship.source_organisation_id) == party;
-        let (direction, other, other_name, label) = if outgoing {
-            let other_name = match relationship.target {
-                PartyId::Organisation(_) => organisation::display_name(
-                    row.get::<_, Option<String>>("target_legal_name").as_deref(),
-                    &row.get::<_, String>("target_name"),
+        let (direction, other, other_name, other_code, label) = if outgoing {
+            let (other_name, other_code) = match relationship.target {
+                PartyId::Organisation(_) => (
+                    organisation::display_name(
+                        row.get::<_, Option<String>>("target_legal_name").as_deref(),
+                        &row.get::<_, String>("target_name"),
+                    ),
+                    row.get::<_, Option<String>>("target_code"),
                 ),
-                PartyId::Person(id) => names.get(&id.get()).cloned().unwrap_or_default(),
+                PartyId::Person(id) => (names.get(&id.get()).cloned().unwrap_or_default(), None),
             };
             (
                 Direction::Outgoing,
                 relationship.target,
                 other_name,
+                other_code,
                 role.name.clone(),
             )
         } else {
@@ -210,6 +217,7 @@ async fn entries(
                 Direction::Incoming,
                 PartyId::Organisation(relationship.source_organisation_id),
                 other_name,
+                Some(row.get::<_, String>("source_code")),
                 role.inverse_name.clone(),
             )
         };
@@ -218,6 +226,7 @@ async fn entries(
             direction,
             other,
             other_name,
+            other_code,
             role,
             label,
         });

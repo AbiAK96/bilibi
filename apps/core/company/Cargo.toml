@@ -29,8 +29,8 @@ bilibi-menu.workspace = true
 bilibi-locale = { path = "../../base/locale" }
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-grid = { path = "../../base/grid" }
+bilibi-person = { path = "../person" }
 
 [dev-dependencies]
 bilibi-web = { path = "../../web" }
-bilibi-person = { path = "../person" }
 tokio.workspace = true

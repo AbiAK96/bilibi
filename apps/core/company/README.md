@@ -8,8 +8,10 @@ primary company and the provisioning commands. The public API is the
 `organisation`, `reference_types`, `departments`, `primary`, `lifecycle`,
 `eligibility`, `relationship_roles` and `relationships`; table layout and
 SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
-`/companies`, `/companies/create` and `/companies/{id}` through shared UI
-components.
+`/companies`, `/companies/create` and `/companies/{id}`, and
+`web/relationships.rs` serves `/companies/relationship-roles`,
+`/companies/{id}/relationships` and the `company.relationships` embed,
+through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
@@ -188,7 +190,52 @@ a retirement waiting behind a concurrent assignment, date moves, ending and
 unlinking with history, an edit from the target's side, the agent reads and
 the reviewed assign/create commits with replay refusal, then bounded audit
 counts. It creates persons and companies with `K5`/`k5_`/`wt_` prefixes in
-the disposable database only. K6 owns the relationship screens.
+the disposable database only. The screens are described under "Relationship screens (K6)".
+
+## Relationship screens (K6)
+
+`web/relationships.rs` serves the K5 catalog and links through the shared
+UI (`core/company.relationship_pages`):
+
+- `/companies/relationship-roles` (`admin.company.list`; menu
+  `admin.company.relationship-role` under Companies): the tenant's roles in
+  a `FlexTable` with code, name, inverse name and status, retired roles on
+  request. "+ Relationship Role" (`admin.company.create`) and the row's edit
+  (`admin.company.update`) share one modal; a rename keeps the code, which
+  the edit form shows disabled. Retire confirms through the shared dialog
+  and acts on the role held when the dialog opened, at that version. The
+  page copy says what the model guarantees: a role describes the business
+  relationship only and grants no access.
+- `/companies/{id}/relationships` (`admin.company.view`; Bilimbi
+  `RelationshipsLive`): the company's links as the source or the target,
+  with the related party (a company with its code, or a person), direction,
+  the role's label from this company's side, the inclusive dates and the
+  status (`active`, `inactive`, `unlinked`). "Show history" brings ended and
+  unlinked links back; a retired role stays visible on its links. "Add
+  Relationship" chooses a company or a person of the tenant, an unretired
+  role and optional dates, validating as values change so the picker
+  follows the kind; a person picker needs `admin.person.list`, which the
+  form says when the reader lacks it. Edit changes only the dates, so
+  ending a link is setting its last day; Unlink confirms and keeps the row
+  as history. Every opening and write asks `organisation::authorize_target`
+  and `require_writable` again; a denial, an archived company (either
+  side), a stale version and an already unlinked link are flash messages,
+  never a fatal error.
+- Embed `company.relationships` (slot `record.relationships`, operation
+  `panel`, `admin.company.view`): the Relationships card of a record page
+  (Bilimbi `ShowLive` section 6), mounted as a panel with path
+  `{panel: <element id>, kind: organisation|person, id}`. The company
+  detail page mounts it for the company (`web.rs` `panels()`, slot
+  `#company-relationships` in `views::detail`) with a Manage link to the
+  administration page; a Person detail page (K8) mounts the same embed with
+  `kind: person` and gets the companies that relate to the person. The
+  card's `FlexTable` targets the panel, so its column and zoom events reach
+  the panel's own state.
+
+The pages hold no client-chosen version: edits, unlinks and retirements
+carry the version of the row read when the dialog opened, so a concurrent
+change is refused as stale rather than overwritten. Rows keep the K5 order
+(other party, then label); none of these tables sorts, as in Bilimbi.
 
 ## Lifecycle and account freeze (K2)
 

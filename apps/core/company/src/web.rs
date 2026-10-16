@@ -1,8 +1,10 @@
 //! Company owns its page state, Grid arrangement and all business events:
 //! the list/create/detail pages here, the two reference catalogs in
-//! `reference_types` and a company's departments in `departments`.
+//! `reference_types`, a company's departments in `departments` and the
+//! relationship-role catalog, relationship page and panel in `relationships`.
 mod departments;
 mod reference_types;
+pub mod relationships;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
 use bilibi_database::{Db, Error, Result};
@@ -684,27 +686,36 @@ impl LiveState<Scope, Error> for CompanyPage {
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
+        let Some(id) = self.id else {
+            return Vec::new();
+        };
         let mut panels = self.active_panels.clone();
-        if !self.history {
-            return panels;
+        if self.history {
+            panels.push(PanelSpec {
+                id: "company-record-history".into(),
+                embed: "audit.record-history".into(),
+                path: [
+                    ("panel".into(), "company-record-history".into()),
+                    ("kinds".into(), "company".into()),
+                    ("id".into(), id.to_string()),
+                ]
+                .into(),
+                query: HashMap::new(),
+            });
         }
-        panels.extend(
-            self.id
-                .map(|id| {
-                    vec![PanelSpec {
-                        id: "company-record-history".into(),
-                        embed: "audit.record-history".into(),
-                        path: [
-                            ("panel".into(), "company-record-history".into()),
-                            ("kinds".into(), "company".into()),
-                            ("id".into(), id.to_string()),
-                        ]
-                        .into(),
-                        query: HashMap::new(),
-                    }]
-                })
-                .unwrap_or_default(),
-        );
+        // The Relationships section is Company's own panel (K6), the same
+        // embed a Person page mounts with `kind: person`.
+        panels.push(PanelSpec {
+            id: "company-relationships".into(),
+            embed: "company.relationships".into(),
+            path: [
+                ("panel".into(), "company-relationships".into()),
+                ("kind".into(), "organisation".into()),
+                ("id".into(), id.to_string()),
+            ]
+            .into(),
+            query: HashMap::new(),
+        });
         panels
     }
 }

@@ -134,6 +134,11 @@ pub(super) async fn list(
         "Legal Entity Types",
         "/companies/legal-entity-types",
     )?);
+    actions.push(&link(
+        "companies-relationship-roles",
+        "Relationship Roles",
+        "/companies/relationship-roles",
+    )?);
     let mut pin = IconButton::new("bilimbi-pin", "Pin Companies to sidebar");
     pin.id = "companies-pin";
     pin.context = IconContext::Inline;
@@ -760,6 +765,9 @@ pub(super) async fn detail(
         content.push(&card("company-subsidiaries-card", children_body, false)?);
     }
     content.push(&departments_section(client, scope, id, departments_columns).await?);
+    // The Relationships section arrives as the `company.relationships` panel
+    // (`web::relationships`); the slot keeps the mounted card through patches.
+    content.push(&render(&RelationshipsSlot {})?);
     let modal = if let Some((activity, _)) = pending_activity {
         render(&ConfirmDialog {
             id: "company-remove-activity-dialog",
@@ -860,6 +868,12 @@ pub(super) async fn detail(
     ext = "html"
 )]
 struct History {}
+#[derive(Template)]
+#[template(
+    source = "<div id=\"company-relationships-slot\" data-live-ignore><div id=\"company-relationships\"></div></div>",
+    ext = "html"
+)]
+struct RelationshipsSlot {}
 #[derive(Template)]
 #[template(path = "company_lifecycle_form.html")]
 struct LifecycleForm {
