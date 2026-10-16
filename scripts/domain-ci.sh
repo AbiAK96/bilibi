@@ -30,7 +30,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --release --locked
 
 step 'Migrate a fresh database and apply the production seeds'
-app="$root/target/release/bilibi-web"
+app="${CARGO_TARGET_DIR:-$root/target}/release/bilibi-web"
 "$app" migrate
 "$app" seed-production
 
