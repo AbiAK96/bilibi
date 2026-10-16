@@ -264,6 +264,21 @@ inventory::submit! { Contribution::new(VOCABULARY,"authz.builtin",Provenance {mo
         C::tenant("admin.authz.field.manage"), C::tenant("admin.user.impersonate"),
     ],
     roles:&[role("manager","manager",false,EDIT),role("viewer","viewer",false,VIEW),role("staff","staff",false,EDIT),role("admin","admin",true,&[]),
-        role("core_admin","Core Administrator",true,&[]),role("tenant_owner","Tenant Owner",false,&["admin.authz.field.manage"]),role("auditor","Auditor",false,&["admin.authz.decision-log.list"]),role("system_viewer","System Viewer",false,&[])],
+        RoleDefinition {
+            description: "System role with all capabilities. New capabilities are automatically granted.",
+            ..role("core_admin", "Core Administrator", true, &[])
+        },
+        RoleDefinition {
+            description: "Full control within a single tenant: commerce, AI, messaging, company, employees, and addresses. No platform administration.",
+            ..role("tenant_owner", "Tenant Owner", false, &["admin.authz.field.manage"])
+        },
+        RoleDefinition {
+            description: "Read-only access to decision logs, system logs, and sessions for compliance.",
+            ..role("auditor", "Auditor", false, &["admin.authz.decision-log.list"])
+        },
+        RoleDefinition {
+            description: "Read-only access to system infrastructure: tables, jobs, cache, schedule, and sessions.",
+            ..role("system_viewer", "System Viewer", false, &[])
+        }],
     system_principals:&[],
 }) }
