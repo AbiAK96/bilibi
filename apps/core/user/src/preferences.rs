@@ -45,6 +45,10 @@ inventory::submit! {
 pub enum PreferenceError {
     #[error("unsupported value")]
     Invalid,
+    /// The session is an operator viewing as this account: its appearance
+    /// and pins belong to the account, so they are read but never written.
+    #[error("impersonating")]
+    Impersonating,
     #[error(transparent)]
     Other(#[from] Error),
 }
@@ -130,6 +134,9 @@ impl UserService {
         let scope = self.sessions.activity(&**client, token).await?;
         if scope.csrf != csrf {
             return Err(Error::Forbidden.into());
+        }
+        if scope.impersonator().is_some() {
+            return Err(PreferenceError::Impersonating);
         }
         let own = Target::User { company: None };
         match kind {
@@ -299,6 +306,9 @@ impl UserService {
         if scope.csrf != csrf {
             return Err(Error::Forbidden.into());
         }
+        if scope.impersonator().is_some() {
+            return Err(PreferenceError::Impersonating);
+        }
         let mut tx = self
             .mutations
             .begin(&mut client, scope.mutation_context("user.pin.toggle"))
@@ -384,6 +394,9 @@ impl UserService {
         let scope = self.sessions.activity(&**client, token).await?;
         if scope.csrf != csrf {
             return Err(Error::Forbidden.into());
+        }
+        if scope.impersonator().is_some() {
+            return Err(PreferenceError::Impersonating);
         }
         let tx = client.transaction().await?;
         let (tenant, user) = (scope.tenant(), scope.user());

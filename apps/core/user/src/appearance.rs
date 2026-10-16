@@ -229,6 +229,9 @@ impl AppearancePage {
         if !saved.is_empty() {
             notes.push(format!("Saved — {}.", saved.join(", ")));
         }
+        let (borrowed, refused): (Vec<_>, Vec<_>) = refused
+            .into_iter()
+            .partition(|(_, error)| matches!(error, PreferenceError::Impersonating));
         let (invalid, failed): (Vec<_>, Vec<_>) = refused
             .into_iter()
             .partition(|(_, error)| matches!(error, PreferenceError::Invalid));
@@ -239,6 +242,12 @@ impl AppearancePage {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        if !borrowed.is_empty() {
+            notes.push(format!(
+                "Not saved — {}. Appearance settings belong to the account you are viewing.",
+                names(&borrowed)
+            ));
+        }
         if !invalid.is_empty() {
             notes.push(format!(
                 "Not saved — {}. Choose a supported value.",

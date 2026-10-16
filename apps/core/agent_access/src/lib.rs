@@ -244,10 +244,10 @@ pub fn valid_label(label: &str) -> bool {
         && !label.chars().any(char::is_control)
 }
 /// Bilimbi refuses impersonated sessions and agent facets from managing
-/// connections. A bearer request carries the agent facet; impersonation is
-/// added here when K14 gives the scope that facet, rather than at each caller.
+/// connections: a bearer request carries the agent facet, an impersonated
+/// browser session its operator. Refused here once, not at each caller.
 fn self_service(scope: &Scope) -> std::result::Result<(), OAuthError> {
-    if scope.agent().is_some() {
+    if scope.agent().is_some() || scope.impersonator().is_some() {
         return Err(OAuthError::AccessDenied);
     }
     Ok(())

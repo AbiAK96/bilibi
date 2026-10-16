@@ -53,7 +53,9 @@ pub enum Refusal {
 }
 
 /// Presentation only: whether to draw "Show stored value". Reads without a
-/// decision-log row; `reveal` decides again, logged, before acting.
+/// decision-log row; `reveal` decides again, logged, before acting. An
+/// impersonated session never sees it, as in Bilimbi: the password it would
+/// re-prove is the borrowed account's.
 pub async fn available(
     client: &impl GenericClient,
     plan: &Plan,
@@ -61,6 +63,7 @@ pub async fn available(
     scope: &Scope,
 ) -> Result<bool> {
     Ok(settings.encryption_available()
+        && scope.impersonator().is_none()
         && plan.capabilities.contains(SECRET_VIEW)
         && explicitly_granted(client, scope, SECRET_VIEW).await?)
 }
@@ -101,9 +104,10 @@ impl Reveal<'_> {
         password: &str,
     ) -> std::result::Result<String, Refusal> {
         let throttle = (scope.tenant(), scope.user());
-        let granted = decide(client, scope, SECRET_VIEW)
-            .await
-            .is_ok_and(|decision| decision.allowed)
+        let granted = scope.impersonator().is_none()
+            && decide(client, scope, SECRET_VIEW)
+                .await
+                .is_ok_and(|decision| decision.allowed)
             && explicitly_granted(client, scope, SECRET_VIEW)
                 .await
                 .unwrap_or(false);
