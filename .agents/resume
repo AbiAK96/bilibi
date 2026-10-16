@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Per-wake setup: cargo on PATH and the private PostgreSQL 18 cluster on
+# 127.0.0.1:5438 with the bilibi role and database from the README. Idempotent
+# and quick (Amp waits only 10 seconds); installs nothing.
+# Layout matches scripts/start-app.sh, so both can reuse the same data directory.
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
+pg_port=5438
+pg_root="$root/.local/postgres18"
+pg_data="$pg_root/data"
+database_url="postgres://bilibi:bilibi@127.0.0.1:${pg_port}/bilibi"
+
+mkdir -p "$pg_root/socket"
+chmod 700 "$pg_root"
+if [[ ! -s "$pg_data/PG_VERSION" ]]; then
+    mkdir -p "$pg_data"
+    "$pg_bin/initdb" -D "$pg_data" --username=bilibi --pwfile=<(printf 'bilibi\n') \
+        --auth-local=trust --auth-host=scram-sha-256 >/dev/null
+fi
+if ! "$pg_bin/pg_ctl" -D "$pg_data" status >/dev/null 2>&1; then
+    "$pg_bin/pg_ctl" -D "$pg_data" -o "-h 127.0.0.1 -p $pg_port -k $pg_root/socket" \
+        -l "$pg_root/server.log" -w start >/dev/null
+fi
+admin_url="postgres://bilibi:bilibi@127.0.0.1:${pg_port}/postgres"
+if [[ $("$pg_bin/psql" "$admin_url" -Atqc "SELECT 1 FROM pg_database WHERE datname = 'bilibi'") != 1 ]]; then
+    "$pg_bin/psql" "$admin_url" -v ON_ERROR_STOP=1 -qc 'CREATE DATABASE bilibi'
+fi
+
+# Exports in this script die with it; persist them for later shells. The managed
+# block is rewritten in place so repeated wakes never duplicate it.
+env_file="$HOME/.config/bilibi/env.sh"
+mkdir -p "$(dirname -- "$env_file")"
+cat >"$env_file" <<ENV
+[ -f "\$HOME/.cargo/env" ] && . "\$HOME/.cargo/env"
+export DATABASE_URL='$database_url'
+ENV
+for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+    grep -qF "$env_file" "$rc" 2>/dev/null || printf '\n[ -f "%s" ] && . "%s"\n' "$env_file" "$env_file" >>"$rc"
+done

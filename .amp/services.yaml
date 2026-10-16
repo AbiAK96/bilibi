@@ -1,0 +1,15 @@
+services:
+  web:
+    # Amp assigns $PORT and the portal's $PUBLIC_URL; the app takes both from env.
+    command: >-
+      . "$HOME/.cargo/env" &&
+      export DATABASE_URL="${DATABASE_URL:-postgres://bilibi:bilibi@127.0.0.1:5438/bilibi}" &&
+      export APP_ORIGIN="$PUBLIC_URL" BIND_ADDR="0.0.0.0:$PORT" &&
+      cargo run -p bilibi-web --locked -- migrate &&
+      cargo run -p bilibi-web --locked -- seed &&
+      cargo run -p bilibi-web --locked -- run
+    health: /
+    portal:
+      url: /
+      title: Bilibi
+      description: Tenant 1, ai@agent.my with password bilibi-dev.
