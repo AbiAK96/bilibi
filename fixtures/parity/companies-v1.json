@@ -28,7 +28,7 @@
     { "tenant": 1, "email": "staff@example.test", "password": "bilibi-dev", "role": "staff", "expected": "Company reads and edits; tax_id and revenue are masked." },
     { "tenant": 1, "email": "viewer@example.test", "password": "bilibi-dev", "role": "viewer", "expected": "Company reads; email, phone, tax_id, and revenue are masked; writes denied." },
     { "tenant": 1, "email": "admin@example.test", "password": "bilibi-dev", "role": "admin", "expected": "Company reads and edits; any additional restricting role still masks fields." },
-    { "tenant": 2, "email": "manager@example.test", "password": "bilibi-dev", "role": "manager", "expected": "Sees only the private company for tenant 2." }
+    { "tenant": 2, "email": "manager@other.example.test", "password": "bilibi-dev", "role": "manager", "expected": "Sees only the private company for tenant 2." }
   ],
   "records": {
     "tenant_1": {

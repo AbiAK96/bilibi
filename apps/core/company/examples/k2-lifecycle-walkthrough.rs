@@ -15,9 +15,9 @@ type Error = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
     println!("{label}: {value:?}");
 }
-// Trusted owner specimen: the production account adapter deliberately has no
-// party links until K9. This creates a sealed own-company scope through the
-// real authentication boundary, without inventing a durable account link.
+// Trusted owner specimen: a sealed own-company scope for any company through
+// the real authentication boundary, without writing a durable account link.
+// The production adapter (`bilibi_user::identity`) proves stored links instead.
 struct OwnCompany(OrganisationId);
 impl ActorVerifier for OwnCompany {
     fn verify<'a>(

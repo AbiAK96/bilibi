@@ -44,3 +44,4 @@ getrandom = "0.4.3"
 [dev-dependencies]
 bilibi-base = { path = "../../base" }
 bilibi-core = { path = ".." }
+bilibi-web = { path = "../../web" }

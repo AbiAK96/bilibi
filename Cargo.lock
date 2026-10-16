@@ -996,6 +996,7 @@ dependencies = [
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
+ "bilibi-web",
  "getrandom 0.4.3",
  "hmac",
  "inventory",

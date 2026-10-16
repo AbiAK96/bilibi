@@ -63,8 +63,8 @@ same record without overwriting edits. Its system key is not a general create
 field, its kind cannot become human, and it cannot retire or use the generic
 account-binding seam. Generic agents are ordinary contacts. Provisioning creates
 no credentials/account, no automatic login and no Authz system-principal grant.
-The original demo AI Agent account remains unlinked; K9/K17 own explicit binding
-and bootstrap integration, including any privileged system-account workflow.
+The demo seed links the AI Agent account to an ordinary agent Person; K17 owns
+bootstrap integration, including any privileged system-account workflow.
 The reserved key is globally unique. Moving the operator marker to another
 tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.

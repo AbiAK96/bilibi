@@ -1,7 +1,8 @@
-//! Company facts for account authentication and owner writes. User (K9) owns
-//! the account → Person/Affiliation/Organisation binding: no company is inferred
-//! for today's unlinked accounts. A business relationship role grants no login
-//! or capability; only the account's proven Organisation is checked here.
+//! Company facts for account authentication and owner writes. User owns the
+//! account → Person/Affiliation/Organisation binding (`bilibi_user::identity`):
+//! no company is inferred for an unlinked account. A business relationship role
+//! grants no login or capability; only the account's proven Organisation is
+//! checked here.
 use crate::{organisation, WriteError};
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::OrganisationId;

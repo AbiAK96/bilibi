@@ -73,10 +73,10 @@ rename; `shared-layouts` and `shared` are reserved.
   account whose roles may see it; every tile still applies that account's own
   route access. Audiences are role codes, with a code-less demo role known by
   its name.
-- Shared layouts live at company scope. Until the Core identity binder (K9)
-  proves an account's organisation, no account has one, so `shared_target` in
-  `src/layouts.rs` lets the tenant stand in for the company; remove that
-  fallback with K9.
+- Shared layouts live at company scope. The Core identity binder proves an
+  account's organisation from its affiliation; for an unlinked account
+  `shared_target` in `src/layouts.rs` lets the tenant stand in for the company.
+  Remove that fallback when every account carries its organisation.
 
 ## Keys
 

@@ -1,7 +1,8 @@
 # User credentials
 
-`core/user` owns accounts, credentials, notifications and the account's own
-appearance and pins: the password and email services, the account's
+`core/user` owns accounts, their Core identity links, credentials,
+notifications and the account's own appearance and pins: the account binder
+(`src/identity.rs`, below), the password and email services, the account's
 self-service settings pages that call them, the `/notifications` page and the
 top-bar bell (the `shell.notifications` embed), the last two in `src/inbox.rs`
 over `src/notifications.rs`. Other modules notify through `base/notifications`
@@ -15,10 +16,12 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login` / `logout` | Tenant + email credential lookup and server session (unchanged) |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}` |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
-| `request_password_reset(tenant, email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
-| `reset_password(tenant, email, token, new)` | Consumes the one-time token, replaces the password, ends every session |
+| `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
+| `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
+| `account(scope, user)` | One account of the tenant with its `AccountLinks`; `admin.user.view` |
+| `link_person(scope, user, person)` / `link_affiliation(scope, user, affiliation)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
 
 Refusals are `CredentialError` variants a page maps to a field error or flash
@@ -79,9 +82,68 @@ and Media keys). The MAC covers the current email, so changing the address voids
 links already sent. Without the key `send_email_verification` and `verify_email`
 answer `VerificationUnavailable`.
 
-Emailed links point at `APP_ORIGIN`: `/reset-password/{token}?tenant=…&email=…`,
+Emailed links point at `APP_ORIGIN`: `/reset-password/{token}?email=…`,
 served by the Web host, and `/verify-email/{link}`, whose page belongs to a
 later slice.
+
+## Account identity (K9)
+
+An account optionally names a Person and, through one of that Person's
+affiliations, the Organisation it signs in under: `users.person_id`,
+`users.affiliation_id` and `users.organisation_id` (migration
+`006-identity.sql`), the last two held consistent by the scoped foreign key
+Affiliation published for this purpose, so a link can never name a Person or
+company other than the affiliation's. The login email is unique platform-wide
+(a partial unique index on `lower(email)` over live accounts); the migration
+resolves the one seeded duplicate explicitly and refuses any other.
+
+`identity::standing(client, tenant, user)` is the authentication-edge read:
+the account row, then each stored link re-proved through its owner's public
+read (`bilibi_company::eligibility::account_eligibility`,
+`bilibi_affiliation::identity::account_standing`,
+`bilibi_person::identity::account_standing`). It answers `Live(AccountIdentity)`,
+`Unknown` or `Frozen(CompanyArchived | Identity)`, is read afresh every time and
+is never written back as a derived status. `AccountVerifier`, bound into
+`base/tenancy.authentication` at boot, answers every session check, live
+refresh and bearer proof (`core/agent_access` calls the same `Authentication`)
+with it, so a browser request and a token request carry the same sealed actor
+facets (`Scope::actor().{person,organisation,affiliation}()`). Sign-in and
+password reset call it before any session or token exists.
+
+Freezing is Bilimbi's: an archived (or deleted) company ends its accounts'
+ability to sign in, keep a session, redeem a reset link or use an agent grant
+(`agent_access` refuses a grant whose recorded facets no longer match). Bilibi
+adds the two states its model has and Bilimbi's lacks: an account whose
+affiliation was unlinked or whose Person was retired is frozen the same way,
+named "not attached to an active workspace" at sign-in. Pending and suspended
+companies do not freeze accounts.
+
+The link commands take the sealed scope and `admin.user.update`, run in one
+`MutationTransaction` and honour the global lock order Company → Person →
+Affiliation → User: `link_affiliation` locks both the account's current company
+and the target's (`lock_writable_companies`), then takes the Affiliation owner's
+`lock_for_account_binding` proof; `link_person` takes the Person owner's; both
+refuse an affiliation of another Person (`LinkError::PersonMismatch`). An
+archived current company refuses every command (`LinkError::Archived`): as in
+Bilimbi, archive offers no restore or move, so the account stays frozen in
+place. A change of organisation ends the account's sessions (announced after
+commit), as Bilimbi's reassignment does. Each command is audited as kind `user`
+with the old and new link ids. Authorization is tenant-scoped until K15 binds
+company resource ownership; K16 composes the account page and its link controls
+from `account` and these commands.
+
+Run the walkthrough against a fresh disposable migrated/seeded database:
+
+```sh
+BILIBI_IDENTITY_DEMO=disposable cargo run -p bilibi-user --example identity-walkthrough --locked
+```
+
+It prints the sealed facets of linked and unlinked sign-ins, the same facets
+through the bearer path's `Authentication`, a denied and a refused link, unlink
+and relink with the ended sessions, the archive of Company 002 freezing the
+contractor's sign-in, open session, reset request and link commands, and the
+unique-email refusal. It archives a seeded company, so never run it on a
+working database.
 
 ## Pages (`core/user.pages`)
 
@@ -107,9 +169,9 @@ the token.
 
 ## Known gaps
 
-Identity is still tenant + email, and the archived-company freeze applies only
-through tenant and account status. The global login and Person/Affiliation
-binding follow K9. No throttle exists on guessing a password at login.
+No throttle exists on guessing a password at login. Authorization of the link
+commands is tenant-scoped (K15); impersonation (K14) must re-prove standing
+through `identity::standing` as sign-in does.
 
 ## Walkthrough
 

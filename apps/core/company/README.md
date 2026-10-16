@@ -223,14 +223,13 @@ records its usual `company.lifecycle` boundary action. Either audit failure
 rolls everything back, even if a caller catches it. The returned company
 honors the actor's field restrictions.
 
-`eligibility::account_eligibility` supplies the company fact to K9's account
-binder for login, session/bearer validation, impersonation and reset issue /
-redeem. Only archived/deleted/missing freezes an account; pending and
-suspended do not. No role or business relationship confers account eligibility.
-Today's accounts have no durable company link, so K2 does not invent one or
-claim those flows have been rebound. K9 must call this on every validation,
-not cache it or write a derived account status. Core remains independent of
-People.
+`eligibility::account_eligibility` supplies the company fact to the User
+account binder (`bilibi_user::identity::standing`) for login, session/bearer
+validation and reset issue / redeem. Only archived/deleted/missing freezes an
+account; pending and suspended do not. No role or business relationship confers
+account eligibility. The binder calls this on every validation and caches no
+derived account status; impersonation (K14) must do the same. Core remains
+independent of People.
 
 Account/affiliation/attached-owner writes take the company lock **before**
 the child row and retain it until commit. Use `eligibility::lock_account_company`

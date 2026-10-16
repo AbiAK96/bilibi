@@ -367,14 +367,15 @@ impl UserService {
         if let Some(organisation) = account.links.organisation {
             lock_account_company(tx.sql(), &scope, organisation).await?;
         }
-        let identity = bilibi_person::identity::lock_for_account_binding(&tx, &scope, person)
+        // The proof borrows the transaction; take its identity before the
+        // account write borrows it mutably. The database locks stay held.
+        let person = bilibi_person::identity::lock_for_account_binding(&tx, &scope, person)
             .await
             .map_err(|error| match error {
                 Error::NotFound => LinkError::NotFound,
                 other => LinkError::Access(other),
-            })?;
-        let person = identity.id();
-        drop(identity);
+            })?
+            .id();
         let account = read_account(tx.sql(), &scope, user, true)
             .await?
             .ok_or(LinkError::NotFound)?;
@@ -426,18 +427,20 @@ impl UserService {
             .chain([organisation])
             .collect();
         lock_writable_companies(tx.sql(), &scope, &companies).await?;
-        let proof = self
-            .affiliations
-            .lock_for_account_binding(&tx, &scope, affiliation)
-            .await
-            .map_err(|error| match error {
-                Error::NotFound => LinkError::NotFound,
-                other => LinkError::Access(other),
-            })?;
-        if proof.person() != person || proof.organisation() != organisation {
+        let proven = {
+            let proof = self
+                .affiliations
+                .lock_for_account_binding(&tx, &scope, affiliation)
+                .await
+                .map_err(|error| match error {
+                    Error::NotFound => LinkError::NotFound,
+                    other => LinkError::Access(other),
+                })?;
+            (proof.person(), proof.organisation())
+        };
+        if proven != (person, organisation) {
             return Err(LinkError::Access(Error::Conflict));
         }
-        drop(proof);
         let account = read_account(tx.sql(), &scope, user, true)
             .await?
             .ok_or(LinkError::NotFound)?;

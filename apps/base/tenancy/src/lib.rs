@@ -31,7 +31,8 @@ impl<T: GenericClient + Sync> ProofClient for T {
 }
 
 /// Owner output, never deserialize from a browser/job. Core User proves account
-/// eligibility; K9 adds the approved party facets through its live owner APIs.
+/// eligibility and each party facet through the owners' live reads
+/// (`bilibi_user::identity::standing`), on every authentication.
 pub struct AccountIdentity {
     pub name: String,
     pub email: String,

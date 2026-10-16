@@ -89,8 +89,10 @@ through `base/tenancy.parties`. A suspended account, a revoked organisation
 proof, or an actor whose facet now differs from the recorded one makes the
 grant `invalid_grant` without spending the presented token. New connections
 record the actor's organisation and person facets when the sealed scope
-carries them; until the K9 binder lands those are absent, so the account proof
-alone governs, exactly as the current browser session does. This module runs
+carries them. The User account binder supplies those facets to the browser
+session and to this module's bearer proof alike, so a grant made from a linked
+account is refused once the account is unlinked, relinked elsewhere or its
+company archived. This module runs
 no SQL against account, company or person tables; the schema references them
 only through scoped foreign keys (`migrations/001-agent-access.sql`).
 

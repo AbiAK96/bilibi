@@ -154,23 +154,11 @@ async fn main() -> Result<()> {
     );
     println!(
         "old password login: {}",
-        outcome(
-            &users
-                .login(email, seeded)
-                .await
-                .map(|_| ())
-                .map_err(CredentialError::from)
-        )
+        outcome(&users.login(email, seeded).await.map(|_| ()))
     );
     println!(
         "new password login: {}",
-        outcome(
-            &users
-                .login(email, "new-secret-1")
-                .await
-                .map(|_| ())
-                .map_err(CredentialError::from)
-        )
+        outcome(&users.login(email, "new-secret-1").await.map(|_| ()))
     );
 
     println!("\n== forgotten password ==");
@@ -252,23 +240,11 @@ async fn main() -> Result<()> {
     );
     println!(
         "login with reset password: {}",
-        outcome(
-            &users
-                .login(email, "reset-secret-2")
-                .await
-                .map(|_| ())
-                .map_err(CredentialError::from)
-        )
+        outcome(&users.login(email, "reset-secret-2").await.map(|_| ()))
     );
     println!(
         "login with previous password: {}",
-        outcome(
-            &users
-                .login(email, "new-secret-1")
-                .await
-                .map(|_| ())
-                .map_err(CredentialError::from)
-        )
+        outcome(&users.login(email, "new-secret-1").await.map(|_| ()))
     );
 
     println!("\n== expiry, concurrency and storage bounds ==");

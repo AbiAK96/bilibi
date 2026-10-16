@@ -503,10 +503,10 @@ impl Layouts {
 
 const USER: Target = Target::User { company: None };
 
-/// Where the company's shared layouts live. The Core identity binder (K9)
-/// proves an account's organisation; until it lands no account has one, and
-/// the tenant stands in for the company so publishing stays usable. Remove the
-/// fallback when every account carries its organisation.
+/// Where the company's shared layouts live. The Core identity binder proves
+/// an account's organisation from its affiliation; an unlinked account has
+/// none, and the tenant stands in for the company so publishing stays usable.
+/// Remove the fallback when every account carries its organisation.
 fn shared_target(scope: &Scope) -> Target {
     match scope.actor().organisation() {
         Some(organisation) => Target::Company(organisation),
@@ -656,8 +656,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Set
     validator: Some(Validator { accepts: valid_default, message: "must be the slug of a saved workspace layout" }),
     editor: None,
 })) }
-// Company scope is the home; tenant scope stands in until K9 proves every
-// account's organisation (see `shared_target`). Shared layouts never inherit
+// Company scope is the home; tenant scope stands in for an account without a
+// proven organisation (see `shared_target`). Shared layouts never inherit
 // from a wider scope than the one written.
 inventory::submit! { Contribution::new(DEFINITIONS, SHARED, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Array, scopes: &[ScopeKind::Company, ScopeKind::Tenant], default: || json!([]),

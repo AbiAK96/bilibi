@@ -54,20 +54,21 @@ cargo run -p bilibi-web -- seed
 cargo run -p bilibi-web -- run
 ```
 
-Open <http://localhost:3000>. Use tenant `1` and one of these accounts with
-password `bilibi-dev`:
+Open <http://localhost:3000>. Sign in with one of these accounts and the
+password `bilibi-dev`; the email alone names the account, as in Bilimbi:
 
-| Email | Role | Access |
-|---|---|---|
-| ai@agent.my | core_admin | Platform operator administrator: all capabilities, including platform ones |
-| manager@example.test | manager | View and edit all company fields |
-| staff@example.test | staff | View and edit, with tax ID and revenue restricted |
-| viewer@example.test | viewer | Read only; email, phone, tax ID and revenue masked |
-| admin@example.test | admin | All capabilities; any additional restricting role still masks fields |
+| Email | Role | Identity | Access |
+|---|---|---|---|
+| ai@agent.my | core_admin | agent Person “AI Agent” | Platform operator administrator: all capabilities, including platform ones |
+| manager@example.test | manager | Person “Ada Manager”, affiliated with Company 001 | View and edit all company fields |
+| staff@example.test | staff | unlinked | View and edit, with tax ID and revenue restricted |
+| viewer@example.test | viewer | unlinked | Read only; email, phone, tax ID and revenue masked |
+| admin@example.test | admin | unlinked | All capabilities; any additional restricting role still masks fields |
+| contractor@example.test | staff | Person “Kim Contractor”, affiliated with Company 002 | As staff; archiving Company 002 freezes this account |
 
-Tenant `2` has its own `manager@example.test` and a private company. Tenant IDs
-are explicit at login; requests and events derive the tenant from the session,
-never from client page parameters. The seed adds 62 companies to tenant `1` so
+Tenant `2` has `manager@other.example.test` and a private company. Login
+emails are unique across tenants; requests and events derive the tenant from
+the session, never from client page parameters. The seed adds 62 companies to tenant `1` so
 pagination can be tried. Seeding and migrations are explicit, transactional and
 idempotent; re-seeding preserves passwords and company edits, and ensures the
 demo roles and assignments exist. The ai@agent.my `core_admin` bootstrap runs once
@@ -98,10 +99,15 @@ run automatically on app boot.
   message, never carries one. Signed-in visitors are forwarded to the
   workspace. `/settings/password` is the account's self-service change inside
   the shell: a live page whose form submits as a module event, requiring the
-  current password and ending the account's other sessions. The forms carry a
-  Tenant ID because the credential lookup is still tenant + email: the global
-  login and Person/Affiliation identity binding follow K9, and sign-in has no
+  current password and ending the account's other sessions. Sign-in has no
   attempt throttle yet.
+- An account may be linked to a Core Person and, through one of that Person's
+  affiliations, to the company it signs in under. Every session check and
+  bearer proof re-proves those links through their owners, so a browser
+  request and an agent request carry the same actor facets, and archiving a
+  company freezes its accounts at once: sign-in says so, open sessions end on
+  their next check, and reset links are neither issued nor redeemed. See
+  [User](apps/core/user/README.md).
 - Roles, role capabilities and direct grants; direct denies override every
   allow, including admin `grant_all`. Each capability check writes a tenant-scoped
   decision-log row, whether allowed or denied. Unknown capabilities cannot be
