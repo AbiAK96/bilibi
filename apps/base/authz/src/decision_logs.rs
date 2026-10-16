@@ -8,11 +8,40 @@
 //! checks it on every request and live event, so this read does not log a
 //! second decision of its own.
 use bilibi_database::{Error, Result};
+use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use bilibi_tenancy::Scope;
+use serde_json::json;
 use std::time::SystemTime;
 use tokio_postgres::{types::ToSql, GenericClient};
 
 pub const LIST: &str = "admin.authz.decision-log.list";
+/// Global operator setting: days to keep decision logs (Bilimbi
+/// `authz.decision_log_retention_days`, default 90).
+pub const RETENTION_DAYS: &str = "authz.decision_log_retention_days";
+pub const RETENTION_DEFAULT: i64 = 90;
+pub const RETENTION_MAX: i64 = 3650;
+inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, Provenance { module: "base/authz", source: file!(), line: line!() }, &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
+    editor: Some(Editor { group: "Authorization", label: "Authorization log retention",
+        help: "Days to retain authorization decision logs.", capability: Some(LIST), reveal_duration_ms: 5_000 }),
+})) }
+
+/// Deletes every tenant's decisions older than `days` and returns how many
+/// went. Platform-wide on purpose: retention is one global operator setting,
+/// run by the scheduled worker with no tenant scope. Idempotent.
+pub async fn prune(client: &impl GenericClient, days: i64) -> Result<u64> {
+    if !(1..=RETENTION_MAX).contains(&days) {
+        return Err(Error::Invalid);
+    }
+    Ok(client
+        .execute(
+            "DELETE FROM authz_decision_log WHERE created_at < now() - make_interval(days => $1::int)",
+            &[&(days as i32)],
+        )
+        .await?)
+}
 /// Free-text search is bounded before it reaches SQL.
 pub const MAX_SEARCH: usize = 200;
 /// The largest operational-list page (25/50/100/300).
