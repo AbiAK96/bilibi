@@ -36,3 +36,36 @@ bilibi-extensions = { path = "apps/extensions" }
 bilibi-notifications = { path = "apps/base/notifications" }
 bilibi-menu = { path = "apps/base/menu" }
 bilibi-principal-directory = { path = "apps/base/principal_directory" }
+bilibi-agent-api = { path = "apps/base/agent_api" }
+bilibi-artifacts = { path = "apps/base/artifacts" }
+bilibi-audit-views = { path = "apps/base/audit_views" }
+bilibi-authz = { path = "apps/base/authz" }
+bilibi-dashboard = { path = "apps/base/dashboard" }
+bilibi-datetime = { path = "apps/base/datetime" }
+bilibi-design-library = { path = "apps/base/design_library" }
+bilibi-grid = { path = "apps/base/grid" }
+bilibi-integration = { path = "apps/base/integration" }
+bilibi-locale = { path = "apps/base/locale" }
+bilibi-mail = { path = "apps/base/mail" }
+bilibi-media = { path = "apps/base/media" }
+bilibi-party-ids = { path = "apps/base/party_ids" }
+bilibi-perf = { path = "apps/base/perf" }
+bilibi-queue = { path = "apps/base/queue" }
+bilibi-schedule = { path = "apps/base/schedule" }
+bilibi-session = { path = "apps/base/session" }
+bilibi-settings = { path = "apps/base/settings" }
+bilibi-settings-editor = { path = "apps/base/settings_editor" }
+bilibi-system = { path = "apps/base/system" }
+bilibi-tenancy = { path = "apps/base/tenancy" }
+bilibi-tiling = { path = "apps/base/tiling" }
+bilibi-workflow = { path = "apps/base/workflow" }
+bilibi-address = { path = "apps/core/address" }
+bilibi-affiliation = { path = "apps/core/affiliation" }
+bilibi-agent-access = { path = "apps/core/agent_access" }
+bilibi-geonames = { path = "apps/core/geonames" }
+bilibi-party = { path = "apps/core/party" }
+bilibi-person = { path = "apps/core/person" }
+bilibi-user-administration = { path = "apps/core/user_administration" }
+
+# Money and quantities in numeric(20,4) columns, for Domain modules.
+rust_decimal = { version = "1.43.0", features = ["db-tokio-postgres"] }
