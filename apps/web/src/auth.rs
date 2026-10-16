@@ -56,6 +56,40 @@ const MISSING_RECORDS: [(&str, &str, &str, &str); 2] = [
     ),
 ];
 
+/// Refusals a host action lands with on another page, as Bilimbi's
+/// `put_flash(:error, ..)` + `redirect`: (flash key, message).
+pub const IMPERSONATE_FORBIDDEN: &str = "impersonate-forbidden";
+pub const IMPERSONATE_NESTED: &str = "impersonate-nested";
+pub const IMPERSONATE_SELF: &str = "impersonate-self";
+pub const IMPERSONATE_MISSING: &str = "impersonate-missing";
+pub const IMPERSONATE_UNABLE: &str = "impersonate-unable";
+const ACTION_REFUSALS: [(&str, &str); 5] = [
+    (
+        IMPERSONATE_FORBIDDEN,
+        "You do not have access to that action.",
+    ),
+    (
+        IMPERSONATE_NESTED,
+        "Cannot impersonate while impersonating.",
+    ),
+    (IMPERSONATE_SELF, "You cannot impersonate yourself."),
+    (
+        IMPERSONATE_MISSING,
+        "Unable to find that user in this workspace.",
+    ),
+    (IMPERSONATE_UNABLE, "Unable to impersonate that user."),
+];
+
+/// Whether this request is the browser's own navigation. A method link's
+/// fetch follows the redirect itself (`Sec-Fetch-Dest: empty`) before it
+/// navigates, so only the navigation shows, and spends, a waiting flash.
+pub fn navigating(headers: &HeaderMap) -> bool {
+    headers
+        .get("sec-fetch-dest")
+        .and_then(|value| value.to_str().ok())
+        != Some("empty")
+}
+
 /// The redirect for a missing record of `route`, when it has a list to return to.
 pub fn missing_record_redirect(app: &App, route: &str) -> Option<Response> {
     let (key, _, list, _) = MISSING_RECORDS.iter().find(|row| row.1 == route)?;
@@ -64,17 +98,31 @@ pub fn missing_record_redirect(app: &App, route: &str) -> Option<Response> {
     Some(response)
 }
 
-/// The message waiting for this visitor from a missing-record redirect.
-pub fn missing_record_flash(headers: &HeaderMap) -> Option<&'static str> {
+/// The error waiting for this visitor from a missing-record redirect or a
+/// refused host action.
+pub fn waiting_flash(headers: &HeaderMap) -> Option<&'static str> {
+    if !navigating(headers) {
+        return None;
+    }
     let value = cookie(headers, FLASH_COOKIE)?;
     MISSING_RECORDS
         .iter()
         .find(|row| row.0 == value)
         .map(|row| row.3)
+        .or_else(|| {
+            ACTION_REFUSALS
+                .iter()
+                .find(|row| row.0 == value)
+                .map(|row| row.1)
+        })
 }
 
 pub fn set_flash(app: &App, response: &mut Response, key: &'static str) {
-    debug_assert!(FLASH_KEYS.contains(&key) || MISSING_RECORDS.iter().any(|row| row.0 == key));
+    debug_assert!(
+        FLASH_KEYS.contains(&key)
+            || MISSING_RECORDS.iter().any(|row| row.0 == key)
+            || ACTION_REFUSALS.iter().any(|row| row.0 == key)
+    );
     let cookie = format!(
         "{FLASH_COOKIE}={key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=60{}",
         secure(app)
@@ -90,6 +138,9 @@ pub fn clear_flash(response: &mut Response) {
     );
 }
 fn flash_key(headers: &HeaderMap) -> Option<&'static str> {
+    if !navigating(headers) {
+        return None;
+    }
     let value = cookie(headers, FLASH_COOKIE)?;
     FLASH_KEYS.into_iter().find(|key| *key == value)
 }

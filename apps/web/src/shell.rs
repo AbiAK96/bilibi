@@ -135,6 +135,7 @@ async fn context<'a>(
         // K17 binds the affiliation's company label.
         company: None,
         platform_operator,
+        impersonator: scope.impersonator().map(|operator| operator.name()),
         csrf: &scope.csrf,
         preferences,
         navigation: bilibi_ui::navigation(&nodes, true).map_err(|_| Error::Internal)?,
@@ -306,6 +307,12 @@ fn refusal(error: PreferenceError, code: &str) -> std::result::Result<Response, 
         PreferenceError::Invalid => Ok(json_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             json!({"error": code}),
+        )),
+        // Bilimbi's answer to a borrowed session: the shell keeps the account's
+        // own choices and says why nothing changed.
+        PreferenceError::Impersonating => Ok(json_response(
+            StatusCode::FORBIDDEN,
+            json!({"error": "impersonating"}),
         )),
         PreferenceError::Other(error) => Err(error.into()),
     }

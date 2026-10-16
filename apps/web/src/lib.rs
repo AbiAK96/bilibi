@@ -2,6 +2,7 @@
 mod api;
 mod auth;
 mod errors;
+mod impersonation;
 mod live;
 mod mcp;
 mod media;
@@ -192,6 +193,8 @@ pub fn router(app: App) -> Router {
             get(auth::reset_page).post(auth::reset),
         )
         .route("/logout", post(logout))
+        .route(impersonation::LEAVE, post(impersonation::leave))
+        .route(impersonation::ENTER, post(impersonation::enter))
         .route("/preferences", post(shell::save))
         .route("/api/pins", get(shell::pins))
         .route("/api/pins/toggle", post(shell::toggle_pin))
@@ -418,8 +421,10 @@ async fn upgrade(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let token = token(&headers)?;
-    // Upgrade proves the session only. Each discovered page/panel has its own gate.
-    app.security.guard(&token).await?;
+    // Upgrade proves the session only. Each discovered page/panel has its own
+    // gate. The socket keeps the identity it was opened under and acts for
+    // nobody else (an impersonation switch moves the session underneath it).
+    let identity = live::Identity::of(&app.security.guard(&token).await?);
     Ok(ws
         .max_message_size(16 * 1024)
         .max_frame_size(16 * 1024)
@@ -427,6 +432,7 @@ async fn upgrade(
             live::run(
                 app,
                 token,
+                identity,
                 socket,
                 options.get("framed").is_some_and(|v| v == "true"),
             )

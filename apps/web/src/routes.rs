@@ -53,6 +53,8 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
             crate::media::ATTACHMENT,
             crate::pdf::RENDER,
             crate::webhooks::PATH,
+            crate::impersonation::ENTER,
+            crate::impersonation::LEAVE,
         ] {
             if intersects(route.path, reserved) {
                 return Err(invalid(format!(
@@ -279,7 +281,7 @@ async fn dispatch(
         .or_else(|| bound.page.0.title(bound.route.operation))
         .unwrap_or("Bilibi");
     // A missing record elsewhere sent the visitor here with its message.
-    let waiting = crate::auth::missing_record_flash(&headers).filter(|_| !framed);
+    let waiting = crate::auth::waiting_flash(&headers).filter(|_| !framed);
     let html = match waiting {
         Some(message) => format!(
             "{}{}",

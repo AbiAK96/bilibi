@@ -105,6 +105,11 @@ pub struct ShellContext<'a> {
     pub user_id: i64,
     pub company: Option<&'a str>,
     pub platform_operator: bool,
+    /// The operator's name while this session views as `user` (Bilimbi's
+    /// `current_scope.impersonator`): draws the "Viewing as" strip with its
+    /// exit, locks the display controls and pins, and names the operator in
+    /// the account panel, so both acting identities stay on screen.
+    pub impersonator: Option<&'a str>,
     pub csrf: &'a str,
     pub preferences: DisplayPreferences,
     pub navigation: Html,

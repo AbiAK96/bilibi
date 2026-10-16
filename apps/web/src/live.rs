@@ -69,6 +69,26 @@ fn decode(text: &str) -> (Option<u64>, Result<Event>) {
     )
 }
 
+/// Who a live socket acts for: the session's account, its operator while
+/// impersonating, and the CSRF secret the page was rendered with. The secret
+/// rotates on every impersonation switch, so a socket left over from before
+/// one (another tab of the same session) is stale even when it switched back.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Identity {
+    user: i64,
+    impersonator: Option<i64>,
+    csrf: String,
+}
+impl Identity {
+    pub fn of(scope: &Scope) -> Self {
+        Self {
+            user: scope.user(),
+            impersonator: scope.impersonator().map(|operator| operator.user()),
+            csrf: scope.csrf.clone(),
+        }
+    }
+}
+
 struct Wake {
     generation: u64,
     target: String,
@@ -131,6 +151,11 @@ struct Panel {
     mounted: Mounted,
 }
 struct Session {
+    identity: Identity,
+    /// Set when the session no longer holds `identity`: the socket then
+    /// reloads its page under the session's current identity instead of
+    /// acting, and closes.
+    stale: bool,
     framed: bool,
     path: String,
     /// Route template of the mounted page, the stable identity Perf records.
@@ -155,9 +180,18 @@ struct Session {
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
         let page = self.page.as_ref().ok_or(Error::Invalid)?;
-        routes::check_access(app, page.access, Some(token))
+        let scope = routes::check_access(app, page.access, Some(token))
             .await?
-            .ok_or(Error::Forbidden)
+            .ok_or(Error::Forbidden)?;
+        self.bound(scope)
+    }
+    /// Refuses a scope the socket was not opened for; nothing acts on it.
+    fn bound(&mut self, scope: Scope) -> Result<Scope> {
+        if Identity::of(&scope) != self.identity {
+            self.stale = true;
+            return Err(Error::Unauthorized);
+        }
+        Ok(scope)
     }
     async fn mount(
         &mut self,
@@ -173,6 +207,7 @@ impl Session {
         let scope = routes::check_access(app, bound.route.access, Some(token))
             .await?
             .ok_or(Error::Forbidden)?;
+        let scope = self.bound(scope)?;
         let state = bound
             .page
             .0
@@ -221,9 +256,10 @@ impl Session {
         {
             return Ok(None);
         }
-        routes::check_access(app, bound.route.access, Some(token))
+        let scope = routes::check_access(app, bound.route.access, Some(token))
             .await?
             .ok_or(Error::Forbidden)?;
+        self.bound(scope)?;
         self.path = path.to_owned();
         self.route = bound.route.path.to_owned();
         self.page_route = Some(bound.route);
@@ -488,7 +524,8 @@ impl Session {
             }
         };
         let client = app.db.get().await?;
-        app.security.sessions.activity(&**client, token).await?;
+        let scope = app.security.sessions.activity(&**client, token).await?;
+        self.bound(scope)?;
         Ok(messages)
     }
 }
@@ -514,9 +551,19 @@ fn fatal(error: &Error) -> bool {
     )
 }
 
-pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
+/// Sends the browser back through the address it holds: the page's own guard
+/// then decides, under the session's current identity (or none).
+async fn reload(socket: &mut WebSocket, path: &str) {
+    let path = if path.is_empty() { "/" } else { path };
+    let message = json!({"type":"page", "target":"app", "html":"", "url":Value::Null, "notice":"", "rows":0, "redirect":path, "request_id":Value::Null, "history":"replace"});
+    let _ = socket.send(Message::Text(message.to_string().into())).await;
+}
+
+pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSocket, framed: bool) {
     let (sender, mut wakes) = mpsc::channel(64);
     let mut session = Session {
+        identity,
+        stale: false,
         framed,
         path: String::new(),
         route: String::new(),
@@ -583,9 +630,7 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
             terminated = terminations.recv() => {
                 match terminated {
                     Ok(event) if event.id == token => {
-                        let path = if session.path.is_empty() { "/".to_owned() } else { session.path.clone() };
-                        let message = json!({"type":"page", "target":"app", "html":"", "url":Value::Null, "notice":"", "rows":0, "redirect":path, "request_id":Value::Null, "history":"replace"});
-                        let _ = socket.send(Message::Text(message.to_string().into())).await;
+                        reload(&mut socket, &session.path).await;
                         break;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -593,6 +638,12 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
                 }
             },
         };
+        // A stale socket's request is refused before it acted; the page is
+        // reloaded rather than told of an error it did not cause.
+        if session.stale {
+            reload(&mut socket, &session.path).await;
+            break;
+        }
         let (mut messages, close) = match result {
             Ok(messages) => (messages, false),
             Err(error) => {
