@@ -1,4 +1,6 @@
 //! Credentials, server sessions, preferences, and the user's notifications and bell.
+mod account_ui;
+pub mod accounts;
 mod appearance;
 pub mod contributions;
 pub mod database_queries;
@@ -13,6 +15,7 @@ mod reset;
 mod verification;
 pub mod web;
 
+pub use accounts::{AccountError, AccountField, AccountInput, LandingPage, ProfileOutcome};
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_security::{guard, Sessions};
 pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
@@ -44,6 +47,10 @@ pub const BOOTSTRAP_MIGRATION: (&str, &str) = (
 pub const IDENTITY_MIGRATION: (&str, &str) = (
     "core-user-007-identity",
     include_str!("../migrations/007-identity.sql"),
+);
+pub const ACCOUNTS_MIGRATION: (&str, &str) = (
+    "core-user-008-accounts",
+    include_str!("../migrations/008-accounts.sql"),
 );
 
 /// Blocking Argon2id hash for seeds and tools; services use `password::hash`.
@@ -117,7 +124,8 @@ pub struct UserService {
     pub notifications: Notifications,
     pub mutations: std::sync::Arc<MutationBoundary>,
     authentication: std::sync::Arc<bilibi_security::Authentication>,
-    affiliations: std::sync::Arc<bilibi_affiliation::AffiliationService>,
+    pub(crate) persons: std::sync::Arc<bilibi_person::PersonService>,
+    pub(crate) affiliations: std::sync::Arc<bilibi_affiliation::AffiliationService>,
     mailer: std::sync::Arc<bilibi_mail::Mailer>,
     settings: std::sync::Arc<bilibi_settings::Settings>,
     display: std::sync::Arc<bilibi_datetime::DisplayPolicy>,
@@ -129,7 +137,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -142,10 +150,10 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
+            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
-            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?}))))
+            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?}))))
         }}],
     }
 }

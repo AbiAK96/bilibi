@@ -13,6 +13,29 @@ pub async fn effective_capabilities(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeSet<&'static str>> {
+    Ok(effective_capabilities_of(client, scope, scope.user())
+        .await?
+        .allowed)
+}
+
+/// What one account of the actor's tenant holds, as a screen that administers
+/// that account shows it (Bilimbi `Authz.effective_capabilities(actor)`):
+/// the allowed keys, the direct allow and deny overrides, and whether a
+/// grant-all role is assigned. A read, not a decision: nothing is logged and
+/// the caller still authorizes the screen that asks.
+#[derive(Clone, Debug, Default)]
+pub struct Effective {
+    pub allowed: BTreeSet<&'static str>,
+    pub direct_allowed: BTreeSet<String>,
+    pub direct_denied: BTreeSet<String>,
+    pub grant_all: bool,
+}
+
+pub async fn effective_capabilities_of(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Effective> {
     let vocabulary = crate::vocabulary()?;
     let live = client
         .query_opt(
@@ -22,24 +45,24 @@ pub async fn effective_capabilities(
         .await?
         .is_some();
     if !live {
-        return Ok(BTreeSet::new());
+        return Ok(Effective::default());
     }
     let direct = client
         .query(
             "SELECT capability,is_allowed FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2",
-            &[&scope.tenant(), &scope.user()],
+            &[&scope.tenant(), &user],
         )
         .await?;
     let granted = client
         .query(
             "SELECT DISTINCT r.capability FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
-            &[&scope.tenant(), &scope.user()],
+            &[&scope.tenant(), &user],
         )
         .await?;
     let grant_all: bool = client
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",
-            &[&scope.tenant(), &scope.user()],
+            &[&scope.tenant(), &user],
         )
         .await?
         .get(0);
@@ -55,7 +78,7 @@ pub async fn effective_capabilities(
         .map(|row| row.get(0))
         .collect();
     let roles: BTreeSet<String> = granted.iter().map(|row| row.get(0)).collect();
-    Ok(vocabulary
+    let effective = vocabulary
         .capabilities
         .iter()
         .filter(|(key, owned)| {
@@ -64,5 +87,11 @@ pub async fn effective_capabilities(
                 && (grant_all || allowed.contains(**key) || roles.contains(**key))
         })
         .map(|(key, _)| *key)
-        .collect())
+        .collect();
+    Ok(Effective {
+        allowed: effective,
+        direct_allowed: allowed,
+        direct_denied: denied,
+        grant_all,
+    })
 }

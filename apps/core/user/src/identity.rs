@@ -58,7 +58,9 @@ impl AccountLinks {
     }
 }
 
-/// One account as an administrator reads it (K16 composes its page from this).
+/// One account as an administrator reads it (`accounts.rs` composes its page
+/// from this). `version` is what an inline edit carries back; a stale one is
+/// refused.
 #[derive(Clone, Debug, Serialize)]
 pub struct Account {
     pub id: i64,
@@ -66,7 +68,11 @@ pub struct Account {
     pub email: String,
     pub status: String,
     pub email_verified: bool,
+    pub email_verified_at: Option<std::time::SystemTime>,
     pub links: AccountLinks,
+    pub version: i64,
+    pub created_at: std::time::SystemTime,
+    pub updated_at: std::time::SystemTime,
 }
 
 /// Why a live, correctly authenticated account still may not act.
@@ -245,27 +251,32 @@ impl From<bilibi_company::WriteError> for LinkError {
     }
 }
 
-async fn read_account(
+pub(crate) async fn read_account(
     client: &impl GenericClient,
     scope: &Scope,
     user: i64,
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at IS NOT NULL,person_id,affiliation_id,organisation_id FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
         .query_opt(&sql, &[&scope.tenant(), &user])
         .await?
         .map(|row| {
+            let email_verified_at: Option<std::time::SystemTime> = row.get(4);
             Ok(Account {
                 id: row.get(0),
                 name: row.get(1),
                 email: row.get(2),
                 status: row.get(3),
-                email_verified: row.get(4),
+                email_verified: email_verified_at.is_some(),
+                email_verified_at,
                 links: AccountLinks::from_row(&row, 5)?,
+                version: row.get(8),
+                created_at: row.get(9),
+                updated_at: row.get(10),
             })
         })
         .transpose()
@@ -287,7 +298,7 @@ async fn save_links(
         .mutate(move |sql| {
             Box::pin(async move {
                 sql.execute(
-                    "UPDATE users SET person_id=$3,affiliation_id=$4,organisation_id=$5 WHERE tenant_id=$1 AND id=$2",
+                    "UPDATE users SET person_id=$3,affiliation_id=$4,organisation_id=$5,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                     &[
                         &tenant,
                         &id,
@@ -331,7 +342,11 @@ impl UserService {
     }
     /// Refresh account/tenant eligibility without renewing idle sessions, as
     /// the other Core owners do; HTTP adapters validated the credential already.
-    async fn fresh(&self, client: &(impl GenericClient + Sync), scope: &Scope) -> Result<Scope> {
+    pub(crate) async fn fresh(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Scope> {
         let fresh = self
             .authentication
             .authenticate(client, scope.tenant(), scope.user(), scope.csrf.clone())

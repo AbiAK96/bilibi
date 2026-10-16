@@ -35,10 +35,10 @@ pub struct SettingsEntry {
     pub href: &'static str,
 }
 
-/// The settings sections in Bilimbi's order. Profile is a later slice (K16).
+/// The settings sections in Bilimbi's order.
 pub fn settings_entries() -> Vec<SettingsEntry> {
     [
-        ("profile", "Profile", ""),
+        ("profile", "Profile", "/settings/profile"),
         ("password", "Password", "/settings/password"),
         ("appearance", "Appearance", "/settings/appearance"),
         (
@@ -138,20 +138,62 @@ impl PasswordView {
 /// HTTP page ownership stays with User; the host knows only `PageService`.
 /// `notifications` is the `/notifications` page and `bell` the shell's
 /// `shell.notifications` embed, both in `crate::inbox`.
+#[derive(Clone)]
 pub struct Pages {
     pub users: Arc<UserService>,
     pub display: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
+    pub db: bilibi_database::Db,
+    pub grants: Arc<bilibi_authz::grants::Grants>,
+}
+
+impl Pages {
+    /// The account administration and profile pages (`account_ui`), whose
+    /// first render is their mounted state's refresh, as Person's pages do.
+    fn account_state(
+        &self,
+        request: &PageRequest<'_, Scope>,
+    ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>, Error> {
+        Ok(Some(match request.operation {
+            "create" => Box::new(crate::account_ui::Create::new(self.clone())),
+            "detail" => Box::new(crate::account_ui::Detail::new(
+                self.clone(),
+                crate::account_ui::record_id(request.path)?,
+                request.framed,
+            )?),
+            "profile" => Box::new(crate::account_ui::Profile::new(self.clone())),
+            _ => return Ok(None),
+        }))
+    }
 }
 
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
-        // The password and appearance pages carry no name in Bilimbi either.
-        (operation == "notifications").then_some("Notifications")
+        match operation {
+            "create" => Some("Create User"),
+            "detail" => Some("User"),
+            "profile" => Some("Profile"),
+            "notifications" => Some("Notifications"),
+            // The password and appearance pages carry no name in Bilimbi either.
+            _ => None,
+        }
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
+            if let Some(mut state) = self.account_state(&request)? {
+                let body = state
+                    .update(LiveRequest {
+                        scope,
+                        credential: "",
+                        input: LiveInput::Refresh,
+                    })
+                    .await?;
+                return Ok(PageBody {
+                    html: body.html,
+                    live: true,
+                });
+            }
             match request.operation {
                 "password" if request.query.is_empty() => Ok(PageBody {
                     html: PasswordView::render_page(&PasswordForm::default(), FlashMap::default())?,
@@ -174,6 +216,10 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
+            if let Some(state) = self.account_state(&request)? {
+                request.scope.ok_or(Error::Unauthorized)?;
+                return Ok(Some(state));
+            }
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
                 "password" if request.query.is_empty() => Box::new(PasswordPage {
                     users: self.users.clone(),

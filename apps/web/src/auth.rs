@@ -303,7 +303,14 @@ pub async fn login(
                 session.token,
                 secure(&app)
             );
-            let mut response = Redirect::to(WORKSPACE).into_response();
+            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
+            // when it still may open it; else the workspace.
+            let destination = app
+                .user
+                .landing_route(&session.token)
+                .await?
+                .unwrap_or_else(|| WORKSPACE.to_owned());
+            let mut response = Redirect::to(&destination).into_response();
             response.headers_mut().insert(
                 header::SET_COOKIE,
                 HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,

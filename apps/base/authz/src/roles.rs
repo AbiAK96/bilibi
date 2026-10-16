@@ -150,6 +150,50 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, query: &Query) -> 
     })
 }
 
+/// The roles assigned to one account of this tenant, by name (Bilimbi
+/// `list_principal_role_assignments`). A read for the screen that administers
+/// the account; the caller authorizes that screen.
+pub async fn assigned(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Vec<RoleSummary>> {
+    let tenant = scope.tenant();
+    let rows = client
+        .query(
+            &format!("SELECT {SUMMARY} FROM roles r JOIN principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE r.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name, r.id"),
+            &[&tenant, &user],
+        )
+        .await?;
+    Ok(rows.iter().map(summary).collect())
+}
+
+/// The capabilities each listed role grants, keyed by role id, for the
+/// escalation guard an assigning screen applies (a role is grantable only by
+/// an actor holding everything it grants). A grant-all role has `grant_all`.
+pub async fn grants_of(
+    client: &impl GenericClient,
+    scope: &Scope,
+    roles: &[i64],
+) -> Result<std::collections::BTreeMap<i64, (bool, Vec<String>)>> {
+    let tenant = scope.tenant();
+    let rows = client
+        .query(
+            "SELECT r.id, r.grant_all, COALESCE(array_agg(c.capability ORDER BY c.capability) FILTER (WHERE c.capability IS NOT NULL), '{}') FROM roles r LEFT JOIN role_capabilities c ON c.tenant_id=r.tenant_id AND c.role_id=r.id WHERE r.tenant_id=$1 AND r.id=ANY($2) GROUP BY r.id, r.grant_all",
+            &[&tenant, &roles],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<_, i64>(0),
+                (row.get::<_, bool>(1), row.get::<_, Vec<String>>(2)),
+            )
+        })
+        .collect())
+}
+
 /// One role of this tenant. Another tenant's id and a missing id are the same
 /// `None`, so the answer never confirms that a role exists elsewhere.
 pub async fn get(

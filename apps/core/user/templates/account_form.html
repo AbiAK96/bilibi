@@ -1,0 +1,8 @@
+{#- The create-user form (Bilimbi `FormLive`): one card of shared form
+    controls. The form is `data-change`, so each change raises `validate`
+    (refreshing the affiliation choices of the chosen person) and the submit
+    raises `create`. -#}
+<form id="user-form" data-event="validate" data-change data-submit-event="create" class="rounded-xl border border-line bg-surface px-6 py-5" novalidate>
+{{ person }}{{ affiliation }}{{ name }}{{ email }}{{ password }}
+<div class="mt-2 flex items-center gap-4">{{ submit }}{{ cancel }}</div>
+</form>

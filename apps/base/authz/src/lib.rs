@@ -14,7 +14,7 @@ pub mod vocabulary;
 mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
-pub use effective::effective_capabilities;
+pub use effective::{effective_capabilities, effective_capabilities_of, Effective};
 use std::{
     collections::HashSet,
     sync::{Arc, OnceLock},

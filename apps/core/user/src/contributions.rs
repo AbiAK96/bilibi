@@ -7,6 +7,7 @@ use bilibi_module_registry::{
     contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS, ROUTES},
     Contribution, Provenance,
 };
+use bilibi_settings::{Definition, ScopeKind, Setting, Validator, DEFINITIONS};
 
 /// Belimbing's durable account-administration keys (Bilimbi
 /// `Core.User.Contributions`). K9 asks `view` to read an account's links and
@@ -43,6 +44,44 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { mod
     ],
     system_principals: &[],
 }) }
+
+// The account administration pages (Bilimbi `FormLive`, `ShowLive`). The
+// tenant-wide `/users` index is User Administration's (K13); these two are the
+// create form and the read-first detail page it links to.
+inventory::submit! {
+    Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+        method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
+    })
+}
+inventory::submit! {
+    Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+        method: Method::Get, path: "/users/{id}", service: "core/user.pages", operation: "detail", access: Access::Capability(VIEW), framed: true,
+    })
+}
+
+// The signed-in account's own name, email and landing page (Bilimbi
+// `ProfileLive`); the session alone names the account.
+inventory::submit! {
+    Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+        method: Method::Get, path: "/settings/profile", service: "core/user.pages", operation: "profile", access: Access::SignedIn, framed: true,
+    })
+}
+// Bilimbi `ui.landing_menu_id`: the menu page a sign-in opens, at the
+// account's own scope; the profile page validates it against the menu the
+// account can reach, since the definition can only bound its shape.
+fn landing_accepts(value: &serde_json::Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|id| id.len() <= 255 && !id.contains(char::is_control))
+}
+inventory::submit! {
+    Contribution::new(DEFINITIONS, crate::accounts::LANDING_KEY, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
+        value_type: bilibi_settings::ValueType::String, scopes: &[ScopeKind::User], default: || serde_json::json!(""),
+        nullable: false, encrypted: false, minimum: None, maximum: None,
+        validator: Some(Validator { accepts: landing_accepts, message: "must name a menu page" }),
+        editor: None,
+    }))
+}
 
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.settings.password", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {

@@ -306,18 +306,16 @@ pub(crate) fn mount_page(
     query: &HashMap<String, String>,
 ) -> Result<Box<dyn LiveState<Scope, Error>>> {
     Ok(Box::new(Inbox {
+        pages: pages.clone(),
         users: pages.users.clone(),
-        display: pages.display.clone(),
-        locales: pages.locales.clone(),
         list: parse(query)?,
         all_read: false,
     }))
 }
 
 struct Inbox {
+    pages: Pages,
     users: Arc<UserService>,
-    display: Arc<bilibi_datetime::DisplayPolicy>,
-    locales: Arc<bilibi_locale::Locales>,
     list: ListState,
     /// The "all marked as read" flash, shown until dismissed.
     all_read: bool,
@@ -366,12 +364,7 @@ impl LiveState<Scope, Error> for Inbox {
                 success: if self.all_read { ALL_READ } else { "" },
                 ..FlashMap::default()
             };
-            let pages = Pages {
-                users: self.users.clone(),
-                display: self.display.clone(),
-                locales: self.locales.clone(),
-            };
-            let html = render_inbox(&pages, request.scope, &mut self.list, flash).await?;
+            let html = render_inbox(&self.pages, request.scope, &mut self.list, flash).await?;
             Ok(LiveBody {
                 html,
                 query: self.list.to_params(),
