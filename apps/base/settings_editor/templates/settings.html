@@ -14,7 +14,7 @@
 <label for="input-{{ field.dom }}" class="block text-sm font-medium text-ink-strong">{{ field.label }}</label>
 <p class="mt-0.5 text-xs text-ink-subtle">{{ field.help }}</p>
 {{ field.control|safe }}
-<div class="mt-1.5 flex items-center gap-2 text-xs">{% if field.overridden %}{% call ui::badge() %}Set here{% endcall %}{% else %}<span class="text-ink-faint">Inherited from the default</span>{% endif %}{% if !field.encrypted.is_empty() %}<span class="text-ink-faint">{{ field.encrypted }}</span>{% endif %}</div>
+<div class="mt-1.5 flex items-center gap-2 text-xs">{% if field.overridden %}{% call ui::badge() %}{{ field.badge }}{% endcall %}{% else %}<span class="text-ink-faint">{{ field.note }}</span>{% endif %}{% if !field.encrypted.is_empty() %}<span class="text-ink-faint">{{ field.encrypted }}</span>{% endif %}</div>
 </div>
 {% endfor %}{{ empty|safe }}
 </div>

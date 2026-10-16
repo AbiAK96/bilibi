@@ -10,9 +10,12 @@
 //! the page. Restore confirms through the shared dialog and acts only on the
 //! overrides the dialog counted.
 //!
-//! The company picker lists no companies yet: Core binds company targets
-//! (port slice K15). Until then an actor granted company settings sees the
-//! picker with Global only and is told no company is available to manage.
+//! The company picker (K15) offers Global and the companies Tenancy's
+//! organisation directory says this actor may manage
+//! (`base.settings.company.manage`, own company or tenant-wide reach). A
+//! picked company is reproved on every switch and write: a denied, missing,
+//! cross-tenant or archived target is refused with Bilimbi's wording, and an
+//! archived company is never offered, since a write into it would be refused.
 use crate::{
     form::{self, Field, Plan, Step},
     reveal::{self, Refusal, Reveal, Throttle},
@@ -21,8 +24,9 @@ use crate::{
 use askama::Template;
 use bilibi_authz::authorize_operator;
 use bilibi_database::{Db, Error, MutationBoundary, Result};
-use bilibi_settings::{Settings, Target, ValueType};
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_party_ids::OrganisationId;
+use bilibi_settings::{ScopeKind, Settings, Target, ValueType};
+use bilibi_tenancy::{Authentication, NamedOrganisation, PartyProofs, Scope};
 use bilibi_ui::{
     choices,
     forms::{Field as Control, InputKind},
@@ -39,6 +43,9 @@ use std::sync::Arc;
 const TITLE: &str = "Operator Settings";
 const PLATFORM_DENIED: &str = "You do not have permission to manage platform settings.";
 const COMPANY_DENIED: &str = "You do not have permission to manage this company's settings.";
+const COMPANY_ARCHIVED: &str =
+    "This company is archived and read-only, so its settings were not changed.";
+const COMPANY_GONE: &str = "That company is no longer available; choose another settings scope.";
 const UNAVAILABLE: &str = "Settings are unavailable; nothing was changed.";
 
 pub struct Core {
@@ -46,6 +53,7 @@ pub struct Core {
     pub settings: Arc<Settings>,
     pub boundary: Arc<MutationBoundary>,
     pub authentication: Arc<Authentication>,
+    pub parties: Arc<PartyProofs>,
     pub throttle: Throttle,
 }
 pub struct Pages(Arc<Core>);
@@ -62,6 +70,8 @@ struct Editor {
     pending_restore: Option<Vec<String>>,
     pending_reveal: Option<String>,
     events: Vec<(&'static str, Value)>,
+    /// The picked company scope; `None` is Global. An id, never a proof.
+    company: Option<NamedOrganisation>,
 }
 
 impl Editor {
@@ -72,26 +82,108 @@ impl Editor {
             pending_restore: None,
             pending_reveal: None,
             events: Vec::new(),
+            company: None,
         }
     }
     fn flash(&mut self, kind: StatusKind, message: impl Into<String>) {
         self.flash = Some((kind, message.into()));
     }
+    fn target(&self) -> Target {
+        match &self.company {
+            Some(company) => Target::Company(company.id),
+            None => Target::Global,
+        }
+    }
     async fn plan(&self, scope: &Scope) -> Result<Plan> {
         let client = self.core.db.get().await?;
-        form::plan(&**client, &self.core.settings, scope).await
+        form::plan(&**client, &self.core.settings, scope, self.target()).await
     }
-    /// The route capability, asked again (and logged) before any write.
+    /// The route capability, asked again (and logged) before any write; a
+    /// company scope asks twice more (Bilimbi `scope_writable/1`): may this
+    /// actor manage that company's settings, and may the company be written
+    /// at all. An archived company is read-only and the page says so rather
+    /// than blaming a permission.
     async fn writable(&mut self, scope: &Scope) -> Result<bool> {
         let client = self.core.db.get().await?;
         match authorize_operator(&**client, scope, GLOBAL_MANAGE).await {
-            Ok(_) => Ok(true),
+            Ok(_) => {}
             Err(Error::Forbidden) => {
                 self.flash(StatusKind::Error, PLATFORM_DENIED);
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
+        let Some(company) = &self.company else {
+            return Ok(true);
+        };
+        match self
+            .core
+            .parties
+            .organisation_target(&**client, scope, company.id, COMPANY_MANAGE)
+            .await
+        {
+            Ok(_) => {}
+            Err(Error::Forbidden) => {
+                self.flash(StatusKind::Error, COMPANY_DENIED);
+                return Ok(false);
+            }
+            Err(Error::NotFound) => {
+                self.company = None;
+                self.flash(StatusKind::Error, COMPANY_GONE);
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
+        match self
+            .core
+            .parties
+            .organisation(&**client, scope, company.id)
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(Error::Forbidden) => {
+                self.flash(StatusKind::Error, COMPANY_ARCHIVED);
+                Ok(false)
+            }
+            Err(Error::NotFound) => {
+                self.company = None;
+                self.flash(StatusKind::Error, COMPANY_GONE);
                 Ok(false)
             }
             Err(error) => Err(error),
         }
+    }
+    /// `switch_scope`: the picked id is reproved as a manageable target now,
+    /// and an archived company is refused rather than opened read-only, so
+    /// the page never shows a scope it cannot write.
+    async fn switch(&mut self, scope: &Scope, id: &str) -> Result<()> {
+        let Some(id) = id.parse().ok().and_then(|id| OrganisationId::new(id).ok()) else {
+            self.flash(StatusKind::Error, "Choose an available settings scope.");
+            return Ok(());
+        };
+        let client = self.core.db.get().await?;
+        let company = match self
+            .core
+            .parties
+            .organisation_target(&**client, scope, id, COMPANY_MANAGE)
+            .await
+        {
+            Ok(company) => company,
+            Err(Error::Forbidden) | Err(Error::NotFound) => {
+                self.flash(StatusKind::Error, COMPANY_DENIED);
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        if company.archived {
+            self.flash(StatusKind::Error, COMPANY_ARCHIVED);
+            return Ok(());
+        }
+        self.company = Some(company);
+        self.flash = None;
+        self.pending_restore = None;
+        self.pending_reveal = None;
+        Ok(())
     }
 
     async fn event(&mut self, scope: &Scope, payload: &Value) -> Result<()> {
@@ -117,11 +209,12 @@ impl Editor {
             "restore_defaults" => self.restore(scope).await?,
             "switch_scope" => match get("scope[company_id]") {
                 Some("global") => {
+                    self.company = None;
                     self.flash = None;
                     self.pending_restore = None;
                     self.pending_reveal = None;
                 }
-                Some(_) => self.flash(StatusKind::Error, COMPANY_DENIED),
+                Some(id) => self.switch(scope, id).await?,
                 None => self.flash(StatusKind::Error, "Choose an available settings scope."),
             },
             "request_secret_reveal" => {
@@ -189,11 +282,17 @@ impl Editor {
         }
         let (mut written, mut cleared) = (0, 0);
         if !steps.is_empty() {
+            let target = self.target();
+            let action = if self.company.is_some() {
+                "settings.company.save"
+            } else {
+                "settings.global.save"
+            };
             let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
                 .boundary
-                .begin(&mut client, scope.mutation_context("settings.global.save"))
+                .begin(&mut client, scope.mutation_context(action))
                 .await?;
             for (field, step) in steps {
                 let result = match step {
@@ -201,14 +300,14 @@ impl Editor {
                         written += 1;
                         self.core
                             .settings
-                            .put(&mut tx, scope, Target::Global, field.key, value)
+                            .put(&mut tx, scope, target, field.key, value)
                             .await
                     }
                     Step::Clear => {
                         cleared += 1;
                         self.core
                             .settings
-                            .delete(&mut tx, scope, Target::Global, field.key)
+                            .delete(&mut tx, scope, target, field.key)
                             .await
                     }
                     Step::Skip => Ok(()),
@@ -247,20 +346,23 @@ impl Editor {
             .filter(|field| field.overridden && held.iter().any(|key| key == field.key))
             .collect();
         if !fields.is_empty() {
+            let target = self.target();
+            let action = if self.company.is_some() {
+                "settings.company.restore"
+            } else {
+                "settings.global.restore"
+            };
             let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
                 .boundary
-                .begin(
-                    &mut client,
-                    scope.mutation_context("settings.global.restore"),
-                )
+                .begin(&mut client, scope.mutation_context(action))
                 .await?;
             for field in &fields {
                 if let Err(error) = self
                     .core
                     .settings
-                    .delete(&mut tx, scope, Target::Global, field.key)
+                    .delete(&mut tx, scope, target, field.key)
                     .await
                 {
                     return self.refused(error, Some(field.editor.label));
@@ -284,7 +386,12 @@ impl Editor {
     fn refused(&mut self, error: Error, label: Option<&str>) -> Result<()> {
         let message = match error {
             Error::Unauthorized => return Err(Error::Unauthorized),
+            Error::Forbidden if self.company.is_some() => COMPANY_ARCHIVED.to_owned(),
             Error::Forbidden => PLATFORM_DENIED.to_owned(),
+            Error::NotFound if self.company.is_some() => {
+                self.company = None;
+                COMPANY_GONE.to_owned()
+            }
             Error::Invalid => match label {
                 Some(label) => format!("{label}: the value was refused; nothing was changed."),
                 None => UNAVAILABLE.to_owned(),
@@ -345,13 +452,20 @@ impl Editor {
         let client = self.core.db.get().await?;
         let can_reveal = reveal::available(&**client, &plan, &self.core.settings, scope).await?;
         let keyed = self.core.settings.encryption_available();
+        let company = self.company.is_some();
         let fields = plan
             .fields
             .iter()
-            .map(|field| card(field, can_reveal, keyed))
+            .map(|field| card(field, can_reveal, keyed, company))
             .collect::<Result<Vec<_>>>()?;
         let empty = if fields.is_empty() {
-            let state = if plan.withheld.is_empty() {
+            let state = if plan.withheld.is_empty() && company {
+                EmptyState::missing(
+                    "No installed module contributes editable company settings.",
+                    "",
+                )
+                .id("company-settings-empty")
+            } else if plan.withheld.is_empty() {
                 EmptyState::missing(
                     "No installed module contributes settings to this group.",
                     "",
@@ -377,19 +491,44 @@ impl Editor {
             ..Header::default()
         })?;
         let scopes = if plan.capabilities.contains(COMPANY_MANAGE) {
+            let companies = self
+                .core
+                .parties
+                .selectable_organisations(&**client, scope, COMPANY_MANAGE)
+                .await?;
+            let mut options = vec![("Global".to_owned(), "global".to_owned())];
+            options.extend(
+                companies
+                    .iter()
+                    .map(|company| (company.name.clone(), company.id.get().to_string())),
+            );
+            let options: Vec<(&str, &str)> = options
+                .iter()
+                .map(|(label, value)| (label.as_str(), value.as_str()))
+                .collect();
             let picker = Control::named("scope[company_id]")
                 .id("settings-company")
                 .kind(InputKind::Select)
                 .label("Settings scope")
-                .options(choices(&[("Global", "global")]))
-                .value("global");
+                .options(choices(&options))
+                .value(
+                    self.company
+                        .as_ref()
+                        .map_or("global".to_owned(), |company| company.id.get().to_string()),
+                );
             render(ScopePicker {
                 picker,
-                none: EmptyState::missing(
-                    "No companies are available to manage.",
-                    "Ask an operator to review your company access.",
-                )
-                .id("company-settings-no-targets"),
+                none: if companies.is_empty() {
+                    Some(
+                        EmptyState::missing(
+                            "No companies are available to manage.",
+                            "Ask an operator to review your company access.",
+                        )
+                        .id("company-settings-no-targets"),
+                    )
+                } else {
+                    None
+                },
             })?
         } else {
             render(Withheld {
@@ -451,7 +590,11 @@ impl Editor {
                 id: "settings-restore",
                 button_type: "button",
                 event: "request_restore",
-                body: Html::text("Restore Defaults"),
+                body: Html::text(if company {
+                    "Clear overrides"
+                } else {
+                    "Restore Defaults"
+                }),
                 ..Button::default()
             })?,
             save: render(Button {
@@ -482,7 +625,7 @@ fn withheld_wording(capabilities: &std::collections::BTreeSet<&str>) -> String {
     }
 }
 
-fn card(field: &Field, can_reveal: bool, keyed: bool) -> Result<FieldCard> {
+fn card(field: &Field, can_reveal: bool, keyed: bool, company: bool) -> Result<FieldCard> {
     let dom = field.dom();
     let id = format!("input-{dom}");
     let name = format!("settings[{}]", field.key);
@@ -522,12 +665,26 @@ fn card(field: &Field, can_reveal: bool, keyed: bool) -> Result<FieldCard> {
             value: form::input_value(field),
         })?
     };
+    // Bilimbi `source_note/2`: an inherited value names the scope it comes
+    // from; the declared default is worded as such.
+    let note = match field.source {
+        _ if field.overridden => String::new(),
+        Some(ScopeKind::Global) if company => "Inherited from global".to_owned(),
+        Some(kind) if company => format!("Inherited from {}", kind.as_str()),
+        _ => "Inherited from the default".to_owned(),
+    };
     Ok(FieldCard {
         dom,
         label: field.editor.label,
         help: field.editor.help,
         control,
         overridden: field.overridden,
+        badge: if company {
+            "Company override"
+        } else {
+            "Set here"
+        },
+        note,
         encrypted: if !field.encrypted() {
             ""
         } else if keyed {
@@ -544,6 +701,8 @@ struct FieldCard {
     help: &'static str,
     control: Html,
     overridden: bool,
+    badge: &'static str,
+    note: String,
     encrypted: &'static str,
 }
 
@@ -584,12 +743,12 @@ struct EmptyCard {
 }
 #[derive(Template)]
 #[template(
-    source = r#"{% import "forms.html" as forms %}{% import "lists.html" as lists %}<form id="settings-scope-form" data-event="switch_scope" data-change class="mt-4">{% call forms::input(field=picker) %}{% endcall %}</form>{% call lists::empty_state(e=none) %}{% endcall %}"#,
+    source = r#"{% import "forms.html" as forms %}{% import "lists.html" as lists %}<form id="settings-scope-form" data-event="switch_scope" data-change class="mt-4">{% call forms::input(field=picker) %}{% endcall %}</form>{% if let Some(e) = none %}{% call lists::empty_state(e=e) %}{% endcall %}{% endif %}"#,
     ext = "html"
 )]
 struct ScopePicker {
     picker: Control,
-    none: EmptyState,
+    none: Option<EmptyState>,
 }
 #[derive(Template)]
 #[template(

@@ -74,6 +74,7 @@ inventory::submit! {
                 settings: services.get("base/settings.store")?,
                 boundary: services.get("base/database.mutations")?,
                 authentication: services.get("base/tenancy.authentication")?,
+                parties: services.get("base/tenancy.parties")?,
                 throttle: reveal::Throttle::default(),
             })))))
         } }],

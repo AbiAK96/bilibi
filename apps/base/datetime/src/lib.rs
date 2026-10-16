@@ -271,9 +271,11 @@ fn mode_accepts(value: &Value) -> bool {
     value.as_str().and_then(Mode::parse).is_some()
 }
 
-// Editor metadata (group, capability `admin.company.update`) is attached by the
-// settings editor (P3) and Core Company's profile screen; declaring a
-// capability that does not exist yet would publish an unknown capability.
+// Bilimbi's `localization.timezone` definition names Core Company's
+// `admin.company.update` as its editor capability (`editable:
+// "company.profile"`); the key is a durable contract Authz checks against the
+// installed vocabulary at boot. The settings editor shows it under a picked
+// company (K15); it has no global scope, so the global page never does.
 inventory::submit! {
     Contribution::new(DEFINITIONS, TIMEZONE_KEY,
         Provenance { module: "base/datetime", source: file!(), line: line!() },
@@ -283,7 +285,13 @@ inventory::submit! {
             default: || json!(DEFAULT_TIMEZONE),
             nullable: false, encrypted: false, minimum: None, maximum: None,
             validator: Some(Validator { accepts: timezone_accepts, message: "must be a valid IANA timezone" }),
-            editor: None,
+            editor: Some(bilibi_settings::Editor {
+                group: "Company profile",
+                label: "Timezone",
+                help: "Default timezone for this company.",
+                capability: Some("admin.company.update"),
+                reveal_duration_ms: 5_000,
+            }),
         }))
 }
 inventory::submit! {

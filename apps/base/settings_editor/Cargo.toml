@@ -13,6 +13,7 @@ bilibi-database.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-settings = { path = "../settings" }
+bilibi-party-ids = { path = "../party_ids" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
 inventory.workspace = true

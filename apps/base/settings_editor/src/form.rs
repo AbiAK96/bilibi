@@ -1,7 +1,8 @@
 //! The field plan and save semantics behind the editor (Bilimbi
 //! `Settings.Form`). The screen names no fields: every contributed definition
-//! with editor metadata and a global scope is one, so a module that declares a
-//! setting gets it on screen with no UI change.
+//! with editor metadata and the selected target's scope (global, or company
+//! once a company is picked) is one, so a module that declares a setting gets
+//! it on screen with no UI change.
 //!
 //! Three rules are easy to get wrong. Clearing is not writing an empty value:
 //! a blank submission deletes this scope's override so the value inherits
@@ -27,6 +28,8 @@ pub struct Field {
     pub value: Value,
     pub overridden: bool,
     pub stored_secret: bool,
+    /// Where an inherited value comes from; `None` is the declared default.
+    pub source: Option<ScopeKind>,
 }
 impl Field {
     pub fn dom(&self) -> String {
@@ -60,7 +63,14 @@ pub async fn plan(
     client: &(impl GenericClient + Sync),
     settings: &Settings,
     scope: &Scope,
+    target: Target,
 ) -> Result<Plan> {
+    // The company target shows company-scoped definitions only (Bilimbi
+    // `company_groups/0`); the global page shows global ones.
+    let wanted = match target {
+        Target::Company(_) => ScopeKind::Company,
+        _ => ScopeKind::Global,
+    };
     let capabilities = effective_capabilities(client, scope).await?;
     let mut visible = Vec::new();
     let mut withheld = BTreeSet::new();
@@ -71,7 +81,7 @@ pub async fn plan(
         let Some(editor) = definition.editor.as_ref() else {
             continue;
         };
-        if owned.pattern.contains('*') || !definition.scopes.contains(&ScopeKind::Global) {
+        if owned.pattern.contains('*') || !definition.scopes.contains(&wanted) {
             continue;
         }
         match editor.capability {
@@ -83,7 +93,7 @@ pub async fn plan(
     }
     let keys: Vec<&str> = visible.iter().map(|(key, _, _)| *key).collect();
     let mut resolved = settings
-        .resolve_masked(client, scope, Target::Global, &keys)
+        .resolve_masked(client, scope, target, &keys)
         .await?;
     let fields = visible
         .into_iter()
@@ -101,6 +111,7 @@ pub async fn plan(
                     resolved.value
                 },
                 overridden: resolved.overridden,
+                source: resolved.source.map(|source| source.kind),
             })
         })
         .collect();
