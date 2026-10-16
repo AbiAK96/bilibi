@@ -230,6 +230,9 @@ pub async fn login(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let mut form = LoginForm {
+        // A rejected attempt re-renders the card at the address it was posted
+        // from, password kept, as Bilimbi's live form does.
+        password: submission.password.clone(),
         email: bounded(&submission.email),
         ..LoginForm::default()
     };

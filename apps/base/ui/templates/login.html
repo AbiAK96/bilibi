@@ -12,7 +12,7 @@
 <div class="flex flex-col gap-5">
 {% if session_expired %}<div id="login-session-expired">{% call feedback::alert(kind=bilibi_ui::StatusKind::Warning) %}Your session expired. Sign in again to continue.{% endcall %}</div>{% endif %}
 {% if !form_error.is_empty() %}<div id="login-form-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="login-form-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
-<form id="login-form" action="/login" method="post" class="flex flex-col gap-4">
+<form id="login-form" method="post" class="flex flex-col gap-4">
 {{ email }}
 <div class="relative">{{ password }}<a href="/forgot-password" id="login-forgot-password" class="absolute inset-x-0 -top-0.5 text-right text-xs text-ink-subtle">Forgot your password?</a></div>
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-submit", class="w-full", button_type="submit", working="Signing in…") %}Log in{% endcall %}

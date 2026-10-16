@@ -176,7 +176,7 @@ pub fn router(app: App) -> Router {
     routes::install(Router::new(), &app.routes)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
-        .route("/", get(auth::home))
+        .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route(
             "/forgot-password",
