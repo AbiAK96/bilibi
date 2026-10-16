@@ -76,8 +76,9 @@ browser dispatches after patching as `window` events `bilibi:<name>` with the
 pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
 `secret:reveal`. Never push a value the owner has not just reauthorized.
 
-The browser adapter supports `data-target` on event buttons/forms and these
-DOM events:
+The browser adapter supports `data-target` on event buttons/forms; a button or
+form without one reports to the nearest `data-target` ancestor (a mounted
+panel's root element), else to the page. It also supports these DOM events:
 
 ```js
 document.dispatchEvent(new CustomEvent('bilibi:event', {

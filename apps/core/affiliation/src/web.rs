@@ -20,10 +20,10 @@ use bilibi_ui::{
     lists::RecordLink,
     page::*,
     params, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Choice, ColumnsOutcome,
-    Combobox, CommitStates, CommitStatus, ConfirmDialog, Field, Filter, FilterToolbar, FlexRow,
-    FlexTable, Html, IconButton, IconKind, InlineEdit, InlineField, InputKind, ListColumns,
-    ListSpec, ListState, Modal, Pagination, Restricted, RestrictedField, SectionHeading, SortDir,
-    TableEmpty, ToolbarControl,
+    Combobox, CommitStates, CommitStatus, ConfirmDialog, CreateButton, Field, Filter,
+    FilterToolbar, FlexRow, FlexTable, Html, IconButton, IconKind, InlineEdit, InlineField,
+    InputKind, ListColumns, ListSpec, ListState, Modal, Pagination, Restricted, RestrictedField,
+    SectionHeading, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::Value;
 use std::{
@@ -465,7 +465,6 @@ impl Panel {
         .allow_empty();
         field.id_value = key;
         if matches!(column, "from" | "to") {
-            field = field.placeholder("YYYY-MM-DD");
             field.class = "tabular-nums".into();
         }
         if !editable {
@@ -707,14 +706,12 @@ impl Panel {
         }
         let mut actions = Html::EMPTY;
         if can_create && !self.adding {
-            actions.push(&render(Button {
+            actions.push(&render(CreateButton {
+                noun: "Affiliation",
                 id: &self.dom("add-toggle"),
-                button_type: "button",
                 event: "toggle_add",
-                variant: ButtonVariant::Primary,
-                class: "text-xs px-2.5 py-1",
-                body: Html::text("Add"),
-                ..Button::default()
+                button_type: "button",
+                ..CreateButton::default()
             })?);
         }
         let mut head = render(SectionHeading {
@@ -746,7 +743,7 @@ impl Panel {
                     &form["history"],
                     bilibi_ui::choices(&[
                         ("Current affiliations", "current"),
-                        ("Include ended and unlinked", "all"),
+                        ("All dated history", "all"),
                     ]),
                 ),
             ],

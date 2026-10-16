@@ -81,10 +81,9 @@ and owns its own HR dates/status; affiliation dates do not determine employment
 status. Ended affiliation identity remains provable while linked so historical
 Employment can refer to it. People must decide its own date eligibility.
 
-K19 adds Person/Organisation affiliation editors and headless
-operation discovery/preview/commit adapters using these owner APIs. K18 adds no
-new page or separate authorization policy. Core contacts and work affiliations
-work with People absent.
+K18 adds no page or separate authorization policy; the panels and headless
+operations below (K19) reuse these owner APIs. Core contacts and work
+affiliations work with People absent.
 
 ## Runtime walkthrough (no unit tests)
 
@@ -101,3 +100,59 @@ live capability revocation, atomic audit failure, rollback event suppression,
 end/unlink retention and archived/retired owner guards. It creates no account,
 People table or unit-test infrastructure. Use a fresh disposable database for
 repeatable records; do not run the fixture on a shared working database.
+
+## Person and Company panels (K19)
+
+`src/web.rs` contributes two discovered record embeds, `person.affiliations`
+(`Record { kind: "core/person" }`) and `company.affiliations`
+(`Record { kind: "core/company" }`), gated on `admin.affiliation.list`. Person
+detail mounts every `core/person` record embed; Company detail mounts every
+`core/company` one through `web::company_panels` (`apps/core/company/src/web/panels.rs`),
+the counterpart of Bilimbi's `<.discovered_panel key="company.employees">`.
+The host passes its own proven record ID (`id`) and a stable anchor (`panel`);
+the panel never guesses a company-to-person link and reauthorizes every read
+and write through `AffiliationService`.
+
+Both panels are one shared FlexTable in a `p-0` card under the section heading,
+as Bilimbi's company employees panel and employee subordinates section are:
+the other party as a record link, title, work email, work phone, from, to and
+status, with `ListColumns` show/hide, drag reorder, row height and Compact/
+Normal presets, heading sort on party, title, dates and status, a search over
+the listed rows, 25/50/100/300-row pages and a History filter. "Current"
+lists affiliations in effect on the display calendar's day through the
+owner's `on` filter; "All dated history" includes ended, upcoming and
+unlinked records. The panel reads at most 300 rows before filtering in memory.
+
+With `admin.affiliation.update`, title, work contacts and ISO dates edit in
+place through the shared inline editors with per-fact commit outcomes:
+refused shapes, stale versions and hidden contacts keep the stored value, and
+a hidden work contact renders the shared restricted marker. "+ Affiliation"
+(`admin.affiliation.create`, host writable) opens an add box whose company or
+person combobox offers up to 300 live candidates; End opens the shared modal
+with an inclusive last day defaulting to today; Unlink
+(`admin.affiliation.unlink`) uses the shared confirmation. Unlinked rows are
+read-only and keep their history. A viewer sees the list only; staff see add
+and inline edits without Unlink. Panels refresh after the owner's committed
+changes through `subscribe()`.
+
+`core.affiliation.list`, `.get`, `.create`, `.update`, `.end`, `.unlink` and
+the `core.affiliation` guide are contributed to Agent API
+(`src/agent_operations.rs`). Writes are E2 safe writes: previews run the
+owner's authorization, shape, restriction and owner-eligibility checks without
+locking (`identity::preview_create`, `identity::preview_write`) and commits
+write inside the plan's audited transaction. Records flatten the work fields
+and list hidden contacts as `{"restricted":true}`.
+
+Migrate/seed a disposable DB, then run:
+
+```sh
+BILIBI_AFFILIATION_DEMO=disposable cargo run -p bilibi-affiliation --example k19-operations-walkthrough --locked
+```
+
+It prints discovery/describe/guide, a viewer's read-only reach, reviewed
+create/update/end/unlink commits, replay refusal, day-filtered lists and the
+reversed-date, stale-version, missing-company and missing-capability refusals
+a reviewer sees before anything is written. For the screens, run the app,
+open a person from `/persons` or a company from `/companies` and use the
+Affiliations card; the person page's panel and the company page's panel show
+the same record from either side.

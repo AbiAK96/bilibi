@@ -71,6 +71,16 @@ impl Affiliation {
     /// names address its work contacts, with `restricted` naming hidden ones.
     pub fn json(&self) -> serde_json::Value {
         let mut value = self.audit_values();
+        for (key, instant) in [
+            ("created_at", Some(self.created_at)),
+            ("updated_at", Some(self.updated_at)),
+            ("unlinked_at", self.unlinked_at),
+        ] {
+            value[key] = match instant.and_then(|t| jiff::Timestamp::try_from(t).ok()) {
+                Some(stamp) => serde_json::Value::String(stamp.to_string()),
+                None => serde_json::Value::Null,
+            };
+        }
         value["restricted"] = serde_json::Value::Array(
             self.restricted
                 .iter()
