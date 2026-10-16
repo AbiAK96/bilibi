@@ -6,7 +6,8 @@ use crate::{
 };
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
-use bilibi_tenancy::Scope;
+use bilibi_party_ids::OrganisationId;
+use bilibi_tenancy::{PartyProofs, Scope};
 use serde_json::json;
 use std::sync::Arc;
 use tokio_postgres::{GenericClient, Transaction};
@@ -21,6 +22,7 @@ pub struct Grants {
     boundary: Arc<MutationBoundary>,
     vocabulary: Vocabulary,
     authentication: Arc<bilibi_tenancy::Authentication>,
+    parties: Arc<PartyProofs>,
 }
 impl Grants {
     pub fn new(
@@ -28,12 +30,14 @@ impl Grants {
         boundary: Arc<MutationBoundary>,
         vocabulary: Vocabulary,
         authentication: Arc<bilibi_tenancy::Authentication>,
+        parties: Arc<PartyProofs>,
     ) -> Self {
         Self {
             db,
             boundary,
             vocabulary,
             authentication,
+            parties,
         }
     }
     pub fn vocabulary(&self) -> &Vocabulary {
@@ -143,12 +147,14 @@ impl Grants {
         })).await?;
         tx.commit().await
     }
-    /// Create a custom role (never system, never grant-all) in the actor's
-    /// tenant. It starts with no capabilities. A name or code already used in
-    /// the tenant comes back as field errors rather than a failed write.
-    /// K15 binds an owning company; until then the tenant owns custom roles.
+    /// Create a custom role (never system, never grant-all) owned by a
+    /// company of the actor's tenant (Bilimbi `create_role/3`). It starts with
+    /// no capabilities. A name or code already used in the tenant, and a
+    /// company that is missing, cross-tenant or archived, come back as field
+    /// errors rather than a failed write: the company is reproved through
+    /// Tenancy on the write's own transaction, never trusted from the form.
     pub async fn create_role(&self, actor: &Scope, role: &NewRole) -> Result<CreatedRole> {
-        let errors = crate::roles::validate(role);
+        let mut errors = crate::roles::validate(role);
         if !errors.is_empty() {
             return Ok(CreatedRole::Refused(errors));
         }
@@ -159,6 +165,23 @@ impl Grants {
             .await?;
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, crate::roles::CREATE).await?;
+        let company = role
+            .company_id
+            .and_then(|id| OrganisationId::new(id).ok())
+            .ok_or(Error::Invalid)?;
+        match self.parties.organisation(tx.sql(), actor, company).await {
+            Ok(_) => {}
+            Err(Error::NotFound) => errors
+                .company_id
+                .push("is no longer available; choose another company".into()),
+            Err(Error::Forbidden) => errors
+                .company_id
+                .push("is archived and read-only; choose another company".into()),
+            Err(error) => return Err(error),
+        }
+        if !errors.is_empty() {
+            return Ok(CreatedRole::Refused(errors));
+        }
         let tenant = actor.tenant();
         // Serialize creates in the tenant so the uniqueness answer holds until
         // the insert; a refused create writes nothing and is rolled back.
@@ -180,9 +203,10 @@ impl Grants {
             return Ok(CreatedRole::Refused(errors));
         }
         let role = role.clone();
+        let owner = company.get();
         let id = tx.mutate(|sql|Box::pin(async move {
-            let id:i64=sql.query_one("INSERT INTO roles(tenant_id,name,code,description,is_system,grant_all) VALUES($1,$2,$3,$4,false,false) RETURNING id",&[&tenant,&role.name,&role.code,&role.description]).await?.get(0);
-            Ok((id,vec![Change{kind:"authz.role".into(),id,old:json!({}),new:json!({"name":role.name,"code":role.code,"description":role.description,"is_system":false,"grant_all":false})}]))
+            let id:i64=sql.query_one("INSERT INTO roles(tenant_id,company_id,name,code,description,is_system,grant_all) VALUES($1,$2,$3,$4,$5,false,false) RETURNING id",&[&tenant,&owner,&role.name,&role.code,&role.description]).await?.get(0);
+            Ok((id,vec![Change{kind:"authz.role".into(),id,old:json!({}),new:json!({"company_id":owner,"name":role.name,"code":role.code,"description":role.description,"is_system":false,"grant_all":false})}]))
         })).await?;
         tx.commit().await?;
         Ok(CreatedRole::Created(id))

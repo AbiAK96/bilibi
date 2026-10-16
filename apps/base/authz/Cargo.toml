@@ -10,6 +10,7 @@ bilibi-database.workspace = true
 tokio-postgres.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
+bilibi-party-ids = { path = "../party_ids" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-audit.workspace = true
 serde_json.workspace = true

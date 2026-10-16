@@ -109,6 +109,8 @@ pub struct Pages {
     pub locales: Arc<Locales>,
     pub grants: Arc<crate::grants::Grants>,
     pub restrictions: Arc<crate::restrictions::FieldRestrictions>,
+    /// Names and proves the companies custom roles belong to.
+    pub parties: Arc<bilibi_tenancy::PartyProofs>,
 }
 impl Pages {
     async fn view(
@@ -423,7 +425,7 @@ impl Page<Scope, Error> for Pages {
                     )
                     .await?
                 }
-                "role-create" => crate::roles_web::create_view()?,
+                "role-create" => crate::roles_web::create_view(self, scope).await?,
                 "role" => {
                     let (html, name) = self
                         .role_view(
@@ -467,12 +469,10 @@ impl Page<Scope, Error> for Pages {
                     state: crate::roles_web::parse(request.query)?,
                     columns: crate::roles_web::columns(),
                 }),
-                "role-create" => Box::new(crate::roles_web::RoleCreate {
-                    pages: self.clone(),
-                    role: Default::default(),
-                    errors: Default::default(),
-                    created: false,
-                }),
+                "role-create" => {
+                    let scope = request.scope.ok_or(Error::Unauthorized)?;
+                    Box::new(crate::roles_web::RoleCreate::mount(self.clone(), scope).await?)
+                }
                 "role" => Box::new(crate::roles_web::RoleShow {
                     pages: self.clone(),
                     id: role_id(&request)?,

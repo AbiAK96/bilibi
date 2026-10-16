@@ -1,10 +1,12 @@
 //! Role administration read model: one tenant's authorization roles, searched,
 //! sorted and paged in SQL, and one role's grants and holders.
 //!
-//! Every tenant role is listed: Bilibi seeds system roles per tenant and keeps
-//! custom roles in the tenant until K15 binds them to an owning company, so the
-//! Bilimbi company-visibility rule has nothing to narrow yet. Principals are
-//! the user ids holding the role; Base does not join Core account names.
+//! A system role is listed for its tenant; a custom role is listed when its
+//! owning company is one the caller's organisation directory names, or when
+//! it has none (a legacy role, labelled "Unowned" as Bilimbi labels it): the
+//! source's `company_visibility/2`. The visible company ids come from
+//! Tenancy's directory, so Base never joins Core's `companies`. Principals
+//! are the user ids holding the role; Base does not join Core account names.
 //! Callers must already hold the route's capability (`admin.authz.role.list`
 //! or `.view`), which the host checks on every request and live event.
 use crate::decision_logs::escape_like;
@@ -61,6 +63,9 @@ pub struct Query {
 #[derive(Clone, Debug)]
 pub struct RoleSummary {
     pub id: i64,
+    /// The owning company of a custom role; `None` for system roles and for
+    /// custom roles created before ownership was bound (K15).
+    pub company_id: Option<i64>,
     pub name: String,
     /// Tenant-defined roles have no code; reconciliation fills system ones.
     pub code: Option<String>,
@@ -84,7 +89,7 @@ pub struct RoleDetails {
     pub principals: Vec<i64>,
 }
 
-const SUMMARY: &str = "r.id,r.name,r.code,r.description,r.is_system,r.grant_all,\
+const SUMMARY: &str = "r.id,r.name,r.code,r.description,r.is_system,r.grant_all,r.company_id,\
  (SELECT count(*) FROM role_capabilities c WHERE c.tenant_id=r.tenant_id AND c.role_id=r.id),\
  (SELECT count(*) FROM principal_roles p WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id)";
 
@@ -96,14 +101,22 @@ fn summary(row: &tokio_postgres::Row) -> RoleSummary {
         description: row.get(3),
         is_system: row.get(4),
         grant_all: row.get(5),
-        capability_count: row.get(6),
-        principal_count: row.get(7),
+        capability_count: row.get(7),
+        principal_count: row.get(8),
+        company_id: row.get(6),
     }
 }
+/// Bilimbi `company_visibility/2`: unowned or owned by a visible company.
+const VISIBLE: &str = "(r.company_id IS NULL OR r.company_id = ANY($2))";
 
 /// One page of the tenant's roles. An out-of-range page returns no entries
 /// with the real total, so the caller can land on the last page.
-pub async fn list(client: &impl GenericClient, scope: &Scope, query: &Query) -> Result<RolePage> {
+pub async fn list(
+    client: &impl GenericClient,
+    scope: &Scope,
+    companies: &[i64],
+    query: &Query,
+) -> Result<RolePage> {
     let search = query.search.trim();
     if search.len() > MAX_SEARCH
         || query.page == 0
@@ -114,11 +127,11 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, query: &Query) -> 
     }
     let tenant = scope.tenant();
     let pattern = format!("%{}%", escape_like(search));
-    let mut filter = "r.tenant_id=$1".to_owned();
-    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&tenant];
+    let mut filter = format!("r.tenant_id=$1 AND {VISIBLE}");
+    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&tenant, &companies];
     if !search.is_empty() {
         params.push(&pattern);
-        filter.push_str(" AND (r.name ILIKE $2 OR r.code ILIKE $2 OR r.description ILIKE $2)");
+        filter.push_str(" AND (r.name ILIKE $3 OR r.code ILIKE $3 OR r.description ILIKE $3)");
     }
     let total: i64 = client
         .query_one(
@@ -199,13 +212,16 @@ pub async fn grants_of(
 pub async fn get(
     client: &impl GenericClient,
     scope: &Scope,
+    companies: &[i64],
     id: i64,
 ) -> Result<Option<RoleDetails>> {
     let tenant = scope.tenant();
     let Some(row) = client
         .query_opt(
-            &format!("SELECT {SUMMARY} FROM roles r WHERE r.tenant_id=$1 AND r.id=$2"),
-            &[&tenant, &id],
+            &format!(
+                "SELECT {SUMMARY} FROM roles r WHERE r.tenant_id=$1 AND {VISIBLE} AND r.id=$3"
+            ),
+            &[&tenant, &companies, &id],
         )
         .await?
     else {
@@ -236,9 +252,12 @@ pub async fn get(
     }))
 }
 
-/// A new custom role as the create form submits it, already trimmed.
+/// A new custom role as the create form submits it, already trimmed. The
+/// owning company is required (Bilimbi `role_create_live`); it is an id the
+/// write reproves as a live, unarchived company of the actor's tenant.
 #[derive(Clone, Debug, Default)]
 pub struct NewRole {
+    pub company_id: Option<i64>,
     pub name: String,
     pub code: String,
     pub description: String,
@@ -247,20 +266,28 @@ pub struct NewRole {
 /// Field errors in Bilimbi's changeset wording, keyed by form field.
 #[derive(Clone, Debug, Default)]
 pub struct RoleErrors {
+    pub company_id: Vec<String>,
     pub name: Vec<String>,
     pub code: Vec<String>,
     pub description: Vec<String>,
 }
 impl RoleErrors {
     pub fn is_empty(&self) -> bool {
-        self.name.is_empty() && self.code.is_empty() && self.description.is_empty()
+        self.company_id.is_empty()
+            && self.name.is_empty()
+            && self.code.is_empty()
+            && self.description.is_empty()
     }
 }
 
-/// The source's `form_changeset`: required name/code, length bounds and the
-/// code alphabet. Uniqueness is the write's to decide.
+/// The source's `form_changeset`: required company/name/code, length bounds
+/// and the code alphabet. Uniqueness and the company's standing are the
+/// write's to decide.
 pub fn validate(role: &NewRole) -> RoleErrors {
     let mut errors = RoleErrors::default();
+    if role.company_id.is_none_or(|id| id <= 0) {
+        errors.company_id.push("can't be blank".into());
+    }
     if role.name.is_empty() {
         errors.name.push("can't be blank".into());
     } else if role.name.chars().count() > 255 {
