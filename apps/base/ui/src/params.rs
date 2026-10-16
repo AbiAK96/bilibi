@@ -66,3 +66,34 @@ pub fn string_values(payload: &serde_json::Value) -> std::collections::HashMap<S
         .take(64)
         .collect()
 }
+
+/// `path` with `query` as its sorted, percent-encoded query string: the
+/// address the live host writes for a page's canonical query, so a link built
+/// here (a tab that patches its page) names the same URL the page answers with.
+pub fn address(path: &str, query: &std::collections::HashMap<String, String>) -> String {
+    let mut pairs: Vec<_> = query.iter().collect();
+    pairs.sort_unstable();
+    let query = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{}={}", encode(key), encode(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    if query.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
+fn encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}

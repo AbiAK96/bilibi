@@ -62,8 +62,12 @@ Responses are `page` (complete `#app`, canonical URL, notice and row count),
 (message, target and clear flag). Accepted user events echo the request ID;
 background updates use null. A rejected intent with a valid request ID also
 acknowledges that ID. Canonical query values are encoded by Web, never supplied
-as a client URL. User navigation/query changes push history when the URL changes;
-mount and background refresh replace it. Browser Back remounts the historical URL,
+as a client URL. A mount or Back keeps the browser's address while the page's
+canonical query only adds values it left out, so a list opened at its bare path
+stays there (Bilimbi pushes a patch only on change); a page that drops or
+corrects a value the address carries replaces it with the canonical one. After
+that the URL is written only when the canonical address changes: user
+navigation/query changes push history, background refresh replaces it. Browser Back remounts the historical URL,
 except within a page that marks an element `data-history="params"` (the tiled
 workspace): there a Back or Forward to the same path is a `params` update of the
 mounted state, Bilimbi's `handle_params` on a live patch, so the DOM it keeps is

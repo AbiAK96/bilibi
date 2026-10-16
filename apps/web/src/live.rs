@@ -8,6 +8,7 @@ use bilibi_security::Scope;
 use bilibi_ui::page::{
     Change, LiveBody, LiveInput, LiveRequest, LiveState, PageRequest, PanelSpec,
 };
+use bilibi_ui::params;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -144,6 +145,12 @@ struct Session {
     shell: HashMap<String, Panel>,
     generation: u64,
     sender: mpsc::Sender<Wake>,
+    /// The address the page last answered with: path and canonical query.
+    canonical: String,
+    /// The browser's own query on a mount or a Back step, which the next
+    /// page reply keeps in place of the canonical one when that only adds
+    /// values the address left out (Bilimbi patches the URL only on change).
+    address: Option<HashMap<String, String>>,
 }
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
@@ -192,6 +199,7 @@ impl Session {
         self.path = path;
         self.route = bound.route.path.to_owned();
         self.page_route = Some(bound.route);
+        self.address = Some(query);
         self.sync_shell(app, token, &scope).await?;
         self.update(app, token, "page", LiveInput::Refresh).await
     }
@@ -335,18 +343,24 @@ impl Session {
         )
         .await?
         .html;
-        let mut pairs: Vec<_> = body.query.iter().collect();
-        pairs.sort_by_key(|(key, _)| *key);
-        let query = pairs
-            .into_iter()
-            .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let url = if query.is_empty() {
-            self.path.clone()
-        } else {
-            format!("{}?{query}", self.path)
+        let canonical = params::address(&self.path, &body.query);
+        // A list's first render keeps a clean address: the browser's own query
+        // stands while every value it carries is the page's too, and only a
+        // reply whose state moved writes the canonical query (Bilimbi's
+        // push_patch). A value the page dropped or corrected is rewritten, as
+        // the workspace's consumed `open` is.
+        let url = match self.address.take() {
+            Some(address)
+                if address
+                    .iter()
+                    .all(|(key, value)| body.query.get(key) == Some(value)) =>
+            {
+                Some(params::address(&self.path, &address))
+            }
+            Some(_) => Some(canonical.clone()),
+            None => (canonical != self.canonical).then(|| canonical.clone()),
         };
+        self.canonical = canonical;
         Ok(
             json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows, "redirect":body.redirect, "events":events(&body.events)}),
         )
@@ -455,6 +469,7 @@ impl Session {
             Event::Params { params, path } => match path {
                 Some(path) => match self.relocate(app, token, &path).await? {
                     Some(route_params) => {
+                        self.address = Some(params.clone());
                         let mut params = params;
                         params.extend(route_params);
                         self.update(app, token, "page", LiveInput::Params(&params))
@@ -487,18 +502,6 @@ fn events(pushes: &[(&'static str, Value)]) -> Value {
         .map(|(name, detail)| json!({"name":name, "detail":detail}))
         .collect()
 }
-fn encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
-}
 fn fatal(error: &Error) -> bool {
     matches!(
         error,
@@ -523,6 +526,8 @@ pub async fn run(app: App, token: String, mut socket: WebSocket, framed: bool) {
         shell: HashMap::new(),
         generation: 0,
         sender,
+        canonical: String::new(),
+        address: None,
     };
     // A termination of this socket's session (logout elsewhere, an operator,
     // a credential change) signs this page out at once: the browser is sent
