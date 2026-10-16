@@ -16,7 +16,8 @@ use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, BuiltinColumn, Card, ColumnsOutcome, FilterToolbar, FlexRow, FlexTable, Header,
-    ListColumns, ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
+    IconButton, IconContext, ListColumns, ListSpec, ListState, Pagination, SortDir, TableEmpty,
+    ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -98,6 +99,12 @@ pub(crate) fn view(state: &mut ListState, columns: &ListColumns) -> Result<Strin
     let mut html = render(Header {
         title: bilibi_ui::Html::text("Capabilities"),
         subtitle: "All registered capability keys and their source modules",
+        title_actions: render(IconButton {
+            context: IconContext::Inline,
+            id: "capabilities-pin",
+            nav_pin: "nav-admin-authz-capability",
+            ..IconButton::new("bilimbi-pin", "Pin Capabilities to sidebar")
+        })?,
         ..Header::default()
     })?;
     let form = state.filters_form();

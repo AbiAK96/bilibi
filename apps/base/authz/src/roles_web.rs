@@ -26,8 +26,9 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
     ColumnsOutcome, CreateButton, Fact, Facts, Field, FilterToolbar, FlashGroup, FlashMap, FlexRow,
-    FlexTable, Header, Html, InputKind, ListColumns, ListSpec, ListState, PageCounts, PageVariant,
-    Pagination, RowMode, SectionHeading, SortDir, TableEmpty, ToolbarControl,
+    FlexTable, Header, Html, IconButton, IconContext, InputKind, ListColumns, ListSpec, ListState,
+    PageCounts, PageVariant, Pagination, RowMode, SectionHeading, SortDir, TableEmpty,
+    ToolbarControl,
 };
 use std::{
     collections::HashMap,
@@ -232,6 +233,12 @@ impl Pages {
         let mut html = render(Header {
             title: Html::text("Roles"),
             subtitle: "System roles ship with the platform; custom roles belong to this tenant",
+            title_actions: render(IconButton {
+                context: IconContext::Inline,
+                id: "roles-pin",
+                nav_pin: "nav-admin-authz-role",
+                ..IconButton::new("bilimbi-pin", "Pin Roles to sidebar")
+            })?,
             actions,
             ..Header::default()
         })?;
@@ -330,6 +337,8 @@ fn section(id: &str, card: &str, title: &str, body: Html) -> Result<Html> {
         id: card,
         class: "mt-6",
         inner_class: "p-5 sm:p-6",
+        role: "region",
+        labelledby: id,
         body: inner,
         ..Card::default()
     })

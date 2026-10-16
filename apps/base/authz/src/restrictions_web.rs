@@ -77,6 +77,7 @@ enum Dialog {
 #[template(path = "field_restrictions.html")]
 struct View<'a> {
     flash: FlashMap<'a>,
+    title_actions: Html,
     actions: Html,
     table: Html,
     dialog: Html,
@@ -582,6 +583,12 @@ impl Screen {
         };
         let view = View {
             flash,
+            title_actions: render(IconButton {
+                context: IconContext::Inline,
+                id: "field-restrictions-pin",
+                nav_pin: "nav-admin-authz-field-restrictions",
+                ..IconButton::new("bilimbi-pin", "Pin Field Restrictions to sidebar")
+            })?,
             actions: render(Button {
                 variant: ButtonVariant::Primary,
                 id: "field-restrictions-new",

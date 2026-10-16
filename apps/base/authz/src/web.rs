@@ -28,8 +28,8 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, FilterToolbar, FlexRow,
-    FlexTable, Header, Html, ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir,
-    TableEmpty, ToolbarControl,
+    FlexTable, Header, Html, IconButton, IconContext, ListColumns, ListSpec, ListState, PageCounts,
+    Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -302,6 +302,12 @@ fn render_page(
     let mut html = render(Header {
         title: Html::text("Decision Logs"),
         subtitle: "Every authorization decision this tenant has recorded, newest first",
+        title_actions: render(IconButton {
+            context: IconContext::Inline,
+            id: "decision-logs-pin",
+            nav_pin: "nav-admin-authz-decision-log",
+            ..IconButton::new("bilimbi-pin", "Pin Decision Logs to sidebar")
+        })?,
         ..Header::default()
     })?;
     let form = state.filters_form();

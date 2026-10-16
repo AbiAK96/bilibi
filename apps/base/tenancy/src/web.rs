@@ -21,8 +21,8 @@ use bilibi_ui::page::{
 };
 use bilibi_ui::{
     choices, params, Badge, BadgeKind, BuiltinColumn, Choice, ColumnType, ColumnsOutcome,
-    CreateButton, Field, FlashMap, FlexRow, FlexTable, Html, InputKind, ListColumns, ListSpec,
-    ListState, SortDir, StatusKind, TableEmpty, NO_FLASH,
+    CreateButton, Field, FlashMap, FlexRow, FlexTable, Html, IconButton, IconContext, InputKind,
+    ListColumns, ListSpec, ListState, SortDir, StatusKind, TableEmpty, NO_FLASH,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -207,6 +207,7 @@ struct CreateForm {
 #[template(path = "tenants.html")]
 struct TenantsView<'a> {
     flash: FlashMap<'a>,
+    title_actions: Html,
     actions: Html,
     table: Html,
     create: Option<CreateForm>,
@@ -382,6 +383,12 @@ impl TenantsPage {
         }
         TenantsView {
             flash,
+            title_actions: render(IconButton {
+                context: IconContext::Inline,
+                id: "tenants-pin",
+                nav_pin: "nav-admin-tenancy-tenant",
+                ..IconButton::new("bilimbi-pin", "Pin Tenants to sidebar")
+            })?,
             actions,
             table: self.table(&rows)?,
             create: self.form(&identities),
