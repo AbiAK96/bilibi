@@ -118,6 +118,10 @@ def composition(layer, modules):
     text += ''.join(f'{name} = {{ path = "{path}" }}\n' for path, name in modules)
     code = '// Generated composition links. Runtime inventory owns discovery.\n'
     code += ''.join(f'pub use {name.replace("-", "_")} as {path.replace("/", "_")};\n' for path, name in modules)
+    if layer in CONTAINER_LAYERS:
+        # A mounted module's ID is its <container>/<module> path; boot refuses descriptors that differ.
+        code += '/// Mounted (module ID, crate) pairs, checked against registered descriptors at boot.\n#[rustfmt::skip]\n'
+        code += 'pub const MODULES: &[(&str, &str)] = &[' + ', '.join(f'("{path}", "{name}")' for path, name in modules) + '];\n'
     code += 'pub fn link() {}\n'
     return {f'apps/{layer}/Cargo.toml': text, f'apps/{layer}/src/lib.rs': code}
 

@@ -34,7 +34,7 @@ bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const MODULE: &str = "extensions/pdf-queue-specimen";
+const MODULE: &str = "extensions/pdf_queue_specimen";
 const WORKER: &str = "pdf-queue-specimen/render";
 /// Appears in every document; the encrypted copies must never show it.
 const MARKER: &str = "CONFIDENTIAL-STATEMENT-7421";
@@ -193,11 +193,11 @@ const PROVENANCE: Provenance = Provenance {
     line: line!(),
 };
 inventory::submit! { Contribution::new(WORKERS, WORKER, PROVENANCE, &RENDER_WORKER) }
-inventory::submit! { Contribution::new(HANDLERS, WORKER, PROVENANCE, &HandlerBinding { service: "extensions/pdf-queue-specimen.render", capability: "companies.update" }) }
+inventory::submit! { Contribution::new(HANDLERS, WORKER, PROVENANCE, &HandlerBinding { service: "extensions/pdf_queue_specimen.render", capability: "companies.update" }) }
 inventory::submit! { Module {
     id: MODULE, layer: bilibi_module_registry::Layer::Extensions,
     dependencies: &["base/artifacts", "base/database", "base/queue"], migrations: &[],
-    services: &[Service { id: "extensions/pdf-queue-specimen.render", factory: |services| {
+    services: &[Service { id: "extensions/pdf_queue_specimen.render", factory: |services| {
         let artifacts = services.get::<Artifacts>("base/artifacts.store")?;
         let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
         Ok(Arc::new(artifacts.pdf_handler(Arc::new(Statements { db }))))

@@ -29,15 +29,60 @@ pub enum Layer {
     Domains,
     Extensions,
 }
+/// Container IDs a Domain or Extension may not take; `scripts/discover-modules.py`
+/// refuses the same set for mount folders.
+const RESERVED_CONTAINERS: &[&str] = &["base", "core", "web", "src"];
 impl Layer {
-    fn prefix(self) -> &'static str {
+    /// Base and Core IDs are `base/<module>` and `core/<module>`. Domain and
+    /// Extension IDs are `<container>/<module>`, the mounted checkout and module
+    /// folders, because Bilimbi's IDs are persisted data (ledger owners, audit
+    /// kinds, setting keys) and the port keeps them.
+    fn accepts(self, id: &str) -> bool {
+        let Some((container, module)) = id.split_once('/') else {
+            return false;
+        };
         match self {
-            Self::Base => "base/",
-            Self::Core => "core/",
-            Self::Domains => "domains/",
-            Self::Extensions => "extensions/",
+            Self::Base => container == "base" && !module.is_empty(),
+            Self::Core => container == "core" && !module.is_empty(),
+            Self::Domains | Self::Extensions => {
+                snake_case(container)
+                    && snake_case(module)
+                    && !RESERVED_CONTAINERS.contains(&container)
+            }
         }
     }
+    fn mounted(self) -> bool {
+        matches!(self, Self::Domains | Self::Extensions)
+    }
+}
+fn snake_case(segment: &str) -> bool {
+    segment.starts_with(|c: char| c.is_ascii_lowercase())
+        && !segment.ends_with('_')
+        && !segment.contains("__")
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+/// A mounted module names its migrations `<container>-<module>-NNN-<slug>`
+/// (underscores become hyphens), so versions stay unique across repositories
+/// and say which module owns them.
+fn migration_named(module: &str, version: &str) -> bool {
+    let prefix = format!("{}-", module.replace(['/', '_'], "-"));
+    let Some((number, slug)) = version
+        .strip_prefix(&prefix)
+        .and_then(|rest| rest.split_once('-'))
+    else {
+        return false;
+    };
+    number.len() == 3
+        && number.chars().all(|c| c.is_ascii_digit())
+        && !slug.is_empty()
+        && !slug.starts_with('-')
+        && !slug.ends_with('-')
+        && !slug.contains("--")
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 pub struct Service {
     pub id: &'static str,
@@ -63,9 +108,7 @@ pub fn order(modules: Vec<&'static Module>) -> Result<Vec<&'static Module>> {
     let mut services = BTreeSet::new();
     let mut migrations = BTreeSet::new();
     for module in modules {
-        if !module.id.starts_with(module.layer.prefix())
-            || pending.insert(module.id, module).is_some()
-        {
+        if !module.layer.accepts(module.id) || pending.insert(module.id, module).is_some() {
             return Err(RegistryError::Graph(format!(
                 "duplicate or wrongly layered module {}",
                 module.id
@@ -80,6 +123,13 @@ pub fn order(modules: Vec<&'static Module>) -> Result<Vec<&'static Module>> {
             }
         }
         for (version, _) in module.migrations {
+            if module.layer.mounted() && !migration_named(module.id, version) {
+                return Err(RegistryError::Graph(format!(
+                    "migration {version} of {} must be named {}-NNN-<slug>",
+                    module.id,
+                    module.id.replace(['/', '_'], "-")
+                )));
+            }
             if !migrations.insert(version) {
                 return Err(RegistryError::Graph(format!(
                     "duplicate migration {version}"
@@ -114,6 +164,55 @@ pub fn order(modules: Vec<&'static Module>) -> Result<Vec<&'static Module>> {
         ordered.push(next);
     }
     Ok(ordered)
+}
+
+/// Boot check for a composed binary: the Domain and Extension descriptors
+/// registered at link time must be exactly the `(module ID, crate)` pairs that
+/// `scripts/discover-modules.py` found mounted (`bilibi_domains::MODULES`,
+/// `bilibi_extensions::MODULES`). A mounted crate that registers no descriptor,
+/// registers one under another ID or layer, or a descriptor no mounted crate
+/// accounts for is refused. Examples that link their own reference Extension
+/// descriptors never run this check.
+pub fn verify_composition(
+    modules: &[&'static Module],
+    domains: &[(&str, &str)],
+    extensions: &[(&str, &str)],
+) -> Result<()> {
+    let expected = |layer| match layer {
+        Layer::Domains => domains,
+        Layer::Extensions => extensions,
+        Layer::Base | Layer::Core => &[],
+    };
+    for layer in [Layer::Domains, Layer::Extensions] {
+        for (id, krate) in expected(layer) {
+            match modules.iter().find(|module| module.id == *id) {
+                Some(module) if module.layer == layer => {}
+                Some(module) => {
+                    return Err(RegistryError::Graph(format!(
+                        "{id} is mounted as {layer:?} by {krate} but its descriptor declares {:?}",
+                        module.layer
+                    )))
+                }
+                None => {
+                    return Err(RegistryError::Graph(format!(
+                        "{krate} is mounted but registers no {layer:?} descriptor {id}"
+                    )))
+                }
+            }
+        }
+    }
+    for module in modules.iter().filter(|module| module.layer.mounted()) {
+        if !expected(module.layer)
+            .iter()
+            .any(|(id, _)| *id == module.id)
+        {
+            return Err(RegistryError::Graph(format!(
+                "{:?} descriptor {} matches no mounted module crate",
+                module.layer, module.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]

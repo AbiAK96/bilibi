@@ -388,12 +388,12 @@ pub static DRIFTED_V1: Contribution = Contribution::Process(Process {
     ],
 });
 inventory::submit! { bilibi_module_registry::Module {
-    id:"extensions/workflow-reference",layer:bilibi_module_registry::Layer::Extensions,
+    id:"extensions/workflow_reference",layer:bilibi_module_registry::Layer::Extensions,
     dependencies:&["base/workflow"],services:&[],
-    migrations:&[("workflow-reference-001","CREATE TABLE workflow_reference_records(id bigint PRIMARY KEY,tenant_id bigint NOT NULL REFERENCES tenants(id),status text NOT NULL DEFAULT 'pending',version bigint NOT NULL DEFAULT 0,action_count integer NOT NULL DEFAULT 0,facade_value integer NOT NULL DEFAULT 0)"),
-    ("workflow-reference-002-listeners","CREATE TABLE workflow_reference_listener_effects(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,event_key text NOT NULL,listener text NOT NULL); CREATE TABLE workflow_reference_listener_gate(singleton boolean PRIMARY KEY CHECK(singleton),fail_second boolean NOT NULL DEFAULT true,wait_seconds integer NOT NULL DEFAULT 0); INSERT INTO workflow_reference_listener_gate(singleton) VALUES(true)")],
+    migrations:&[("extensions-workflow-reference-001-records","CREATE TABLE workflow_reference_records(id bigint PRIMARY KEY,tenant_id bigint NOT NULL REFERENCES tenants(id),status text NOT NULL DEFAULT 'pending',version bigint NOT NULL DEFAULT 0,action_count integer NOT NULL DEFAULT 0,facade_value integer NOT NULL DEFAULT 0)"),
+    ("extensions-workflow-reference-002-listeners","CREATE TABLE workflow_reference_listener_effects(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,event_key text NOT NULL,listener text NOT NULL); CREATE TABLE workflow_reference_listener_gate(singleton boolean PRIMARY KEY CHECK(singleton),fail_second boolean NOT NULL DEFAULT true,wait_seconds integer NOT NULL DEFAULT 0); INSERT INTO workflow_reference_listener_gate(singleton) VALUES(true)")],
 } }
-macro_rules! register {($id:literal,$value:expr)=>{inventory::submit! { Registration::new(CONTRIBUTIONS,$id,Provenance {module:"extensions/workflow-reference",source:file!(),line:line!()},&$value) }};}
+macro_rules! register {($id:literal,$value:expr)=>{inventory::submit! { Registration::new(CONTRIBUTIONS,$id,Provenance {module:"extensions/workflow_reference",source:file!(),line:line!()},&$value) }};}
 register!(
     "reference.listener.first",
     Contribution::Listener(bilibi_workflow::outbox::Listener {
