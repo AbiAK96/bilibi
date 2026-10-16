@@ -183,6 +183,8 @@ impl Profile {
     }
     async fn save(&mut self, request: &LiveRequest<'_, Scope>) -> Result<()> {
         let previous = self.email.clone();
+        // The submitted choice, kept across the reload of the stored facts.
+        let landing = self.landing.clone();
         let outcome = self
             .pages
             .users
@@ -196,12 +198,7 @@ impl Profile {
         match outcome {
             Ok(saved) => {
                 self.load(request.scope).await?;
-                match self
-                    .pages
-                    .users
-                    .save_landing(request.scope, &self.landing)
-                    .await
-                {
+                match self.pages.users.save_landing(request.scope, &landing).await {
                     Ok(()) => self.flash.success(
                         if saved.email_changed && self.email != previous {
                             "Profile saved. Your new address is unverified until you confirm it."

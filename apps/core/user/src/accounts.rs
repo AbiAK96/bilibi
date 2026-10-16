@@ -697,9 +697,11 @@ impl UserService {
 }
 
 /// Every contributed menu page whose requirement, and whose ancestors'
-/// requirements, `decide` allows, in `(order, id)` order. The same reading as
-/// `bilibi_menu::Menu::visible_tree`, over the inventory the catalog is built
-/// from, since a module cannot hold the host's installed catalog.
+/// requirements, `decide` allows, in the order the navigation shows them
+/// (siblings by `(order, id)`, children under their parent). The same
+/// reading as `bilibi_menu::Menu::visible_tree`, over the inventory the
+/// catalog is built from, since a module cannot hold the host's installed
+/// catalog.
 fn reachable_pages(decide: &dyn Fn(&str) -> bool) -> Vec<LandingPage> {
     use bilibi_menu::MenuItem;
     let mut items: Vec<&'static MenuItem> = inventory::iter::<bilibi_module_registry::Contribution>
@@ -709,34 +711,35 @@ fn reachable_pages(decide: &dyn Fn(&str) -> bool) -> Vec<LandingPage> {
         .collect();
     items.sort_by_key(|item| (item.order, item.id));
     let ids: BTreeSet<&str> = items.iter().map(|item| item.id).collect();
-    let by_id = |id: &str| items.iter().find(|item| item.id == id).copied();
-    items
-        .iter()
-        .filter(|item| {
-            let Some(route) = item.route else {
-                return false;
-            };
-            if !route.starts_with('/') || !item.requirement.allowed(decide) {
-                return false;
+    fn walk(
+        items: &[&'static bilibi_menu::MenuItem],
+        ids: &BTreeSet<&str>,
+        parent: Option<&str>,
+        depth: usize,
+        decide: &dyn Fn(&str) -> bool,
+        out: &mut Vec<LandingPage>,
+    ) {
+        if depth > 16 {
+            return;
+        }
+        for item in items
+            .iter()
+            .filter(|item| item.parent == parent && item.parent.is_none_or(|id| ids.contains(id)))
+        {
+            if !item.requirement.allowed(decide) {
+                continue;
             }
-            let mut parent = item.parent;
-            let mut hops = 0;
-            while let Some(id) = parent {
-                hops += 1;
-                let Some(ancestor) = by_id(id).filter(|_| ids.contains(id) && hops < 16) else {
-                    return false;
-                };
-                if !ancestor.requirement.allowed(decide) {
-                    return false;
-                }
-                parent = ancestor.parent;
+            if let Some(route) = item.route.filter(|route| route.starts_with('/')) {
+                out.push(LandingPage {
+                    id: item.id,
+                    label: item.label,
+                    route,
+                });
             }
-            true
-        })
-        .map(|item| LandingPage {
-            id: item.id,
-            label: item.label,
-            route: item.route.expect("filtered to pages"),
-        })
-        .collect()
+            walk(items, ids, Some(item.id), depth + 1, decide, out);
+        }
+    }
+    let mut pages = Vec::new();
+    walk(&items, &ids, None, 0, decide, &mut pages);
+    pages
 }
