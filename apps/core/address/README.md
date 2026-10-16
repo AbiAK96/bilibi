@@ -79,8 +79,11 @@ walkthrough fixture's manager gets all, staff all but delete, viewer view/list.
 `bilibi_locale::Bootstrap` facts for one-time installation-locale inference:
 the live operator tenant's primary company, its first address (primary, then
 priority, then id) and that country's Geonames name, languages and currency.
-Any missing step is `None`, never an error. Base Locale does not query Core;
-K15 passes these facts to `Locales::resolve`/`adopt_inferred`.
+Any missing step is `None`, never an error. Base Locale does not query Core:
+the service factory binds `bootstrap::Source` as Locale's `BootstrapSource`
+(K15), so every `Locales::resolve(.., None)` infers from these facts until a
+global locale is stored; `adopt_inferred` persists them once under operator
+proof (K17 owns that setup step).
 
 ## Pages and owner panels (K12)
 

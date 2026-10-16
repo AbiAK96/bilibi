@@ -83,7 +83,13 @@ The seam never creates or implies a link, and retired/system identities refuse.
 Person creation never writes users, sessions, credentials or grants.
 
 Tenancy's `PartyProofs::person` uses this owner to prove live scoped Person IDs;
-that proof conveys existence, not a capability or account binding. Principal
+that proof conveys existence, not a capability or account binding. `files`
+(K15) is the private-file owner: the Media attachment subject `core.person`
+and the Artifacts owner `core.person` (`files::FILES`), deciding on the sealed
+proof connection with `admin.person.view` for reads, `.update` for writes and
+`.retire` for purge, a person of the actor's tenant (unretired for a write),
+and the filing company reproved through `PartyProofs`. Use these, not a
+hand-rolled check, for any file attached to a person. Principal
 Directory providers name only bounded, live Person/agent candidates within the
 request tenant. Agent candidates must have `kind=agent`. Base never reads Core
 tables directly; the providers contain the owning queries.

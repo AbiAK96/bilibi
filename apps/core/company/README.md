@@ -70,6 +70,20 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 - `organisation::Provider` is the `OrganisationProvider` Tenancy's
   `PartyProofs` proves targets with: a live, unarchived company of the
   actor's tenant, bound at the service factory.
+- `organisation::Directory` is Tenancy's `OrganisationDirectory` (K15), bound
+  beside it: the companies a Base picker may offer (`in_scope`: every live
+  company, archived flagged; `selectable`: the unarchived ones the actor may
+  target with a capability, own company or tenant-wide) and `target`, the
+  `authorize_target` rule on the sealed proof connection. The settings
+  editor's company picker and the Authz role create picker read it; Base
+  never queries `companies`. Migration `006-authz-role-owner` contributes the
+  scoped foreign key behind Authz's `roles.company_id`.
+- `files` (K15) is the private-file owner: the Media attachment subject
+  `core.company` and the Artifacts owner `core.company` (`files::FILES`).
+  Reads need `admin.company.view` and a live company of the tenant; writes
+  need `.update` (purge `.delete`), the actor's reach and an unarchived
+  company; a document's reference must name the company it is filed under.
+  Use these, not a hand-rolled check, for any file attached to a company.
 - `reference_types`: list/get, create, update (versioned), toggle active and
   delete, which refuses a type a live company or a department uses (`InUse`).
 - `departments`: list, available types, create, status update (versioned)
@@ -361,3 +375,22 @@ shows "—", the dialog offers no one and says so, and no head can be stored.
 The Grid catalog also exposes `departments` (tenant-scoped through the
 company) and the global `legal_entity_types`, with the `legal_entity_type`,
 `departments` and `company` links Bilimbi declares.
+
+## Owner binders walkthrough (K15)
+
+```sh
+BILIBI_COMPANY_DEMO=disposable BILIBI_K15_DEMO_ROOT=/tmp/k15-files \
+  cargo run -p bilibi-company --example k15-owner-binders --locked
+```
+
+On a disposable migrated and seeded database it archives company 4, then
+prints the organisation directory (counts, archived flagged and never
+selectable, cross-tenant `NotFound`, denied `Forbidden`), a company-scoped
+settings write accepted for a live company and refused for the archived one,
+the locale bootstrap before and after a Swiss operator address plus its
+adoption, company-owned role creation with the blank, archived and
+cross-tenant refusals and the visibility rule, and the Media and Artifacts
+owners accepting an authorized upload or document and refusing the viewer,
+the archived company, the missing person and the other tenant. In the running
+app, Administration → System → Settings offers the company picker and
+Administration → Authorization → Roles → Create asks for the owning company.

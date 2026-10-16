@@ -31,9 +31,15 @@ assignments, custom roles, direct grants/denies and field restrictions. It remov
 obsolete grants from contributed roles, and clears redundant grants on grant-all
 roles. Run it again after installing contributions or provisioning new tenants.
 `seed-production` also supplies the initial versioned reconciliation through the
-Database seed ledger. Neither path runs at app boot. The current tenancy
-schema requires one role instance per tenant; company-owned custom role binding
-remains K15's owner adapter, rather than a Base query of Core tables.
+Database seed ledger. Neither path runs at app boot. The schema keeps one role
+instance per tenant; a custom role is owned by a company of that tenant
+(`roles.company_id`, migration `011-role-company`, K15). Base holds the bare
+column and Core Company contributes the scoped foreign key; `create_role`
+requires a company and reproves it through Tenancy's `PartyProofs` on the
+write's transaction (missing, cross-tenant or archived are field errors), the
+lists apply Bilimbi's company-visibility rule with the ids Tenancy's
+organisation directory names, and a custom role created before ownership was
+bound stays listed as "Unowned". Base never queries Core tables for this.
 
 Tenancy sits below Authz, so Authz declares Tenancy's `admin.tenancy.tenant.*`
 keys (`bilibi_tenancy::admin::{LIST, CREATE}`) and binds `OperatorAuthorizer`
@@ -63,10 +69,13 @@ the execution tenant. `SystemScope::rehydrate` is a trusted worker/maintenance
 edge, never a browser constructor. Anonymous system identities always deny;
 declaration alone grants nothing. Removed declarations make old grants inert.
 Named identities hold no user roles, gain no grant-all bypass, and obey platform
-gates. The current storage seam follows the original tenant-scoped authorization;
-company/organisation resource binding is supplied by K15/K9 alongside the User
-binder, using Tenancy owner proofs. Queue execution must rehydrate at execution,
-rather than retaining a Scope captured when enqueued.
+gates. Decisions stay tenant-scoped; company ownership of custom roles (K15) and
+the account binder (K9) use Tenancy owner proofs. An owner adapter that holds
+only Tenancy's sealed proof connection (`OrganisationDirectory`, Media
+`SubjectOwner`, Artifacts `Owner`) decides through `decide_proof` /
+`authorize_proof`: the same rules and decision log as `decide`, on that
+connection. Queue execution must rehydrate at execution, rather than retaining
+a Scope captured when enqueued.
 
 `/authz/field-restrictions` (Administration › Authorization › Field Restrictions,
 `src/restrictions_web.rs`, Bilimbi `FieldRestrictionsLive`) is the operator's
