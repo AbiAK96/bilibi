@@ -1,7 +1,7 @@
 //! Shared authenticated chrome. Owners supply already-authorized navigation and
 //! account metadata; no identity or capability decision is made by a template.
-//! Theme, time display and pins are the account's own (Core User); K17
-//! supplies affiliation labels.
+//! Theme, time display and pins are the account's own (Core User); the
+//! company label is the account's affiliation (Web's `shell.rs`).
 use crate::Html;
 use askama::Template;
 
@@ -103,8 +103,14 @@ pub struct ShellContext<'a> {
     pub tenant: &'a str,
     pub tenant_id: i64,
     pub user_id: i64,
-    pub company: Option<&'a str>,
+    /// The company the account signs in under, through its affiliation
+    /// (Bilimbi `company_name`); `None` reads "Company unavailable".
+    pub company: Option<String>,
     pub platform_operator: bool,
+    /// The operator tenant stands on no primary company yet: the status bar
+    /// links to `/setup/platform-operator` (Bilimbi
+    /// `operator_company_missing`).
+    pub operator_company_missing: bool,
     /// The operator's name while this session views as `user` (Bilimbi's
     /// `current_scope.impersonator`): draws the "Viewing as" strip with its
     /// exit, locks the display controls and pins, and names the operator in

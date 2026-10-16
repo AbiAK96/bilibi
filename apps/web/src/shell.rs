@@ -105,6 +105,27 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
+    // The company the account signs in under, through its affiliation
+    // (Bilimbi `company_name_for`): display only, so a company the directory
+    // cannot name never blocks an otherwise proven session.
+    let company = match scope.actor().organisation() {
+        Some(id) => app
+            .services
+            .get::<tenancy::PartyProofs>("base/tenancy.parties")?
+            .organisation_name(&**client, scope, id)
+            .await
+            .ok()
+            .flatten()
+            .map(|organisation| organisation.name),
+        None => None,
+    };
+    // Bilimbi warns only on the operator tenant, and only while it stands on
+    // no primary company; a failed lookup paints no warning.
+    let operator_company_missing = platform_operator
+        && matches!(
+            bilibi_core::company::primary::platform_operator_company(&**client).await,
+            Ok(None)
+        );
     // A module contributes the bell through the `shell.notifications` embed;
     // an account the embed refuses has none.
     let mut notifications = Html::default();
@@ -132,9 +153,9 @@ async fn context<'a>(
         tenant: &scope.tenant_name,
         tenant_id: scope.tenant(),
         user_id: scope.user(),
-        // K17 binds the affiliation's company label.
-        company: None,
+        company,
         platform_operator,
+        operator_company_missing,
         impersonator: scope.impersonator().map(|operator| operator.name()),
         csrf: &scope.csrf,
         preferences,
