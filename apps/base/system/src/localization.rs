@@ -214,7 +214,7 @@ fn provenance(resolved: &Resolved) -> Result<Html> {
                 Fact {
                     id: "localization-message-catalogues",
                     title: "Shared UI message catalogues",
-                    value: Html::text("en (English product copy)"),
+                    value: Html::text("en"),
                 },
             ],
         })?,
