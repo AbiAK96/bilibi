@@ -797,7 +797,7 @@ impl LiveState<Scope, Error> for Departments {
                     }
                     match kind {
                         "grid" => {
-                            self.columns.handle(&super::grid_values(event));
+                            self.columns.handle(&params::string_values(event));
                             requery = false;
                         }
                         "new" => {

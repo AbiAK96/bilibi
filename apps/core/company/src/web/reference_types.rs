@@ -860,7 +860,7 @@ impl LiveState<Scope, Error> for ReferenceTypes {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
                         Some("grid") => {
-                            self.columns.handle(&super::grid_values(event));
+                            self.columns.handle(&params::string_values(event));
                             requery = false;
                         }
                         Some("filter_category") if self.spec.category() => {

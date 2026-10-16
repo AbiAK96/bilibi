@@ -278,3 +278,38 @@ and confirm with an optional reason; archive remains final. Record pins use
 the shell's existing account pin API, with a resolved record label and URL. The Audit history
 panel retains its mount through detail patches. Child-owned panels are attached
 by their later owner slices.
+
+## Reference-type and department pages (K4)
+
+`web/reference_types.rs` serves `/companies/legal-entity-types` and
+`/companies/department-types` as one modal table driven by a `Spec` (nouns,
+DOM ids, whether the category filter is on), as Bilimbi's
+`ReferenceTypesLive` does: `ListColumns`/`FlexTable` with built-in columns,
+the New/Edit dialog validating as values change through
+`reference_types::check_new`/`check_update` (the same validators the write
+runs), Activate/Deactivate, and delete behind the shared confirm dialog
+acting on the held row. Both routes are `OperatorCapability(admin.company.list)`
+(Bilimbi `operator: true`) and the menu entries nest under Companies; a
+`can_*` only decides which controls render, each write asks `CompanyService`
+again, and a refusal is a page flash, never a page-clearing error.
+`NewType.is_active` carries the dialog's Active checkbox.
+
+`web/departments.rs` serves `/companies/{id}/departments` (Bilimbi
+`DepartmentsLive`): the company header, the archived alert, Add Department
+from `departments::available_types`, one event per status change, Set
+Department Head, and Remove behind the confirm dialog. Every persisting event
+passes one gate (`admin.company.update` now, then `require_writable`) before
+the API's own checks, so an archived company answers in Bilimbi's words. The
+detail page's Departments card (`views::departments_section`, built-ins
+`department_builtins`, event `departments_grid`) leads here through Manage.
+
+A department's head is an affiliation. Company cannot name one across the
+module boundary, so `departments::HeadDirectory` is the seam: the affiliation
+owner binds one at boot with `bind_head_directory` (candidates and names,
+scoped by the query); `departments::update_head` accepts only an affiliation
+the directory offers for that company at the moment of the write, under the
+company lock and the row version. Until a directory is bound, the Head column
+shows "—", the dialog offers no one and says so, and no head can be stored.
+The Grid catalog also exposes `departments` (tenant-scoped through the
+company) and the global `legal_entity_types`, with the `legal_entity_type`,
+`departments` and `company` links Bilimbi declares.

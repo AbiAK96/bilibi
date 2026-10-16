@@ -53,15 +53,6 @@ impl Flash {
         flash
     }
 }
-/// The flex table's operation values, as `ListColumns::handle` takes them.
-pub(crate) fn grid_values(event: &Value) -> HashMap<String, String> {
-    event
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
-        .collect()
-}
 
 pub struct Pages {
     pub db: Db,
@@ -397,7 +388,8 @@ impl CompanyPage {
                 }
             }
             "departments_grid" if self.operation == "detail" => {
-                self.departments_columns.handle(&grid_values(value));
+                self.departments_columns
+                    .handle(&bilibi_ui::params::string_values(value));
             }
             "sort" => self.sort(if get("sort").is_empty() {
                 get("field")
