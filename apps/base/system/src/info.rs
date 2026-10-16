@@ -48,6 +48,29 @@ fn bytes(value: Option<i64>) -> Option<String> {
         format!("{size:.1} {unit}")
     })
 }
+/// Capacity of the filesystem holding `/`, in bytes.
+#[derive(Clone, Copy)]
+struct Disk {
+    free: i64,
+    total: i64,
+}
+fn root_filesystem() -> Option<Disk> {
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: the path is a NUL-terminated literal and `stat` is only read after
+    // the call reports success, which means it was fully written.
+    let stat = unsafe {
+        if libc::statvfs(c"/".as_ptr(), stat.as_mut_ptr()) != 0 {
+            return None;
+        }
+        stat.assume_init()
+    };
+    let unit = stat.f_frsize as u128;
+    let size = |blocks: u128| i64::try_from(blocks * unit).ok();
+    Some(Disk {
+        free: size(stat.f_bavail as u128)?,
+        total: size(stat.f_blocks as u128)?,
+    })
+}
 fn text(value: impl ToString) -> Option<String> {
     Some(value.to_string())
 }
@@ -122,6 +145,24 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
     .await
     .ok()
     .flatten();
+    let disk = tokio::task::spawn_blocking(root_filesystem)
+        .await
+        .ok()
+        .flatten();
+    let queue = tokio::time::timeout(Duration::from_secs(3), async {
+        let client = pages.db.get().await?;
+        bilibi_queue::store::health_status(&**client).await
+    })
+    .await
+    .ok()
+    .and_then(|result| result.ok());
+    let performance = match (diagnostics.recorder, diagnostics.store) {
+        (bilibi_perf::Health::Unavailable, _) | (_, bilibi_perf::Store::Unavailable) => {
+            "Unavailable".to_owned()
+        }
+        _ if !diagnostics.recording => "Disabled (history available)".to_owned(),
+        _ => pages.perf.health_status().await,
+    };
     let runtime = tokio::runtime::Handle::try_current()
         .ok()
         .map(|handle| handle.metrics());
@@ -138,7 +179,7 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
                 (
                     "Debug Mode",
                     text(if cfg!(debug_assertions) {
-                        "Enabled (debug assertions)"
+                        "Enabled"
                     } else {
                         "Disabled"
                     }),
@@ -150,7 +191,7 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
                             .unwrap_or_else(|_| "http://localhost:3000".into()),
                     ),
                 ),
-                ("Timezone", text("UTC (stored timestamps)")),
+                ("Timezone", text("Etc/UTC")),
                 ("Locale", locale.map(|resolved| resolved.locale.into())),
             ],
         )?,
@@ -198,10 +239,10 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
                     )),
                 ),
                 ("Hostname", hostname),
-                // No portable filesystem probe is installed. Do not report a made-up
-                // capacity or mistake process memory for filesystem free space.
-                ("Disk Free", None),
-                ("Disk Total", None),
+                // The root filesystem, as Bilimbi's disk probe reports it. A failed
+                // probe stays "Unavailable", never a made-up capacity.
+                ("Disk Free", bytes(disk.map(|disk| disk.free))),
+                ("Disk Total", bytes(disk.map(|disk| disk.total))),
             ],
         )?,
         card(
@@ -210,18 +251,8 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
             vec![
                 ("Database", text(connected)),
                 ("Cache", text("Settings read directly from PostgreSQL")),
-                // Queue exposes job states, but no executor heartbeat/health API.
-                ("Queue", None),
-                (
-                    "Performance",
-                    text(match (diagnostics.recorder, diagnostics.store) {
-                        (_, bilibi_perf::Store::Unavailable)
-                        | (bilibi_perf::Health::Unavailable, _) => "Unavailable",
-                        (bilibi_perf::Health::Degraded, _) => "Degraded",
-                        _ if !diagnostics.recording => "Disabled (history available)",
-                        _ => "Available",
-                    }),
-                ),
+                ("Queue", queue),
+                ("Performance", text(performance)),
             ],
         )?,
         render(Card {

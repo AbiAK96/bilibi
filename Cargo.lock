@@ -915,9 +915,11 @@ dependencies = [
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-perf",
+ "bilibi-queue",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",
+ "libc",
  "serde_json",
  "tokio",
 ]
