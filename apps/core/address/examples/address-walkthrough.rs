@@ -55,22 +55,22 @@ async fn main() -> Result<(), Failure> {
     let addresses = app.services.get::<AddressService>(SERVICE)?;
     let people = app.services.get::<PersonService>(bilibi_person::SERVICE)?;
     let password = bilibi_web::seed::DEMO_PASSWORD;
-    let login = |tenant, email| app.user.login(tenant, email, password);
+    let login = |email| app.user.login(email, password);
     let manager = app
         .security
-        .guard(&login(1, "manager@example.test").await?.token)
+        .guard(&login("manager@example.test").await?.token)
         .await?;
     let staff = app
         .security
-        .guard(&login(1, "staff@example.test").await?.token)
+        .guard(&login("staff@example.test").await?.token)
         .await?;
     let viewer = app
         .security
-        .guard(&login(1, "viewer@example.test").await?.token)
+        .guard(&login("viewer@example.test").await?.token)
         .await?;
     let other = app
         .security
-        .guard(&login(2, "manager@example.test").await?.token)
+        .guard(&login("manager@other.example.test").await?.token)
         .await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
