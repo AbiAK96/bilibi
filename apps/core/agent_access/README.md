@@ -85,14 +85,16 @@ Company/person validation is injected, as the port plan requires. On every
 issuance (`exchange`, `refresh`, `exchange_code`) the module reproves the
 granting account through `base/tenancy.authentication` (tenant and account
 must still authenticate) and each party facet recorded on the connection
-through `base/tenancy.parties`. A suspended account, a revoked organisation
-proof, or an actor whose facet now differs from the recorded one makes the
-grant `invalid_grant` without spending the presented token. New connections
-record the actor's organisation and person facets when the sealed scope
-carries them. The User account binder supplies those facets to the browser
-session and to this module's bearer proof alike, so a grant made from a linked
-account is refused once the account is unlinked, relinked elsewhere or its
-company archived. This module runs
+through `base/tenancy.parties`. New connections record the actor's
+organisation and person facets (or their absence), and every issuance and
+bearer request requires the fresh actor's facets to equal them exactly, as
+Bilimbi binds a connection to the actor's company. A suspended account, an
+archived company, a retired Person, an unlinked affiliation, or an account
+linked, unlinked or relinked since consent makes the grant `invalid_grant`
+(`invalid_token` at the bearer edge) without spending the presented token;
+the person connects again from the account as it now is. The User account
+binder supplies those facets to the browser session and to this module's
+bearer proof alike. This module runs
 no SQL against account, company or person tables; the schema references them
 only through scoped foreign keys (`migrations/001-agent-access.sql`).
 

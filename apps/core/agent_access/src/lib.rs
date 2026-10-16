@@ -968,9 +968,12 @@ impl AgentAccess {
         Ok(connection)
     }
     /// Token issuance has no caller scope. The grant must be live and its
-    /// account must still authenticate; each recorded party facet must still
-    /// be proven by its injected provider and, once the actor carries that
-    /// facet, must be the same one.
+    /// account must still authenticate as the same identity it consented
+    /// with: the fresh actor's organisation and person facets must equal the
+    /// recorded ones exactly, absent included, as Bilimbi binds a connection
+    /// to the actor's company. Linking, unlinking or relinking the account
+    /// therefore ends the grant's use. Each recorded facet must still be
+    /// proven by its injected provider.
     async fn live(
         &self,
         client: &Transaction<'_>,
@@ -984,16 +987,14 @@ impl AgentAccess {
             .authenticate(client, connection.tenant, connection.user, String::new())
             .await
             .map_err(refused)?;
+        if scope.actor().organisation().map(OrganisationId::get) != connection.organisation
+            || scope.actor().person().map(PersonId::get) != connection.person
+        {
+            return Err(OAuthError::InvalidGrant);
+        }
         let proofs: &dyn ProofClient = client;
         if let Some(id) = connection.organisation {
             let id = OrganisationId::new(id).map_err(|_| OAuthError::InvalidGrant)?;
-            if scope
-                .actor()
-                .organisation()
-                .is_some_and(|fresh| fresh != id)
-            {
-                return Err(OAuthError::InvalidGrant);
-            }
             self.parties
                 .organisation(proofs, &scope, id)
                 .await
@@ -1001,9 +1002,6 @@ impl AgentAccess {
         }
         if let Some(id) = connection.person {
             let id = PersonId::new(id).map_err(|_| OAuthError::InvalidGrant)?;
-            if scope.actor().person().is_some_and(|fresh| fresh != id) {
-                return Err(OAuthError::InvalidGrant);
-            }
             self.parties
                 .person(proofs, &scope, id)
                 .await
