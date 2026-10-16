@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let client = db.get().await?;
 
     // Fixture account: Sam Staff, tenant 1. A rerun starts from the seeded password.
-    let (tenant, email, seeded) = (1, "staff@example.test", "bilibi-dev");
+    let (email, seeded) = ("staff@example.test", "bilibi-dev");
     client
         .execute(
             "UPDATE users SET password_hash=$1,email_verified_at=NULL WHERE tenant_id=1 AND email=$2",
@@ -95,8 +95,14 @@ async fn main() -> Result<()> {
         .await?;
 
     println!("\n== change password (signed in) ==");
-    let first = users.login(tenant, email, seeded).await?;
-    let second = users.login(tenant, email, seeded).await?;
+    let first = users
+        .login(email, seeded)
+        .await
+        .map_err(|_| Error::Unauthorized)?;
+    let second = users
+        .login(email, seeded)
+        .await
+        .map_err(|_| Error::Unauthorized)?;
     println!(
         "wrong current: {}",
         outcome(
@@ -150,7 +156,7 @@ async fn main() -> Result<()> {
         "old password login: {}",
         outcome(
             &users
-                .login(tenant, email, seeded)
+                .login(email, seeded)
                 .await
                 .map(|_| ())
                 .map_err(CredentialError::from)
@@ -160,7 +166,7 @@ async fn main() -> Result<()> {
         "new password login: {}",
         outcome(
             &users
-                .login(tenant, email, "new-secret-1")
+                .login(email, "new-secret-1")
                 .await
                 .map(|_| ())
                 .map_err(CredentialError::from)
@@ -171,11 +177,7 @@ async fn main() -> Result<()> {
     let before = count(&mailbox);
     println!(
         "unknown address: {}",
-        outcome(
-            &users
-                .request_password_reset(tenant, "nobody@example.test")
-                .await
-        )
+        outcome(&users.request_password_reset("nobody@example.test").await)
     );
     tokio::time::sleep(Duration::from_millis(500)).await;
     println!(
@@ -184,11 +186,7 @@ async fn main() -> Result<()> {
     );
     println!(
         "known address:   {}",
-        outcome(
-            &users
-                .request_password_reset(tenant, "  Staff@Example.test ")
-                .await
-        )
+        outcome(&users.request_password_reset("  Staff@Example.test ").await)
     );
     let Some(message) = arrival(&mailbox, before).await else {
         println!("no mail arrived");
@@ -205,7 +203,7 @@ async fn main() -> Result<()> {
     let after = count(&mailbox);
     println!(
         "second request within a minute: {}",
-        outcome(&users.request_password_reset(tenant, email).await)
+        outcome(&users.request_password_reset(email).await)
     );
     tokio::time::sleep(Duration::from_millis(500)).await;
     println!("throttled, no second mail: {}", count(&mailbox) == after);
@@ -224,7 +222,7 @@ async fn main() -> Result<()> {
         "wrong token:      {}",
         outcome(
             &users
-                .reset_password(tenant, email, "A".repeat(43).as_str(), "reset-secret-2")
+                .reset_password(email, "A".repeat(43).as_str(), "reset-secret-2")
                 .await
         )
     );
@@ -232,29 +230,21 @@ async fn main() -> Result<()> {
         "wrong email:      {}",
         outcome(
             &users
-                .reset_password(tenant, "viewer@example.test", &token, "reset-secret-2")
+                .reset_password("viewer@example.test", &token, "reset-secret-2")
                 .await
         )
     );
     println!(
         "weak password:    {}",
-        outcome(&users.reset_password(tenant, email, &token, "short").await)
+        outcome(&users.reset_password(email, &token, "short").await)
     );
     println!(
         "valid reset:      {}",
-        outcome(
-            &users
-                .reset_password(tenant, email, &token, "reset-secret-2")
-                .await
-        )
+        outcome(&users.reset_password(email, &token, "reset-secret-2").await)
     );
     println!(
         "token reuse:      {}",
-        outcome(
-            &users
-                .reset_password(tenant, email, &token, "reset-secret-3")
-                .await
-        )
+        outcome(&users.reset_password(email, &token, "reset-secret-3").await)
     );
     println!(
         "all sessions ended: {}",
@@ -264,7 +254,7 @@ async fn main() -> Result<()> {
         "login with reset password: {}",
         outcome(
             &users
-                .login(tenant, email, "reset-secret-2")
+                .login(email, "reset-secret-2")
                 .await
                 .map(|_| ())
                 .map_err(CredentialError::from)
@@ -274,7 +264,7 @@ async fn main() -> Result<()> {
         "login with previous password: {}",
         outcome(
             &users
-                .login(tenant, email, "new-secret-1")
+                .login(email, "new-secret-1")
                 .await
                 .map(|_| ())
                 .map_err(CredentialError::from)
@@ -286,7 +276,7 @@ async fn main() -> Result<()> {
     client.execute("UPDATE password_reset_tokens SET created_at=now()-interval '2 minutes',expires_at=now()+interval '58 minutes' WHERE tenant_id=1", &[]).await?;
     let before = count(&mailbox);
     users
-        .request_password_reset(tenant, email)
+        .request_password_reset(email)
         .await
         .map_err(|_| Error::Invalid)?;
     let fresh = link(&arrival(&mailbox, before).await.unwrap_or_default()).unwrap_or_default();
@@ -301,14 +291,14 @@ async fn main() -> Result<()> {
         "expired token:  {}",
         outcome(
             &users
-                .reset_password(tenant, email, &fresh, "expired-secret-4")
+                .reset_password(email, &fresh, "expired-secret-4")
                 .await
         )
     );
     client.execute("INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES(1,1,decode(repeat('ab',32),'hex'),now()-interval '3 hours',now()-interval '2 hours')", &[]).await?;
     let before = count(&mailbox);
     users
-        .request_password_reset(tenant, email)
+        .request_password_reset(email)
         .await
         .map_err(|_| Error::Invalid)?;
     let racing = link(&arrival(&mailbox, before).await.unwrap_or_default()).unwrap_or_default();
@@ -327,8 +317,8 @@ async fn main() -> Result<()> {
         .get(0);
     println!("expired rows left after the next request: {rows}");
     let (a, b) = tokio::join!(
-        users.reset_password(tenant, email, &racing, "race-secret-5"),
-        users.reset_password(tenant, email, &racing, "race-secret-6")
+        users.reset_password(email, &racing, "race-secret-5"),
+        users.reset_password(email, &racing, "race-secret-6")
     );
     println!(
         "two simultaneous resets with one token: {} / {}",
@@ -353,7 +343,10 @@ async fn main() -> Result<()> {
         .await?;
 
     println!("\n== email verification ==");
-    let session = users.login(tenant, email, "reset-secret-2").await?;
+    let session = users
+        .login(email, "reset-secret-2")
+        .await
+        .map_err(|_| Error::Unauthorized)?;
     let before = count(&mailbox);
     println!(
         "send link: {}",

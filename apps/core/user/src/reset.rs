@@ -1,5 +1,6 @@
-//! Password change, forgotten-password request and reset. Tenant + email is the
-//! credential lookup while K9 has not yet bound the global login identity.
+//! Password change, forgotten-password request and reset. The address alone
+//! names the account (unique platform-wide), and a reset is issued and redeemed
+//! only for an account whose standing (`identity::standing`) is live.
 use crate::{
     password::{self, check_policy},
     CredentialError, UserService,
@@ -121,30 +122,35 @@ impl UserService {
     /// Always answers `Ok` for an unknown, frozen or throttled account so the
     /// public form gives one response. The mail is sent after this returns, so
     /// response time does not depend on whether an address exists.
-    pub async fn request_password_reset(
-        &self,
-        tenant: i64,
-        email: &str,
-    ) -> Result<(), CredentialError> {
+    pub async fn request_password_reset(&self, email: &str) -> Result<(), CredentialError> {
         let email = normalize_email(email)?;
-        if tenant <= 0 {
-            return Err(Error::Invalid.into());
-        }
         let client = self.db.get().await.map_err(Error::from)?;
         let candidates = client
             .query(
-                "SELECT u.id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=$1 AND lower(u.email)=$2 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
-                &[&tenant, &email],
+                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                &[&email],
             )
             .await
             .map_err(Error::from)?;
-        // Case-insensitive ambiguity is treated as unknown rather than guessed.
+        // Ambiguity is treated as unknown rather than guessed; a frozen account
+        // (archived company, retired identity) is unknown here too.
         let [account] = &candidates[..] else {
             password::verify("", None).await?;
             return Ok(());
         };
-        let (user, name, address): (i64, String, String) =
-            (account.get(0), account.get(1), account.get(2));
+        let (user, tenant, name, address): (i64, i64, String, String) = (
+            account.get(0),
+            account.get(1),
+            account.get(2),
+            account.get(3),
+        );
+        if !matches!(
+            crate::identity::standing(&**client, tenant, user).await?,
+            crate::identity::Standing::Live(_)
+        ) {
+            password::verify("", None).await?;
+            return Ok(());
+        }
         let token = random_token()?;
         let claimed = client
             .query_opt(
@@ -169,7 +175,7 @@ impl UserService {
             subject: "Reset your Bilibi password".into(),
             text: format!(
                 "Reset your Bilibi password by opening this link:\n\n{}\n\nIf you did not request this, you can ignore this email.\n",
-                self.reset_link(tenant, &address, &token)
+                self.reset_link(&address, &token)
             ),
         };
         let (mailer, db, hash) = (self.mailer.clone(), self.db.clone(), digest(&token));
@@ -190,10 +196,10 @@ impl UserService {
         Ok(())
     }
 
-    /// Where the emailed link points; the reset page reads these three values.
-    pub fn reset_link(&self, tenant: i64, email: &str, token: &str) -> String {
+    /// Where the emailed link points; the reset page reads both values.
+    pub fn reset_link(&self, email: &str, token: &str) -> String {
         format!(
-            "{}/reset-password/{token}?tenant={tenant}&email={}",
+            "{}/reset-password/{token}?email={}",
             self.origin,
             encode_component(email)
         )
@@ -204,35 +210,41 @@ impl UserService {
     /// indistinguishable.
     pub async fn reset_password(
         &self,
-        tenant: i64,
         email: &str,
         token: &str,
         new: &str,
     ) -> Result<(), CredentialError> {
         let email = normalize_email(email).map_err(|_| CredentialError::InvalidOrExpiredToken)?;
-        if tenant <= 0 || token.is_empty() || token.len() > 128 {
+        if token.is_empty() || token.len() > 128 {
             return Err(CredentialError::InvalidOrExpiredToken);
         }
         let mut client = self.db.get().await.map_err(Error::from)?;
         let account = client
             .query(
-                "SELECT u.id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE u.tenant_id=$1 AND lower(u.email)=$2 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
-                &[&tenant, &email],
+                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                &[&email],
             )
             .await
             .map_err(Error::from)?;
         let presented = digest(token);
         let user = match &account[..] {
             [row] => row
-                .get::<_, Option<Vec<u8>>>(1)
+                .get::<_, Option<Vec<u8>>>(2)
                 .filter(|stored| bool::from(stored.ct_eq(&presented)))
-                .map(|_| row.get::<_, i64>(0)),
+                .map(|_| (row.get::<_, i64>(0), row.get::<_, i64>(1))),
             _ => None,
         };
-        let Some(user) = user else {
+        let Some((user, tenant)) = user else {
             password::verify("", None).await?;
             return Err(CredentialError::InvalidOrExpiredToken);
         };
+        // A frozen account cannot redeem a link either; same answer as unknown.
+        if !matches!(
+            crate::identity::standing(&**client, tenant, user).await?,
+            crate::identity::Standing::Live(_)
+        ) {
+            return Err(CredentialError::InvalidOrExpiredToken);
+        }
         check_policy(new).map_err(CredentialError::Policy)?;
         let replacement = password::hash(new).await?;
         let mut tx = self

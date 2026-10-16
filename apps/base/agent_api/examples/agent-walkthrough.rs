@@ -20,15 +20,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let grants = app.services.get::<Grants>("base/authz.grants")?;
     let admin_login = app
         .user
-        .login(1, "admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
         .await?;
     let viewer_login = app
         .user
-        .login(1, "viewer@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("viewer@example.test", bilibi_web::seed::DEMO_PASSWORD)
         .await?;
     let other_login = app
         .user
-        .login(2, "manager@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login(
+            "manager@other.example.test",
+            bilibi_web::seed::DEMO_PASSWORD,
+        )
         .await?;
     let admin = app.security.guard(&admin_login.token).await?;
     let viewer = app.security.guard(&viewer_login.token).await?;

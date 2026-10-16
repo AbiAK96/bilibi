@@ -10,6 +10,10 @@ bilibi-audit.workspace = true
 bilibi-menu = { path = "../../base/menu" }
 bilibi-authz = { path = "../../base/authz" }
 bilibi-tenancy = { path = "../../base/tenancy" }
+bilibi-party-ids = { path = "../../base/party_ids" }
+bilibi-company.workspace = true
+bilibi-person = { path = "../person" }
+bilibi-affiliation = { path = "../affiliation" }
 bilibi-database.workspace = true
 bilibi-security.workspace = true
 tokio-postgres.workspace = true

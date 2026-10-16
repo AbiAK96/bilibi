@@ -29,12 +29,16 @@ pub const RESET_LINK_INVALID: &str = "The password reset link is invalid or has 
 /// The sign-in page's flash after a completed reset.
 pub const PASSWORD_RESET: &str = "Your password has been reset.";
 
+/// Sign-in refused for a right credential whose company is archived.
+pub const COMPANY_ARCHIVED: &str =
+    "This account's company is archived, so it can no longer sign in.";
+/// Sign-in refused for a right credential without a live workspace identity.
+pub const WORKSPACE_UNAVAILABLE: &str = "This account is not attached to an active workspace.";
+
 /// What the sign-in card shows for one request.
 #[derive(Clone, Debug, Default)]
 pub struct LoginForm {
-    pub tenant: String,
     pub email: String,
-    pub tenant_errors: Vec<String>,
     pub email_errors: Vec<String>,
     pub password_errors: Vec<String>,
     /// The announced failure above the form; the email field repeats it.
@@ -74,7 +78,6 @@ pub struct LoginPage {
     pub session_expired: bool,
     pub form_error: String,
     pub workspace: LoginWorkspace,
-    pub tenant: Html,
     pub email: Html,
     pub password: Html,
 }
@@ -85,7 +88,6 @@ impl LoginPage {
             session_expired: form.session_expired,
             form_error: form.form_error.clone(),
             workspace: form.workspace.clone(),
-            tenant: Html::render(&tenant_field("login", &form.tenant, &form.tenant_errors))?,
             email: Html::render(
                 &Field::in_form("login", "email")
                     .id("login-email")
@@ -118,9 +120,7 @@ impl LoginPage {
 /// What the forgotten-password card shows for one request.
 #[derive(Clone, Debug, Default)]
 pub struct ForgotForm {
-    pub tenant: String,
     pub email: String,
-    pub tenant_errors: Vec<String>,
     pub email_errors: Vec<String>,
     /// Set once a well-formed request was accepted.
     pub confirmation: String,
@@ -130,7 +130,6 @@ pub struct ForgotForm {
 #[template(path = "forgot_password.html")]
 pub struct ForgotPasswordPage {
     pub confirmation: String,
-    pub tenant: Html,
     pub email: Html,
 }
 
@@ -138,7 +137,6 @@ impl ForgotPasswordPage {
     pub fn new(form: &ForgotForm) -> askama::Result<Self> {
         Ok(Self {
             confirmation: form.confirmation.clone(),
-            tenant: Html::render(&tenant_field("forgot", &form.tenant, &form.tenant_errors))?,
             email: Html::render(
                 &Field::in_form("forgot", "email")
                     .id("forgot-email")
@@ -158,11 +156,10 @@ impl ForgotPasswordPage {
     }
 }
 
-/// What the reset card shows for one request. The tenant and email come from
-/// the emailed link; the passwords are never echoed back.
+/// What the reset card shows for one request. The email comes from the
+/// emailed link; the passwords are never echoed back.
 #[derive(Clone, Debug, Default)]
 pub struct ResetForm {
-    pub tenant: String,
     pub email: String,
     pub email_errors: Vec<String>,
     pub password_errors: Vec<String>,
@@ -172,7 +169,6 @@ pub struct ResetForm {
 #[derive(Template)]
 #[template(path = "reset_password.html")]
 pub struct ResetPasswordPage {
-    pub tenant: Html,
     pub email: Html,
     pub password: Html,
     pub password_confirmation: Html,
@@ -181,12 +177,6 @@ pub struct ResetPasswordPage {
 impl ResetPasswordPage {
     pub fn new(form: &ResetForm) -> askama::Result<Self> {
         Ok(Self {
-            tenant: Html::render(
-                &Field::in_form("reset", "tenant")
-                    .id("reset-tenant")
-                    .kind(InputKind::Hidden)
-                    .value(&form.tenant),
-            )?,
             email: Html::render(
                 &Field::in_form("reset", "email")
                     .id("reset-email")
@@ -226,21 +216,4 @@ fn new_password() -> Attrs {
         required: true,
         ..Attrs::default()
     }
-}
-
-/// Bilibi's temporary credential lookup is tenant + email, so the anonymous
-/// forms carry the tenant that Bilimbi's global login does not need.
-fn tenant_field(form: &str, value: &str, errors: &[String]) -> Field {
-    Field::in_form(form, "tenant")
-        .id(format!("{form}-tenant"))
-        .kind(InputKind::Number)
-        .label("Tenant ID")
-        .value(value)
-        .errors(errors.to_vec())
-        .attrs(Attrs {
-            min: Some("1".into()),
-            autocomplete: Some("off".into()),
-            required: true,
-            ..Attrs::default()
-        })
 }

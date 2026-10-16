@@ -81,7 +81,6 @@ pub enum Freeze {
     Identity,
 }
 /// The authentication-edge answer for one account id.
-#[derive(Debug)]
 pub enum Standing {
     Live(AccountIdentity),
     /// No active, undeleted account with that id in that tenant.
@@ -179,7 +178,11 @@ impl ActorVerifier for AccountVerifier {
 /// asked. The password is verified first, at the same cost for an unknown
 /// address, and only then is the account's standing judged, so a frozen
 /// account is named only to someone holding its credential.
-pub async fn login(db: &Db, email: &str, password: &str) -> Result<Login, CredentialError> {
+pub async fn login(
+    db: &Db,
+    email: &str,
+    password: &str,
+) -> std::result::Result<Login, CredentialError> {
     let email = crate::reset::normalize_email(email).map_err(|_| CredentialError::Rejected)?;
     if password.len() > password::MAX_LENGTH {
         return Err(CredentialError::Rejected);

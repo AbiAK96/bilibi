@@ -400,11 +400,7 @@ impl BindingIdentity<'_> {
 /// exists. A retired identity, a cross-tenant or missing id and the protected
 /// system identity all answer `false`; the caller freezes the account. This
 /// grants nothing and returns no contact data.
-pub async fn account_standing(
-    client: &dyn ProofClient,
-    tenant: i64,
-    id: PersonId,
-) -> Result<bool> {
+pub async fn account_standing(client: &dyn ProofClient, tenant: i64, id: PersonId) -> Result<bool> {
     if tenant <= 0 {
         return Err(Error::Unauthorized);
     }

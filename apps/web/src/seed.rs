@@ -1,4 +1,7 @@
-//! Explicit, idempotent demo seed. Never runs at application boot.
+//! Explicit, idempotent demo seed. Never runs at application boot. Login
+//! emails are unique platform-wide (K9), so tenant 2's manager has its own
+//! address; `seed-users.sql` adds the demo Persons, affiliations and the
+//! account links the K9 binder proves at every sign-in and request.
 use bilibi_base::audit::{record_action, Attribution};
 use bilibi_base::authz::grants::Grants;
 use bilibi_database::{Db, Result};
@@ -19,7 +22,8 @@ pub async fn seed(db: &Db, password: &str) -> Result<()> {
         (2, 1, "Lee Viewer", "viewer@example.test"),
         (3, 1, "Sam Staff", "staff@example.test"),
         (4, 1, "Alex Admin", "admin@example.test"),
-        (5, 2, "Other Manager", "manager@example.test"),
+        (5, 2, "Other Manager", "manager@other.example.test"),
+        (7, 1, "Kim Contractor", "contractor@example.test"),
     ] {
         tx.execute("INSERT INTO users(id,tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", &[&id,&tenant,&name,&email,&hash]).await?;
     }

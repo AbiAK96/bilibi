@@ -32,7 +32,10 @@ async fn main() -> Result<()> {
     let sessions = services.get::<Sessions>("base/session.sessions")?;
     let boundary = services.get::<NotificationBoundary>("base/notifications.sink")?;
 
-    let login = users.login(1, "manager@example.test", "bilibi-dev").await?;
+    let login = users
+        .login("manager@example.test", "bilibi-dev")
+        .await
+        .map_err(|_| Error::Unauthorized)?;
     let mut client = db.get().await?;
     let scope = guard(&**client, &login.token, &sessions).await?;
     let ids: Vec<i64> = client

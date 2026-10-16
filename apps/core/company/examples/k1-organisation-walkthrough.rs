@@ -63,9 +63,12 @@ async fn main() -> Result<(), Error> {
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let password = bilibi_web::seed::DEMO_PASSWORD;
-    let manager_login = app.user.login(1, "manager@example.test", password).await?;
-    let viewer_login = app.user.login(1, "viewer@example.test", password).await?;
-    let other_login = app.user.login(2, "manager@example.test", password).await?;
+    let manager_login = app.user.login("manager@example.test", password).await?;
+    let viewer_login = app.user.login("viewer@example.test", password).await?;
+    let other_login = app
+        .user
+        .login("manager@other.example.test", password)
+        .await?;
     let manager = app.security.guard(&manager_login.token).await?;
     let viewer = app.security.guard(&viewer_login.token).await?;
     let other = app.security.guard(&other_login.token).await?;

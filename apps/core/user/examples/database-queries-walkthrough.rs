@@ -54,17 +54,20 @@ async fn main() -> Result<()> {
     for (tenant, email) in [
         (1_i64, "admin@example.test"),
         (1, "manager@example.test"),
-        (2, "manager@example.test"),
+        (2, "manager@other.example.test"),
     ] {
         client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) SELECT tenant_id,id,$3,true FROM users WHERE tenant_id=$1 AND email=$2 ON CONFLICT(tenant_id,user_id,capability) DO UPDATE SET is_allowed=true", &[&tenant,&email,&LIST]).await?;
     }
     let mut scopes = Vec::new();
-    for (tenant, email) in [
-        (1, "admin@example.test"),
-        (1, "manager@example.test"),
-        (2, "manager@example.test"),
+    for email in [
+        "admin@example.test",
+        "manager@example.test",
+        "manager@other.example.test",
     ] {
-        let login = users.login(tenant, email, "bilibi-dev").await?;
+        let login = users
+            .login(email, "bilibi-dev")
+            .await
+            .map_err(|_| bilibi_database::Error::Unauthorized)?;
         scopes.push(users.sessions.check(&**client, &login.token).await?);
     }
     let actor = &scopes[0];

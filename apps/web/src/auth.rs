@@ -2,9 +2,10 @@
 //! forgotten password and reset. Bilimbi's LiveViews are plain forms here: a
 //! POST re-renders the card with its errors, and a completed step redirects
 //! with a one-shot flash cookie that names a message, never carries one. The
-//! validation mirrors the source changesets; the credential lookup stays
-//! tenant + email until K9 binds the global login, so each form carries the
-//! tenant that Bilimbi does not need. Sign-in has no attempt throttle yet.
+//! validation mirrors the source changesets. The address alone names the
+//! account, as in Bilimbi; a right credential on a frozen account (archived
+//! company, no live workspace identity) is told so above the form, as
+//! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -15,8 +16,8 @@ use axum::{
 use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, CREDENTIALS_REJECTED, PASSWORD_RESET,
-    RESET_LINK_INVALID, RESET_REQUESTED,
+    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
+    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
 };
 use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
@@ -24,7 +25,6 @@ use std::{collections::HashMap, net::SocketAddr};
 
 const TITLE_SUFFIX: &str = " · Business application platform";
 const BLANK: &str = "can't be blank";
-const INVALID: &str = "is invalid";
 const EMAIL_FORMAT: &str = "must be a valid email address";
 const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
 /// Where a signed-in visitor to a credential page is sent: the dashboard, as
@@ -124,15 +124,6 @@ fn validate_email(value: &str) -> Vec<String> {
         Vec::new()
     }
 }
-fn validate_tenant(value: &str) -> (Option<i64>, Vec<String>) {
-    if value.is_empty() {
-        return (None, vec![BLANK.into()]);
-    }
-    match value.parse::<i64>() {
-        Ok(tenant) if tenant > 0 => (Some(tenant), Vec::new()),
-        _ => (None, vec![INVALID.into()]),
-    }
-}
 fn validate_required(value: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
@@ -226,8 +217,6 @@ async fn login_workspace(app: &App) -> LoginWorkspace {
 }
 #[derive(Deserialize)]
 pub struct LoginSubmission {
-    #[serde(rename = "login[tenant]", default)]
-    tenant: String,
     #[serde(rename = "login[email]", default)]
     email: String,
     #[serde(rename = "login[password]", default)]
@@ -241,17 +230,12 @@ pub async fn login(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let mut form = LoginForm {
-        tenant: bounded(&submission.tenant),
         email: bounded(&submission.email),
         ..LoginForm::default()
     };
-    let (tenant, tenant_errors) = validate_tenant(&form.tenant);
-    form.tenant_errors = tenant_errors;
     form.email_errors = validate_email(&form.email);
     form.password_errors = validate_required(&submission.password);
-    let Some(tenant) =
-        tenant.filter(|_| form.email_errors.is_empty() && form.password_errors.is_empty())
-    else {
+    if !(form.email_errors.is_empty() && form.password_errors.is_empty()) {
         return login_card(
             &app,
             form,
@@ -259,12 +243,8 @@ pub async fn login(
             StatusCode::UNPROCESSABLE_ENTITY,
         )
         .await;
-    };
-    match app
-        .user
-        .login(tenant, &form.email, &submission.password)
-        .await
-    {
+    }
+    match app.user.login(&form.email, &submission.password).await {
         Ok(session) => {
             let client = app.db.get().await.map_err(Error::from)?;
             app.security
@@ -292,14 +272,25 @@ pub async fn login(
             );
             Ok(response)
         }
-        Err(Error::Unauthorized | Error::Invalid) => {
+        Err(CredentialError::Rejected) => {
             // Reported twice over, as Bilimbi does: the announced alert for
             // assistive technology and the email field's own error line.
             form.form_error = CREDENTIALS_REJECTED.into();
             form.email_errors = vec![CREDENTIALS_REJECTED.into()];
             login_card(&app, form, FlashMap::default(), StatusCode::UNAUTHORIZED).await
         }
-        Err(error) => Err(error.into()),
+        // A right credential on a frozen account: announced alone, as
+        // Bilimbi's `put_form_error`, so the holder learns why.
+        Err(CredentialError::CompanyArchived) => {
+            form.form_error = COMPANY_ARCHIVED.into();
+            login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
+        }
+        Err(CredentialError::WorkspaceUnavailable) => {
+            form.form_error = WORKSPACE_UNAVAILABLE.into();
+            login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
+        }
+        Err(CredentialError::Other(error)) => Err(error.into()),
+        Err(_) => Err(Error::Internal.into()),
     }
 }
 
@@ -324,8 +315,6 @@ fn forgot_card(form: &ForgotForm, status: StatusCode) -> std::result::Result<Res
 }
 #[derive(Deserialize)]
 pub struct ForgotSubmission {
-    #[serde(rename = "forgot[tenant]", default)]
-    tenant: String,
     #[serde(rename = "forgot[email]", default)]
     email: String,
 }
@@ -336,17 +325,14 @@ pub async fn forgot(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let mut form = ForgotForm {
-        tenant: bounded(&submission.tenant),
         email: bounded(&submission.email),
         ..ForgotForm::default()
     };
-    let (tenant, tenant_errors) = validate_tenant(&form.tenant);
-    form.tenant_errors = tenant_errors;
     form.email_errors = validate_email(&form.email);
-    let Some(tenant) = tenant.filter(|_| form.email_errors.is_empty()) else {
+    if !form.email_errors.is_empty() {
         return forgot_card(&form, StatusCode::UNPROCESSABLE_ENTITY);
-    };
-    match app.user.request_password_reset(tenant, &form.email).await {
+    }
+    match app.user.request_password_reset(&form.email).await {
         // The confirmation is the same whether or not the account exists.
         Ok(()) | Err(CredentialError::Other(Error::Invalid)) => {
             form.confirmation = RESET_REQUESTED.into();
@@ -369,7 +355,6 @@ pub async fn reset_page(
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
     let form = ResetForm {
-        tenant: bounded(query.get("tenant").map(String::as_str).unwrap_or("")),
         email: bounded(query.get("email").map(String::as_str).unwrap_or("")),
         ..ResetForm::default()
     };
@@ -385,8 +370,6 @@ fn reset_card(form: &ResetForm, status: StatusCode) -> std::result::Result<Respo
 }
 #[derive(Deserialize)]
 pub struct ResetSubmission {
-    #[serde(rename = "reset[tenant]", default)]
-    tenant: String,
     #[serde(rename = "reset[email]", default)]
     email: String,
     #[serde(rename = "reset[password]", default)]
@@ -402,7 +385,6 @@ pub async fn reset(
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
     let mut form = ResetForm {
-        tenant: bounded(&submission.tenant),
         email: bounded(&submission.email),
         ..ResetForm::default()
     };
@@ -416,11 +398,9 @@ pub async fn reset(
     {
         return reset_card(&form, StatusCode::UNPROCESSABLE_ENTITY);
     }
-    // A link without a usable tenant is as invalid as one with a bad token.
-    let tenant = validate_tenant(&form.tenant).0.unwrap_or(0);
     let outcome = app
         .user
-        .reset_password(tenant, &form.email, &token, &submission.password)
+        .reset_password(&form.email, &token, &submission.password)
         .await;
     match outcome {
         Ok(()) => {

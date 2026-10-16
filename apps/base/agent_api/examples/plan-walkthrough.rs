@@ -99,15 +99,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let grants = app.services.get::<Grants>("base/authz.grants")?;
     let login = app
         .user
-        .login(1, "admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
         .await?;
     let other_login = app
         .user
-        .login(2, "manager@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login(
+            "manager@other.example.test",
+            bilibi_web::seed::DEMO_PASSWORD,
+        )
         .await?;
     let second_login = app
         .user
-        .login(1, "admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
+        .login("admin@example.test", bilibi_web::seed::DEMO_PASSWORD)
         .await?;
     let admin = app.security.guard(&login.token).await?;
     let other = app.security.guard(&other_login.token).await?;

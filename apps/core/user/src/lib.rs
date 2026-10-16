@@ -1,8 +1,9 @@
 //! Credentials, server sessions, preferences, and the user's notifications and bell.
 mod appearance;
-mod contributions;
+pub mod contributions;
 pub mod database_queries;
 mod directory;
+pub mod identity;
 mod inbox;
 pub mod notifications;
 pub mod password;
@@ -14,6 +15,7 @@ pub mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_security::{authorize, guard, Capability, Sessions};
+pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
 pub use preferences::{
@@ -39,6 +41,10 @@ pub const BOOTSTRAP_MIGRATION: (&str, &str) = (
     "core-user-006-bootstrap",
     include_str!("../migrations/006-bootstrap.sql"),
 );
+pub const IDENTITY_MIGRATION: (&str, &str) = (
+    "core-user-007-identity",
+    include_str!("../migrations/007-identity.sql"),
+);
 
 /// Blocking Argon2id hash for seeds and tools; services use `password::hash`.
 pub fn hash_password(password: &str) -> Result<String> {
@@ -50,6 +56,16 @@ pub fn hash_password(password: &str) -> Result<String> {
 /// an account exists.
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialError {
+    /// Sign-in: unknown address, wrong password or malformed input, one answer.
+    #[error("These credentials do not match our records.")]
+    Rejected,
+    /// Sign-in: the credential is right, but the account's company is archived.
+    #[error("This account's company is archived, so it can no longer sign in.")]
+    CompanyArchived,
+    /// Sign-in: the credential is right, but the account's tenant is inactive
+    /// or its Person/affiliation no longer stands.
+    #[error("This account is not attached to an active workspace.")]
+    WorkspaceUnavailable,
     #[error("is incorrect")]
     IncorrectPassword,
     #[error("{0}")]
@@ -76,25 +92,13 @@ pub struct Login {
     pub csrf: String,
 }
 
-/// Tenant+email is the explicit credential lookup, not an unscoped user search.
-pub async fn login(db: &Db, tenant: i64, email: &str, password: &str) -> Result<Login> {
-    if tenant <= 0 || email.len() > 254 || password.len() > 1024 {
-        return Err(Error::Invalid);
-    }
-    let client = db.get().await?;
-    let row = client.query_opt("SELECT u.id,u.password_hash FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=$1 AND u.email=$2 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active'", &[&tenant,&email]).await?;
-    // An unknown account still pays for one verification.
-    let stored: Option<String> = row.as_ref().map(|r| r.get(1));
-    if !password::verify(password, stored.as_deref()).await? {
-        return Err(Error::Unauthorized);
-    }
-    let user: i64 = row.ok_or(Error::Unauthorized)?.get(0);
-    let result = Login {
-        token: uuid::Uuid::new_v4().simple().to_string(),
-        csrf: uuid::Uuid::new_v4().simple().to_string(),
-    };
-    client.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')", &[&result.token,&tenant,&user,&result.csrf]).await?;
-    Ok(result)
+/// Bilimbi's global sign-in: email alone names the account (`identity::login`).
+pub async fn login(
+    db: &Db,
+    email: &str,
+    password: &str,
+) -> std::result::Result<Login, CredentialError> {
+    identity::login(db, email, password).await
 }
 
 pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Result<()> {
@@ -113,6 +117,8 @@ pub struct UserService {
     pub db: Db,
     pub notifications: Notifications,
     pub mutations: std::sync::Arc<MutationBoundary>,
+    authentication: std::sync::Arc<bilibi_security::Authentication>,
+    affiliations: std::sync::Arc<bilibi_affiliation::AffiliationService>,
     mailer: std::sync::Arc<bilibi_mail::Mailer>,
     settings: std::sync::Arc<bilibi_settings::Settings>,
     display: std::sync::Arc<bilibi_datetime::DisplayPolicy>,
@@ -124,7 +130,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -137,7 +143,7 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
+            Ok(std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned()}))
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
             Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?}))))
@@ -146,8 +152,12 @@ inventory::submit! {
 }
 
 impl UserService {
-    pub async fn login(&self, tenant: i64, email: &str, password: &str) -> Result<Login> {
-        login(&self.db, tenant, email, password).await
+    pub async fn login(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> std::result::Result<Login, CredentialError> {
+        login(&self.db, email, password).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         logout(&self.db, token, csrf, &self.sessions).await
@@ -172,43 +182,5 @@ impl UserService {
             &self.sessions,
         )
         .await
-    }
-}
-
-/// The current account adapter deliberately supplies no invented party links.
-/// K9 binds Person/Organisation/Affiliation through their owner APIs.
-pub struct AccountVerifier;
-impl bilibi_security::ActorVerifier for AccountVerifier {
-    fn verify<'a>(
-        &'a self,
-        client: &'a dyn bilibi_security::ProofClient,
-        tenant: i64,
-        user: i64,
-    ) -> bilibi_security::ProofFuture<'a, bilibi_security::AccountIdentity> {
-        Box::pin(async move {
-            let row = client.query_opt("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.ok_or(Error::Unauthorized)?;
-            Ok(bilibi_security::AccountIdentity {
-                name: row.get(0),
-                email: row.get(1),
-                person: None,
-                organisation: None,
-                affiliation: None,
-            })
-        })
-    }
-    fn confirm_password<'a>(
-        &'a self,
-        client: &'a dyn bilibi_security::ProofClient,
-        tenant: i64,
-        user: i64,
-        password: &'a str,
-    ) -> bilibi_security::ProofFuture<'a, bool> {
-        Box::pin(async move {
-            if password.len() > password::MAX_LENGTH {
-                return Ok(false);
-            }
-            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.map(|row| row.get(0));
-            password::verify(password, stored.as_deref()).await
-        })
     }
 }
