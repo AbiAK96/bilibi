@@ -45,10 +45,6 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
                 "outcome".into(),
                 bilibi_ui::Filter::one_of(&["", "ok", "error", "cancelled", "discarded"], ""),
             ),
-            (
-                "range".into(),
-                bilibi_ui::Filter::one_of(&["all", "1h", "24h", "7d"], "all"),
-            ),
         ]),
         omit_blank: vec!["search".into(), "kind".into(), "outcome".into()],
         ..ListSpec::default()
@@ -115,22 +111,16 @@ impl Index {
             data: None,
         })
     }
-    fn filter(&self, now: SystemTime) -> Filter {
-        let seconds = match self.list.filters["range"].as_str() {
-            "1h" => Some(3600),
-            "24h" => Some(86400),
-            "7d" => Some(604800),
-            _ => None,
-        };
+    fn filter(&self) -> Filter {
         Filter {
             page: self.list.page as i64,
             page_size: self.list.page_size as i64,
             kind: Kind::parse(&self.list.filters["kind"]),
             outcome: Outcome::parse(&self.list.filters["outcome"]),
             identity: (!self.list.search.is_empty()).then(|| self.list.search.clone()),
-            from: seconds.map(|s| now - Duration::from_secs(s)),
-            // Include everything retained when no relative range was requested.
-            to: seconds.map(|_| now),
+            // Bilimbi has no time-range filter: the list is all retained history.
+            from: None,
+            to: None,
         }
     }
     async fn load(&mut self, scope: &Scope) -> Result<()> {
@@ -145,7 +135,7 @@ impl Index {
             limit: 10,
         };
         let recorder = &self.pages.recorder;
-        let filter = self.filter(now);
+        let filter = self.filter();
         let (diagnostics, mut samples, regressions) = tokio::join!(
             recorder.diagnostics(),
             recorder.list_samples(&filter),
@@ -156,7 +146,7 @@ impl Index {
                 .list
                 .clamp_to_last_page((page.total as u64).div_ceil(self.list.page_size), true)
             {
-                samples = recorder.list_samples(&self.filter(now)).await;
+                samples = recorder.list_samples(&self.filter()).await;
             }
         }
         let client = self.pages.db.get().await?;

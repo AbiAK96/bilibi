@@ -63,13 +63,6 @@ struct When {
     utc: String,
     mode: &'static str,
 }
-#[derive(Template)]
-#[template(
-    source = r#"<p id="performance-regression-window" class="mb-2 text-xs text-ink-muted">Current: last hour. Baseline: the preceding hour. At least 5 samples in each window; current p95 must meet the configured slow threshold.</p>"#,
-    ext = "html"
-)]
-struct RegressionWindow;
-
 fn health(data: &Data) -> Result<Html> {
     let d = &data.diagnostics;
     let mut cards = Vec::new();
@@ -227,8 +220,7 @@ pub(super) fn page(
         .as_ref()
         .map(|rows| rows.iter().map(regression_row).collect())
         .unwrap_or_else(|_| Ok(vec![]))?;
-    let mut regression_body = render(RegressionWindow)?;
-    regression_body.push(&render(table(
+    let regression_body = render(table(
         regressions,
         regression_rows,
         "regressions_grid",
@@ -238,7 +230,7 @@ pub(super) fn page(
         } else {
             "Regression diagnostics are unavailable."
         },
-    ))?);
+    ))?;
     body.push(&render(Card {
         id: "performance-regressions",
         title: "Recent regressions",
@@ -281,18 +273,6 @@ pub(super) fn page(
                     ("Error", "error"),
                     ("Cancelled", "cancelled"),
                     ("Discarded", "discarded"),
-                ]),
-            ),
-            ToolbarControl::select(
-                "performance-range",
-                "range",
-                "Time range",
-                &list.filters["range"],
-                choices(&[
-                    ("All retained history", "all"),
-                    ("Last hour", "1h"),
-                    ("Last 24 hours", "24h"),
-                    ("Last 7 days", "7d"),
                 ]),
             ),
         ],

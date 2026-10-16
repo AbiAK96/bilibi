@@ -18,14 +18,12 @@ entry and `base-perf-health` dashboard widget use the same platform capability.
 
 The page composes Base UI's `ListState`, filter toolbar, `ListColumns`,
 `FlexTable` and pagination (`src/web/`). Kind, outcome, exact identity, page
-size (25/50/100/300), page and time range survive reload and browser Back.
-`range` accepts `all` (all retained history, the default), `1h`, `24h` and `7d`;
-relative windows use inclusive start/exclusive end instants in UTC. Regression
+size (25/50/100/300) and page survive reload and browser Back; like Bilimbi, the
+list is all retained history, with no time-range filter. Regression
 diagnostics always compare the last hour with its preceding hour, with at least
-five samples in both windows and the configured p95 threshold. The page labels
-these windows separately from the history range. Column changes and zoom reuse
-the loaded data; the next host refresh reloads it. Timestamps follow the shell's
-Company/UTC/Local display policy.
+five samples in both windows and the configured p95 threshold. Column changes
+and zoom reuse the loaded data; the next host refresh reloads it. Timestamps
+follow the shell's Company/UTC/Local display policy.
 
 An empty read says there is no matching history; a failed read says history is
 unavailable and withholds a fabricated zero count/pager. A failed regression
