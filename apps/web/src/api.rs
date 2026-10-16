@@ -313,15 +313,22 @@ async fn params(request: Request) -> Option<HashMap<String, String>> {
 /// `X-Forwarded-For` right to left, skipping loopback hops, and stop at the
 /// first other address. An unparseable hop leaves the peer address.
 pub(crate) fn sender(request: &Request) -> String {
-    let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
-        return "unknown".into();
-    };
-    let peer = peer.ip();
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(peer)| *peer);
+    client_address(peer, request.headers()).map_or_else(|| "unknown".into(), |ip| ip.to_string())
+}
+
+/// The address behind [`sender`], for callers that hold the peer and the
+/// headers apart (a form handler that cannot take the whole request). `None`
+/// only when the server was not given connection info.
+pub(crate) fn client_address(peer: Option<SocketAddr>, headers: &HeaderMap) -> Option<IpAddr> {
+    let peer = peer?.ip();
     if !peer.is_loopback() {
-        return peer.to_string();
+        return Some(peer);
     }
-    let hops: Vec<&str> = request
-        .headers()
+    let hops: Vec<&str> = headers
         .get_all("x-forwarded-for")
         .iter()
         .filter_map(|value| value.to_str().ok())
@@ -330,11 +337,11 @@ pub(crate) fn sender(request: &Request) -> String {
     for hop in hops.into_iter().rev() {
         match hop.trim().parse::<IpAddr>() {
             Ok(address) if address.is_loopback() => continue,
-            Ok(address) => return address.to_string(),
+            Ok(address) => return Some(address),
             Err(_) => break,
         }
     }
-    peer.to_string()
+    Some(peer)
 }
 
 async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {

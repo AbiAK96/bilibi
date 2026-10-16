@@ -5,10 +5,10 @@
 //! validation mirrors the source changesets; the credential lookup stays
 //! tenant + email until K9 binds the global login, so each form carries the
 //! tenant that Bilimbi does not need. Sign-in has no attempt throttle yet.
-use crate::{document_titled, origin, token, App, HttpError};
+use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
-    extract::{Form, Path, Query, State},
+    extract::{ConnectInfo, Extension, Form, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
@@ -20,7 +20,7 @@ use bilibi_ui::{
 };
 use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, net::SocketAddr};
 
 const TITLE_SUFFIX: &str = " · Business application platform";
 const BLANK: &str = "can't be blank";
@@ -164,28 +164,6 @@ fn bounded(value: &str) -> String {
 
 // ---- sign-in -----------------------------------------------------------------
 
-/// The address the operator session list shows: the first `X-Forwarded-For`
-/// hop, or `X-Real-IP`, as the reverse proxy (the launcher's Caddy) reports
-/// it. A direct connection without a proxy records none; the host is not
-/// served with connection info, and a spoofable header is listed, never
-/// trusted for anything.
-fn client_address(headers: &HeaderMap) -> Option<String> {
-    let forwarded = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-        })?;
-    forwarded
-        .trim()
-        .parse::<std::net::IpAddr>()
-        .ok()
-        .map(|ip| ip.to_string())
-}
-
 /// `/` and `/login`: the sign-in card, or the workspace for a signed-in visitor.
 pub async fn home(
     State(app): State<App>,
@@ -258,6 +236,7 @@ pub struct LoginSubmission {
 pub async fn login(
     State(app): State<App>,
     headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<LoginSubmission>,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -293,7 +272,9 @@ pub async fn login(
                 .describe(
                     &**client,
                     &session.token,
-                    client_address(&headers).as_deref(),
+                    api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
+                        .map(|ip| ip.to_string())
+                        .as_deref(),
                     headers
                         .get(header::USER_AGENT)
                         .and_then(|value| value.to_str().ok()),
