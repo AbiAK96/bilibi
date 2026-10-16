@@ -6,9 +6,10 @@
 use crate::inline_specimen::InlineSamples;
 use crate::section::sections;
 use crate::{
-    choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, CodeInput, Combobox,
-    Field, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect, PageVariant,
-    RadioGroup, Restricted, RestrictedField, SecretInput, StatItem,
+    choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, ClientEntry, CodeInput,
+    Combobox, Field, FileInput, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect,
+    PageVariant, RadioGroup, Restricted, RestrictedField, SecretInput, StatItem, UploadSpec,
+    Uploads,
 };
 use askama::Template;
 
@@ -32,6 +33,9 @@ pub struct ComponentsSpecimen {
     radio_disabled: Html,
     inline: InlineSamples,
     flex: crate::flex_sample::FlexSpecimens,
+    /// The file inputs in every state the host can leave them in: empty,
+    /// arriving, complete, refused per entry and refused as a whole.
+    uploads: Uploads,
 }
 
 sections! {
@@ -52,6 +56,7 @@ sections! {
         stored_secret: "ui_components_specimen/stored_secret.html",
         input_variants: "ui_components_specimen/input_variants.html",
         combobox: "ui_components_specimen/combobox.html",
+        file_input: "ui_components_specimen/file_input.html",
         restricted: "ui_components_specimen/restricted.html",
         inline_facts: "ui_components_specimen/inline_facts.html",
         flex_tables: "ui_components_specimen/flex_tables.html",
@@ -415,6 +420,74 @@ impl ComponentsSpecimen {
             radio_disabled,
             inline: InlineSamples::new()?,
             flex: crate::flex_sample::FlexSpecimens::new()?,
+            uploads: specimen_uploads(),
         })
     }
+
+    fn file_empty(&self) -> FileInput<'_> {
+        self.uploads
+            .input("statement", "specimen-file-empty")
+            .label("Bank statement")
+            .hint("A CSV export, at most 5 MiB.")
+    }
+    fn file_arriving(&self) -> FileInput<'_> {
+        self.uploads
+            .input("documents", "specimen-file-arriving")
+            .label("Source documents")
+    }
+    fn file_refused(&self) -> FileInput<'_> {
+        self.uploads
+            .input("scan", "specimen-file-refused")
+            .label("Signed scan")
+    }
+    fn file_disabled(&self) -> FileInput<'_> {
+        self.uploads
+            .input("locked", "specimen-file-disabled")
+            .label("Locked record")
+            .hint("A final record accepts no more files.")
+            .disabled()
+    }
+}
+
+/// The states the specimen shows, produced the way the host produces them:
+/// through registration and chunk appends, never by hand.
+fn specimen_uploads() -> Uploads {
+    let mut uploads = Uploads::new([
+        UploadSpec::new("statement", 5 * 1024 * 1024).accept([".csv", ".txt", "text/csv"]),
+        UploadSpec::new("documents", 25 * 1024 * 1024).max_entries(2),
+        UploadSpec::new("scan", 2 * 1024 * 1024).accept(["application/pdf", "image/*"]),
+        UploadSpec::new("locked", 1024),
+    ]);
+    let mut ids = 0;
+    let client = |name: &str, size: u64, kind: &str| ClientEntry {
+        client_ref: name.to_owned(),
+        name: name.to_owned(),
+        size,
+        content_type: kind.to_owned(),
+    };
+    uploads.register(
+        "documents",
+        vec![
+            client("invoice-2026-0918.pdf", 3_200, "application/pdf"),
+            client("delivery-note.pdf", 1_800, "application/pdf"),
+            client("one-too-many.pdf", 900, "application/pdf"),
+        ],
+        &mut ids,
+    );
+    // The first file is complete, the second a little over a third in.
+    let _ = uploads.append(1, 0, &[0; 3_200]);
+    let _ = uploads.append(2, 0, &[0; 700]);
+    uploads.register(
+        "scan",
+        vec![
+            client(
+                "contract.docx",
+                40_000,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            client("contract-scan.pdf", 9 * 1024 * 1024, "application/pdf"),
+        ],
+        &mut ids,
+    );
+    uploads
 }

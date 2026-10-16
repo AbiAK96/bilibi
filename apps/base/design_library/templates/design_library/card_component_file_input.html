@@ -1,0 +1,27 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <p class="text-sm text-ink-muted">
+                  The live file input streams each chosen file to the page over its socket in 64 KiB chunks and lists it with its progress and a Remove action. The server holds the rules and every byte: a file over the limit or of a kind the input does not accept is refused before anything is sent, and the page receives the bytes only in the event that acts on them, here Keep files.
+                </p>
+                <form id="design-library-file-form" data-event="keep-files" class="mt-4 space-y-3">
+                  {{ self.file_input()? }}
+                  <div class="flex flex-wrap items-center gap-2">
+                    {% call ui::button(id="design-library-file-keep", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Keeping…") %}Keep files{% endcall %}
+                    {% if !self.state.kept.is_empty() %}{% call ui::button(id="design-library-file-forget", button_type="button", event="forget-files") %}Forget kept files{% endcall %}{% endif %}
+                  </div>
+                </form>
+                {% if self.state.kept.is_empty() %}
+                <p id="design-library-file-kept-empty" class="mt-4 text-sm text-ink-muted">Nothing has been kept yet. The facts below name each delivered file, its size and the SHA-256 of the bytes the page received; the bytes themselves stay in this page's memory until it closes.</p>
+                {% else %}
+                <ul id="design-library-file-kept" class="mt-4 divide-y divide-line text-sm">
+                  {% for file in self.state.kept %}
+                  <li id="design-library-file-kept-{{ loop.index }}" class="py-2">
+                    <span class="font-medium text-ink">{{ file.name }}</span>
+                    <p class="text-ink-muted">{{ self.kept_size(file.size) }}{% if !file.content_type.is_empty() %} · {{ file.content_type }}{% endif %} · SHA-256 <span class="font-mono" title="{{ file.sha256 }}">{{ file.sha256[..16] }}…</span></p>
+                  </li>
+                  {% endfor %}
+                </ul>
+                {% endif %}

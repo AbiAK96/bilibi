@@ -57,6 +57,7 @@ card_design_library_input_live_state: "design_library/card_design_library_input_
 card_component_input_states: "design_library/card_component_input_states.html",
 card_component_input_variants: "design_library/card_component_input_variants.html",
 card_component_combobox: "design_library/card_component_combobox.html",
+card_component_file_input: "design_library/card_component_file_input.html",
 component_interaction_patterns: "design_library/component_interaction_patterns.html",
 card_component_inline_edit: "design_library/card_component_inline_edit.html",
 component_feedback_states: "design_library/component_feedback_states.html",
@@ -117,6 +118,26 @@ impl View<'_> {
                 ..bilibi_ui::FlashMap::default()
             },
         })
+    }
+    /// The file input specimen, rendered from the uploads the state holds.
+    fn file_input(&self) -> askama::Result<Html> {
+        render(
+            self.state
+                .uploads
+                .input(state::SAMPLE_UPLOAD, "design-library-file")
+                .label("Files to keep")
+                .hint(format!(
+                    "Up to two files of {} KiB each; a larger one is refused before a byte is sent.",
+                    state::SAMPLE_UPLOAD_BYTES / 1024
+                )),
+        )
+    }
+    fn kept_size(&self, size: &usize) -> String {
+        if *size < 1024 {
+            format!("{size} B")
+        } else {
+            format!("{:.1} KiB", *size as f64 / 1024.0)
+        }
     }
     fn dismissed(&self, id: &str) -> bool {
         self.state.dismissed.iter().any(|value| value == id)

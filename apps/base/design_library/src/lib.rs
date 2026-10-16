@@ -11,7 +11,7 @@ use bilibi_module_registry::{
 use bilibi_tenancy::Scope;
 use bilibi_ui::page::{
     LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
-    PageFuture, PageRequest, PageService,
+    PageFuture, PageRequest, PageService, Uploads,
 };
 use std::sync::Arc;
 
@@ -106,6 +106,9 @@ impl LiveState<Scope, Error> for Mounted {
                 ..LiveBody::default()
             })
         })
+    }
+    fn uploads(&mut self) -> Option<&mut Uploads> {
+        Some(&mut self.state.uploads)
     }
 }
 inventory::submit! {

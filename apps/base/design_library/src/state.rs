@@ -1,9 +1,11 @@
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_ui::{
-    flex_sample::FlexSample, CommitStates, CommitStatus, ListSpec, ListState, SortDir,
+    flex_sample::FlexSample, CommitStates, CommitStatus, ListSpec, ListState, SortDir, UploadSpec,
+    Uploads,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
@@ -65,7 +67,23 @@ pub struct State {
     pub submitted: bool,
     pub dismissed: Vec<String>,
     pub toolbar: HashMap<String, String>,
+    /// The file input specimen's live uploads (Bilimbi `allow_upload`): up
+    /// to two files of 256 KiB, any kind, so a larger file shows the refusal.
+    pub uploads: Uploads,
+    /// The files the specimen's Keep event received, in this page's memory.
+    pub kept: Vec<KeptFile>,
 }
+/// What the specimen records of a delivered file: enough to prove the
+/// bytes arrived whole, never the bytes themselves.
+pub struct KeptFile {
+    pub name: String,
+    pub content_type: String,
+    pub size: usize,
+    pub sha256: String,
+}
+/// The specimen's upload name and limit, shared by the state and the card.
+pub const SAMPLE_UPLOAD: &str = "sample_file";
+pub const SAMPLE_UPLOAD_BYTES: u64 = 256 * 1024;
 impl State {
     pub fn new(area: &str, query: &HashMap<String, String>) -> Result<Self> {
         let sample =
@@ -101,6 +119,10 @@ impl State {
             submitted: query.get("specimen").is_some_and(|v| v == "requested"),
             dismissed: Vec::new(),
             toolbar: HashMap::new(),
+            uploads: Uploads::new([
+                UploadSpec::new(SAMPLE_UPLOAD, SAMPLE_UPLOAD_BYTES).max_entries(2)
+            ]),
+            kept: Vec::new(),
         };
         result.params(query)?;
         Ok(result)
@@ -346,6 +368,34 @@ impl State {
             }
             "filter-toolbar-preview" | "filter-toolbar-search-preview" => {
                 self.toolbar = bilibi_ui::params::form_values(event, "filters")
+            }
+            // Bilimbi's `consume_uploaded_entries` in the submit handler: the
+            // completed files are taken once, here, and only their facts stay.
+            "keep-files" => {
+                let files = self.uploads.consume(SAMPLE_UPLOAD);
+                if files.is_empty() {
+                    self.notice = "Choose a file first.".into();
+                } else {
+                    self.notice = format!(
+                        "{} file{} kept in this page's memory.",
+                        files.len(),
+                        if files.len() == 1 { "" } else { "s" }
+                    );
+                    for file in files {
+                        let digest = Sha256::digest(&file.bytes);
+                        self.kept.push(KeptFile {
+                            name: file.name,
+                            content_type: file.content_type,
+                            size: file.bytes.len(),
+                            sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+                        });
+                    }
+                    self.kept.truncate(20);
+                }
+            }
+            "forget-files" => {
+                self.kept.clear();
+                self.uploads.clear(SAMPLE_UPLOAD);
             }
             "clear-flash" => {
                 self.submitted = false;

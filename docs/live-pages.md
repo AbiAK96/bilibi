@@ -100,7 +100,9 @@ document.dispatchEvent(new CustomEvent('bilibi:navigate', {
 }));
 ```
 
-The socket processes events sequentially with a 16 KiB message/frame limit.
+The socket processes events sequentially. Messages are limited to one upload
+chunk frame (`bilibi_web::live::FRAME_LIMIT`, 64 KiB plus a header); every
+JSON intent is far smaller.
 
 ## Browser adapter
 
@@ -174,6 +176,41 @@ the reply message, or with an `error` if the socket drops before the reply.
 A controller whose intent only records where something already is (the
 workspace's frame reports) adds `history: 'replace'`, so a changed canonical
 URL replaces the address instead of pushing an entry.
+
+## File uploads
+
+Bilimbi's `allow_upload`/`live_file_input` is `bilibi_ui::upload`
+(`apps/base/ui/src/upload.rs`): the owner keeps an `Uploads` in its mounted
+state, declared at mount with one `UploadSpec` per file input (name, `accept`,
+`max_entries`, `max_file_size`), and returns it from `LiveState::uploads`. It
+renders each input with the `forms::file_input` macro through
+`Uploads::input`, which lists the entries and errors the state holds, and in
+the event that acts on the files takes the completed bytes with
+`Uploads::consume` (Bilimbi's `consume_uploaded_entries`); an empty result
+means nothing has finished arriving. Nothing else ever reads the bytes, and
+they go with the state when it is dropped. The Design Library's File input
+card is the running specimen.
+
+The host owns the stream. A chosen file is announced as an `upload` intent
+(`{"type":"upload","target":"page","upload":"statement","entries":[{"ref":"1","name":"x.csv","size":1200,"content_type":"text/csv"}]}`),
+queued and acknowledged like any other; the host registers each entry under
+the target's spec or refuses it (`too_large`, `not_accepted`, and
+`too_many_files` for the surplus over `max_entries`, which stays an
+input-level error), answers `{"type":"upload", "entries":[{"ref":"1","id":7,"chunk":65536,"done":false}, …]}`
+with the id to stream each accepted entry under, and re-renders the target so
+the rows appear. A single-entry input replaces its entry on a new choice, as
+the browser control does. The browser then sends binary frames of
+`u32 id, u32 offset, bytes` (at most `CHUNK_SIZE`), one chunk in flight per
+socket; each is answered by `{"type":"chunk","id":7,"received":65536,"size":…,"done":false}`
+(no `request_id`), which `live.js` relays as the window event
+`bilibi:upload`. A chunk that does not continue where the last ended, or
+overruns the announced size, marks the entry `interrupted`. A completed or
+refused entry re-renders its owner under the owner's guard; a removal is the
+`upload_cancel` intent (`{"type":"upload_cancel","target":"page","id":7}`).
+Ids are unique per socket, so a frame never reaches another state's entry,
+and a dropped socket ends every stream: the remounted state holds no bytes.
+The `FileUpload` hook (`apps/base/ui/assets/upload.js`) does the browser's
+part and holds a form's submit until every file of its input has arrived.
 
 ## Server-declared panels and background updates
 

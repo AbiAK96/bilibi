@@ -16,4 +16,5 @@ bilibi-datetime = { path = "../datetime" }
 bilibi-menu.workspace = true
 inventory.workspace = true
 serde_json.workspace = true
+sha2 = "0.11.1"
 jiff = "0.2.38"

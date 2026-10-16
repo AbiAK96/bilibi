@@ -35,4 +35,6 @@
 
               {% call ui::card(id="component-combobox", title="Combobox", inner_class="p-4 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_combobox()? }}{% endcall %}
             </form>
+
+            {% call ui::card(id="component-file-input", title="File input", inner_class="p-4") %}{{ self.card_component_file_input()? }}{% endcall %}
           </section>
