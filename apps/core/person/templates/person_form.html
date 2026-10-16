@@ -5,6 +5,6 @@
     {% for field in fields %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}
     {% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}
   </div>
-  {% if !duplicates.is_empty() %}<div id="person-duplicates" class="mb-4 text-sm text-ink-muted"><p>Possible existing people. Open a record to check before creating another.</p><ul>{% for person in duplicates %}<li><a href="/persons/{{ person.id.get() }}" class="text-link hover:underline">{{ person.name }}</a>{% if person.retired_at.is_some() %} (retired){% endif %}</li>{% endfor %}</ul></div>{% endif %}
+  {% if !duplicates.is_empty() %}<div id="person-duplicates" class="mb-4 text-sm text-ink-muted"><p>Possible existing contacts. Open a record to check before creating another.</p><ul>{% for person in duplicates %}<li><a href="/contacts/{{ person.id.get() }}" class="text-link hover:underline">{{ person.name }}</a>{% if person.retired_at.is_some() %} (retired){% endif %}</li>{% endfor %}</ul></div>{% endif %}
   <div class="mt-4 flex items-center justify-end gap-3">{{ cancel }}{{ submit }}</div>
 </form>

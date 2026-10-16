@@ -48,7 +48,7 @@ impl LiveState<Scope, Error> for Contact {
                 workspace: self.framed,
                 kind: "core/person",
                 record_id: &person.id.get().to_string(),
-                href: &format!("/persons/{}", person.id.get()),
+                href: &format!("/contacts/{}", person.id.get()),
                 class: "text-link hover:underline",
                 body: Html::text(&person.name),
             })?;

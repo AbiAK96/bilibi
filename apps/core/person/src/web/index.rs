@@ -124,21 +124,21 @@ impl Index {
         let mut actions = Html::EMPTY;
         if self.pages.allowed(scope, CREATE).await? {
             actions.push(&render(CreateButton {
-                noun: "Person",
-                href: "/persons/new",
+                noun: "Contact",
+                href: "/contacts/new",
                 id: "person-new",
                 ..CreateButton::default()
             })?);
         }
-        let mut pin = IconButton::new("bilimbi-pin", "Pin People to sidebar");
+        let mut pin = IconButton::new("bilimbi-pin", "Pin Contacts to sidebar");
         pin.id = "persons-pin";
         pin.context = IconContext::Inline;
-        pin.nav_pin = "nav-admin-person";
+        pin.nav_pin = "nav-admin-contacts";
         let mut body = render(Header {
-            title: Html::text("People"),
-            subtitle: "People and personal contacts",
+            title: Html::text("Contacts"),
             title_actions: render(pin)?,
             actions,
+            ..Header::default()
         })?;
         let form = self.list.filters_form();
         body.push(&render(FilterToolbar::new(
@@ -147,7 +147,7 @@ impl Index {
                 ToolbarControl::search(
                     "persons-search",
                     "search",
-                    "Search people",
+                    "Search contacts",
                     &form["search"],
                     "Search by name, email, or phone...",
                 ),
@@ -187,7 +187,7 @@ impl Index {
                     workspace: self.framed,
                     kind: "core/person",
                     record_id: &person.id.get().to_string(),
-                    href: &format!("/persons/{}", person.id.get()),
+                    href: &format!("/contacts/{}", person.id.get()),
                     class: "font-medium text-ink-strong hover:underline",
                     body: Html::text(&person.name),
                 })?,
@@ -219,10 +219,10 @@ impl Index {
             .columns
             .flex_table("persons", rows)
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
-        table.caption = "People";
+        table.caption = "Contacts";
         table.framed = false;
         if page.entries.is_empty() {
-            table.empty = Some(TableEmpty::Content(Html::text("No people found.")));
+            table.empty = Some(TableEmpty::Content(Html::text("No contacts found.")));
         }
         let mut card = render(table)?;
         card.push(&render(Pagination::new(

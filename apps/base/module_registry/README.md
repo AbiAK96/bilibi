@@ -15,13 +15,16 @@ reading another module's private storage. `Services::install` sorts and validate
 the graph, validates contributions, builds services, checks adapter readiness,
 and publishes a read-only `Services::catalog()` only after successful boot.
 
-`src/contributions.rs` defines shared `Route`, `Embed`, and `Seed` payloads and
-the `ROUTES`, `EMBEDS`, `SEEDS` keys. Each entry includes its stable contribution
-ID and `Provenance { module, source: file!(), line: line!() }`. Duplicate IDs within
+`src/contributions.rs` defines shared `Route`, `Embed`, `Moved` and `Seed`
+payloads and the `ROUTES`, `EMBEDS`, `MOVED`, `SEEDS` keys. Each entry
+includes its stable contribution ID and
+`Provenance { module, source: file!(), line: line!() }`. Duplicate IDs within
 a consumer, unknown consumers/owners, incorrect payload types, invalid routes,
 duplicate route patterns and seed versions, and unknown/undeclared service
 references fail discovery. Routes describe method/path, access, framing and a
 service operation. Embeds describe slot/context, access and a service operation.
+A `Moved` entry keeps a renamed page's old path (`from`) answering with a
+permanent redirect to the new one (`to`, naming only `from`'s parameters).
 These are metadata contracts; Web's route/event adapter owns execution and must
 apply guards. Seed execution and ledger tracking belong to Database; a seed
 selects Production/Development and SQL or a named service operation.

@@ -3,8 +3,10 @@
 `PersonService` (`core/person.persons`) and the transaction APIs in
 `src/identity.rs` own `persons`. They use K0's `PersonInput`, `PersonKind` and
 `PersonId`; an identity is never an employee or login account. Core works with
-People absent. `/persons`, `/persons/new` and `/persons/{id}` provide the
-capability-gated directory, create form and inline record/contact editor.
+People absent. `/contacts`, `/contacts/new` and `/contacts/{id}` (Bilimbi's
+Contacts) provide the capability-gated directory, create form and inline
+record/contact editor; the earlier `/persons` addresses answer with a
+permanent redirect to them (`Moved` contributions in `src/contributions.rs`).
 
 The additive module migration creates tenant-scoped bigint identities, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
@@ -113,7 +115,7 @@ unit tests, test runner or mocks are involved.
 
 ## Person screens and record panels (K8)
 
-The People menu entry is a Core contact directory. It has no employee number,
+The Contacts menu entry (`admin.contacts`) is a Core contact directory. It has no employee number,
 employment type/status/dates, supervisor, department or automatic account
 controls. Human/agent is identity kind; current/retired is identity availability.
 Retirement preserves history and is independent of HR employment.
@@ -156,7 +158,7 @@ APP_ORIGIN=http://127.0.0.1:4499 BIND_ADDR=127.0.0.1:4499 \
   cargo run -p bilibi-person --example person-contact-panel --locked
 ```
 
-Sign in, open the reference route with a Person ID created through `/persons/new`,
+Sign in, open the reference route with a Person ID created through `/contacts/new`,
 edit a personal contact, and verify it in the ordinary Person page. The reference
 host resolves the Person through its public API on every update; a production
 company host additionally resolves its owned affiliation before supplying that ID.

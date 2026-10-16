@@ -309,7 +309,7 @@ impl WriteHandler for Write {
                     data.insert("affiliation".into(), record(affiliation));
                     data.insert(
                         "path".into(),
-                        Data::from(json!(format!("/persons/{}", person.id.get()))),
+                        Data::from(json!(format!("/contacts/{}", person.id.get()))),
                     );
                     return Ok(Output::Data(Data::Object(data)));
                 }

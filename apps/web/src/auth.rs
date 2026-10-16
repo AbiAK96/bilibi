@@ -74,8 +74,8 @@ const MISSING_RECORDS: [(&str, &str, &str, &str); 8] = [
     ),
     (
         "person-missing",
-        "/persons/{id}",
-        "/persons",
+        "/contacts/{id}",
+        "/contacts",
         "Contact not found.",
     ),
     (

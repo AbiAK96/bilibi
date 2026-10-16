@@ -11,7 +11,7 @@ use axum::{
 };
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
-    contributions::{Access, Download, Method, Route, DOWNLOADS, ROUTES},
+    contributions::{Access, Download, Method, Moved, Route, DOWNLOADS, MOVED, ROUTES},
     RegistryError, Services,
 };
 use bilibi_ui::{download::DownloadRequest, page::PageRequest, StatusKind};
@@ -33,7 +33,7 @@ pub struct BoundDownload {
     pub service: Arc<DownloadService>,
 }
 
-/// The host paths no discovered route or download may overlap.
+/// The host paths no discovered route, download or moved path may overlap.
 const HOST_PATHS: [&str; 17] = [
     "/",
     "/login",
@@ -236,6 +236,88 @@ pub fn install(
         );
     }
     router
+}
+
+/// Retired page paths, bound after the pages and downloads: each claims no
+/// host path, collides with no page or download, and lands on a GET page whose
+/// pattern is exactly its `to`, so a rename that drops the new page fails boot
+/// instead of redirecting into a 404.
+pub fn bind_moved(
+    services: &Services,
+    pages: &[BoundRoute],
+    downloads: &[BoundDownload],
+) -> Result<Vec<&'static Moved>> {
+    let mut bound: Vec<&'static Moved> = Vec::new();
+    for entry in services.catalog()?.entries::<Moved>(MOVED)? {
+        let moved = entry.get::<Moved>()?;
+        validate_host_free(entry, moved.from)?;
+        validate_pattern(moved.to)?;
+        let taken = pages
+            .iter()
+            .map(|page| (page.route.method, page.route.path))
+            .chain(
+                downloads
+                    .iter()
+                    .map(|bound| (Method::Get, bound.download.path)),
+            )
+            .chain(bound.iter().map(|other| (Method::Get, other.from)));
+        for other in taken {
+            validate_pair(other, (Method::Get, moved.from))?;
+        }
+        if !pages
+            .iter()
+            .any(|page| page.route.method == Method::Get && page.route.path == moved.to)
+        {
+            return Err(invalid(format!(
+                "{} at {}:{} moves to {}, which no page serves",
+                entry.id, entry.provenance.source, entry.provenance.line, moved.to
+            )));
+        }
+        bound.push(moved);
+    }
+    Ok(bound)
+}
+
+/// Each moved path answers a GET with a permanent redirect to its page,
+/// carrying the parameters' raw segments and the query string unchanged.
+/// No access check: the destination page applies its own.
+pub fn install_moved(mut router: Router<App>, moved: &[&'static Moved]) -> Router<App> {
+    for moved in moved {
+        let moved = *moved;
+        router = router.route(
+            moved.from,
+            get(move |uri: Uri| async move {
+                axum::response::Redirect::permanent(&moved_destination(moved, &uri))
+            }),
+        );
+    }
+    router
+}
+
+fn moved_destination(moved: &Moved, uri: &Uri) -> String {
+    let values: HashMap<&str, &str> = moved
+        .from
+        .split('/')
+        .zip(uri.path().split('/'))
+        .filter(|(pattern, _)| parameter(pattern))
+        .collect();
+    let mut destination = moved
+        .to
+        .split('/')
+        .map(|segment| {
+            if parameter(segment) {
+                values.get(segment).copied().unwrap_or_default()
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if let Some(query) = uri.query() {
+        destination.push('?');
+        destination.push_str(query);
+    }
+    destination
 }
 
 pub async fn check_access(

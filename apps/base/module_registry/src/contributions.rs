@@ -241,6 +241,7 @@ pub const ROUTES: &str = "base/module_registry.routes";
 pub const EMBEDS: &str = "base/module_registry.embeds";
 pub const DOWNLOADS: &str = "base/module_registry.downloads";
 pub const SEEDS: &str = "base/module_registry.seeds";
+pub const MOVED: &str = "base/module_registry.moved";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Method {
     Get,
@@ -282,6 +283,15 @@ pub struct Download {
     pub service: &'static str,
     pub operation: &'static str,
     pub access: Access,
+}
+/// A retired page path that answers a GET with a permanent redirect to the
+/// page that replaced it, so bookmarks, pins and saved workspace tiles keep
+/// working after a rename. `to` names only parameters `from` has, in the same
+/// segments' values; the query string is kept. Web binds it at boot.
+#[derive(Clone, Copy, Debug)]
+pub struct Moved {
+    pub from: &'static str,
+    pub to: &'static str,
 }
 #[derive(Clone, Copy, Debug)]
 pub enum EmbedContext {
@@ -391,4 +401,25 @@ fn validate_embeds(entries: &[Entry]) -> Result<()> {
 inventory::submit! { Consumer::new::<Route>(ROUTES, "base/module_registry", validate_routes) }
 inventory::submit! { Consumer::new::<Embed>(EMBEDS, "base/module_registry", validate_embeds) }
 inventory::submit! { Consumer::new::<Download>(DOWNLOADS, "base/module_registry", validate_downloads) }
+fn validate_moved(entries: &[Entry]) -> Result<()> {
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        let moved = entry.get::<Moved>()?;
+        let from: BTreeSet<_> = parameters(moved.from).collect();
+        if !moved.from.starts_with('/')
+            || !moved.to.starts_with('/')
+            || moved.from == moved.to
+            || !parameters(moved.to).all(|name| from.contains(name))
+            || !paths.insert(moved.from)
+        {
+            return Err(invalid(format!("invalid moved path {}", entry.id)));
+        }
+    }
+    Ok(())
+}
+fn parameters(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/')
+        .filter_map(|part| part.strip_prefix('{').and_then(|p| p.strip_suffix('}')))
+}
+inventory::submit! { Consumer::new::<Moved>(MOVED, "base/module_registry", validate_moved) }
 inventory::submit! { Consumer::new::<Seed>(SEEDS, "base/module_registry", |_| Ok(())) }

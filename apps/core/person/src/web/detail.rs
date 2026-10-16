@@ -144,14 +144,14 @@ impl Detail {
                 button_type: "button",
                 event: "request_retire",
                 variant: ButtonVariant::Danger,
-                body: Html::text("Retire"),
+                body: Html::text("Retire contact"),
                 ..Button::default()
             })?);
         }
         let back = render(BackLink {
-            href: "/persons",
+            href: "/contacts",
             id: "person-back",
-            title: "Back to people",
+            title: "Back to contacts",
             ..BackLink::default()
         })?;
         let actions = render(Actions {
@@ -229,7 +229,7 @@ impl Detail {
             },
         ];
         let mut identity = render(SectionHeading {
-            title: "Person",
+            title: "Identity and contact details",
             ..SectionHeading::default()
         })?;
         identity.push(&render(Facts {
@@ -245,7 +245,7 @@ impl Detail {
         let dialog = if let Some((name, _)) = &self.pending_retire {
             render(ConfirmDialog {
             id: "person-retire-confirm", consequence: &format!("{name} will be retired."),
-            detail: "The identity and history are kept. This person will be read-only and unavailable for new links. This does not change an employment record.",
+            detail: "The identity and history are kept. This contact will be read-only and unavailable for new links. This does not change an employment record.",
             confirm: "Retire", working: "Retiring…", confirm_event: "retire", cancel_event: "cancel_retire",
         })?
         } else {
@@ -333,9 +333,7 @@ impl Detail {
                         return Err(Error::Unauthorized)
                     }
                     Err(WriteError::Backend(Error::Forbidden)) => {
-                        self.notice =
-                            "You do not have permission to edit this person or contact field."
-                                .into();
+                        self.notice = "You do not have permission to edit this contact.".into();
                         self.statuses.clear_saved();
                         CommitStatus::Error(self.notice.clone())
                     }
@@ -366,17 +364,17 @@ impl Detail {
                         self.pending_retire = Some((person.name, person.version));
                     }
                 } else {
-                    self.notice = "You do not have permission to retire this person.".into();
+                    self.notice = "You do not have permission to retire this contact.".into();
                 }
             }
             "cancel_retire" => self.pending_retire = None,
             "retire" => {
                 if let Some((_, version)) = self.pending_retire.take() {
                     self.notice = match self.pages.persons.retire(scope, self.id, version).await {
-                    Ok(_) => "Person retired. Identity and history have been kept.".into(),
+                    Ok(_) => "Contact retired; history preserved.".into(),
                     Err(WriteError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
-                    Err(WriteError::Backend(Error::Conflict)) => "The person changed while confirmation was open. Review it before trying again.".into(),
-                    Err(_) => "The person was not retired. Review your permission and reload before trying again.".into(),
+                    Err(WriteError::Backend(Error::Conflict)) => "The contact changed while confirmation was open. Review it before trying again.".into(),
+                    Err(_) => "The contact was not retired. Review your permission and reload before trying again.".into(),
                 };
                 }
             }

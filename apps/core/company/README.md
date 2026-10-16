@@ -9,7 +9,7 @@ primary company and the provisioning commands. The public API is the
 `eligibility`, `relationship_roles` and `relationships`; table layout and
 SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
-`web/relationships.rs` serves `/companies/relationship-roles`,
+`web/relationships.rs` serves `/companies/relationship-types`,
 `/companies/{id}/relationships` and the `company.relationships` embed,
 through shared UI components.
 
@@ -233,10 +233,11 @@ the disposable database only. The screens are described under "Relationship scre
 `web/relationships.rs` serves the K5 catalog and links through the shared
 UI (`core/company.relationship_pages`):
 
-- `/companies/relationship-roles` (`admin.company.list`; menu
-  `admin.company.relationship-role` under Companies): the tenant's roles in
-  a `FlexTable` with code, name, inverse name and status, retired roles on
-  request. "+ Relationship Role" (`admin.company.create`) and the row's edit
+- `/companies/relationship-types` (`admin.company.list`; menu "Relationship
+  Roles", `admin.company.relationship-type` under Companies, as Bilimbi names
+  both; the earlier `/companies/relationship-roles` redirects here): the
+  tenant's roles in a `FlexTable` with code, name, inverse name and status, retired roles on
+  request. "+ Relationship Type" (`admin.company.create`) and the row's edit
   (`admin.company.update`) share one modal; a rename keeps the code, which
   the edit form shows disabled. Retire confirms through the shared dialog
   and acts on the role held when the dialog opened, at that version. The

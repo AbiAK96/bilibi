@@ -32,7 +32,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/person", Provenance { m
 // Register contacts now so restrictions apply to every API and audit read.
 // K8 composes the page from this catalog instead of defining a second table.
 static GRID: GridContribution = GridContribution {
-    tables: &[TableDecl::new("persons", "Persons", LIST,
+    tables: &[TableDecl::new("persons", "Contacts", LIST,
         Source::tenant("SELECT id,name,kind,email,phone,system_key,retired_at,version,created_at,updated_at FROM persons WHERE tenant_id=$1"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),
             Field::new("name", "Name", FieldType::String).protected(),
@@ -62,16 +62,28 @@ macro_rules! page {
         }) }
     };
 }
-page!("person.list", "/persons", "list", LIST);
-page!("person.create", "/persons/new", "create", CREATE);
-page!("person.detail", "/persons/{id}", "detail", VIEW);
+page!("person.list", "/contacts", "list", LIST);
+page!("person.create", "/contacts/new", "create", CREATE);
+page!("person.detail", "/contacts/{id}", "detail", VIEW);
+// The directory's addresses before Bilimbi named it Contacts.
+macro_rules! moved {
+    ($id:literal, $from:literal, $to:literal) => {
+        inventory::submit! { Contribution::new(
+        bilibi_module_registry::contributions::MOVED, $id,
+        Provenance { module: "core/person", source: file!(), line: line!() },
+        &bilibi_module_registry::contributions::Moved { from: $from, to: $to }) }
+    };
+}
+moved!("person.list.persons", "/persons", "/contacts");
+moved!("person.create.persons", "/persons/new", "/contacts/new");
+moved!("person.detail.persons", "/persons/{id}", "/contacts/{id}");
 bilibi_menu::contribute!(
     "core/person",
-    bilibi_menu::MenuItem::page("admin.person", "People", "/persons")
+    bilibi_menu::MenuItem::page("admin.contacts", "Contacts", "/contacts")
         .under("admin")
-        .icon("users")
+        .icon("user-group")
         .requires(bilibi_menu::Requirement::Capability(LIST))
-        .order(20)
+        .order(15)
 );
 
 // Company, affiliation and account owners may mount a proven Person's personal

@@ -555,6 +555,6 @@ async fn main() -> Result<(), Failure> {
     for login in [&manager_login, &viewer_login, &staff_login, &other_login] {
         app.user.logout(&login.token, &login.csrf).await?;
     }
-    println!("K7 has no page; K8 owns /persons UI. Inspect /companies in the running app for existing-page smoke.");
+    println!("K7 has no page; K8 owns /contacts UI. Inspect /companies in the running app for existing-page smoke.");
     Ok(())
 }

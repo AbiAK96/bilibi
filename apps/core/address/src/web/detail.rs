@@ -649,7 +649,7 @@ impl Detail {
             let a = &owner.attachment.attachment;
             let (kind, link) = match owner.attachment.owner {
                 PartyId::Organisation(id) => ("Company", format!("<a href=\"/companies/{id}\" id=\"linked-company-{id}\" class=\"text-action hover:underline\">{}</a>", Html::text(&owner.name))),
-                PartyId::Person(id) => ("Person", format!("<a href=\"/persons/{id}\" id=\"linked-person-{id}\" class=\"text-action hover:underline\">{}</a>", Html::text(&owner.name))),
+                PartyId::Person(id) => ("Person", format!("<a href=\"/contacts/{id}\" id=\"linked-person-{id}\" class=\"text-action hover:underline\">{}</a>", Html::text(&owner.name))),
             };
             let mut kinds = String::new();
             for k in &a.kinds {
@@ -731,7 +731,7 @@ impl Detail {
                 ..BackLink::default()
             })?),
             Some(Context::Person(id)) => back.push(&render(BackLink {
-                href: &format!("/persons/{id}"),
+                href: &format!("/contacts/{id}"),
                 id: "address-back-person",
                 title: "Back to person",
                 ..BackLink::default()

@@ -124,12 +124,11 @@ impl Create {
             Vec::new()
         };
         let mut body = render(Header {
-            title: Html::text("New Person"),
-            subtitle: "Create a person and personal contact details",
+            title: Html::text("New contact"),
             actions: render(BackLink {
-                href: "/persons",
+                href: "/contacts",
                 id: "person-form-back",
-                title: "Back to people",
+                title: "Back to contacts",
                 ..BackLink::default()
             })?,
             ..Header::default()
@@ -139,7 +138,7 @@ impl Create {
             restricted: masked,
             duplicates,
             cancel: render(Button {
-                href: "/persons",
+                href: "/contacts",
                 id: "person-cancel",
                 body: Html::text("Cancel"),
                 ..Button::default()
@@ -150,7 +149,7 @@ impl Create {
                 variant: ButtonVariant::Primary,
                 disabled: !can_create || self.created.is_some(),
                 working: "Creating…",
-                body: Html::text("Create Person"),
+                body: Html::text("Create contact"),
                 ..Button::default()
             })?,
         })?);
@@ -163,7 +162,7 @@ impl Create {
             })?
             .to_string(),
             notice: self.notice.clone(),
-            redirect: self.created.map(|id| format!("/persons/{}", id.get())),
+            redirect: self.created.map(|id| format!("/contacts/{}", id.get())),
             flash: self
                 .created
                 .map(|_| (StatusKind::Success, "Contact created.".into())),
@@ -209,8 +208,8 @@ impl LiveState<Scope, Error> for Create {
                             Ok(person) => self.created = Some(person.id),
                             Err(WriteError::Validation(errors)) => self.errors = errors,
                             Err(WriteError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
-                            Err(WriteError::Backend(Error::Forbidden)) => self.notice = "You do not have permission to create this person or write these contact fields.".into(),
-                            Err(_) => self.notice = "The person was not created. Try again.".into(),
+                            Err(WriteError::Backend(Error::Forbidden)) => self.notice = "You do not have permission to create this contact or write these contact fields.".into(),
+                            Err(_) => self.notice = "The contact was not created. Try again.".into(),
                         }
                     }
                 }

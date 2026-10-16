@@ -165,6 +165,6 @@ It prints discovery/describe/guide, a viewer's read-only reach, reviewed
 create/update/end/unlink commits, replay refusal, day-filtered lists and the
 reversed-date, stale-version, missing-company and missing-capability refusals
 a reviewer sees before anything is written. For the screens, run the app,
-open a person from `/persons` or a company from `/companies` and use the
+open a person from `/contacts` or a company from `/companies` and use the
 Affiliations card; the person page's panel and the company page's panel show
 the same record from either side.

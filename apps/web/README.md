@@ -16,6 +16,13 @@ names must agree at shared nodes across HTTP methods. Paths use whole-segment
 `{name}` parameters; catchalls and optional/embedded parameters are unsupported.
 The registry also rejects identical patterns with different parameter names.
 
+When a page's path changes, keep the old one working with a `Moved`
+contribution (`MOVED`) from the owning module, as Person does for `/persons*`
+→ `/contacts*`, not a host route or a redirect in the owner's page: Web binds it
+at boot under the same shadow and ambiguity rules, requires `to` to be a GET
+page's exact pattern, and answers GET with a 308 that keeps the parameter
+segments and the query string. It checks no access; the destination does.
+
 Access is checked before the owner renders: Public, SignedIn, Capability(key),
 Operator, or OperatorCapability(key). Operator requires the persisted Tenancy
 proof, never a tenant-ID convention or an admin grant. OperatorCapability

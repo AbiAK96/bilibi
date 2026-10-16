@@ -622,7 +622,7 @@ impl Panel {
             let linked = entry.affiliation.unlinked_at.is_none();
             let (kind, href) = match self.host {
                 Host::Person(_) => ("core/company", format!("/companies/{}", entry.party_id)),
-                Host::Organisation(_) => ("core/person", format!("/persons/{}", entry.party_id)),
+                Host::Organisation(_) => ("core/person", format!("/contacts/{}", entry.party_id)),
             };
             let mut row = FlexRow::new(key.clone()).slot(
                 party,

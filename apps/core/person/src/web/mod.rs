@@ -107,9 +107,9 @@ impl Pages {
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         Some(match operation {
-            "list" => "People",
-            "create" => "New Person",
-            _ => "Person",
+            "list" => "Contacts",
+            "create" => "New contact",
+            _ => "Contact",
         })
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {

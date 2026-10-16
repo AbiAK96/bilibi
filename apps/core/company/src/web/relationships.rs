@@ -2,7 +2,7 @@
 //! `Company.Web.RelationshipsLive` and the Relationships section of
 //! `Company.Web.ShowLive`, generalized to the party model).
 //!
-//! - `/companies/relationship-roles` (operation `roles`, `admin.company.list`):
+//! - `/companies/relationship-types` (operation `roles`, `admin.company.list`):
 //!   the tenant's relationship-role catalog: create, rename and retire, with
 //!   retired roles shown on request. A role describes a business relationship
 //!   only; no access grant follows it.
@@ -30,7 +30,7 @@ use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_menu::{MenuItem, Requirement};
 use bilibi_module_registry::{
-    contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS, ROUTES},
+    contributions::{Access, Embed, EmbedContext, Method, Moved, Route, EMBEDS, MOVED, ROUTES},
     Contribution, Provenance,
 };
 use bilibi_party::{
@@ -70,8 +70,14 @@ macro_rules! provenance {
     };
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.relationship-roles", provenance!(), &Route {
-        method: Method::Get, path: "/companies/relationship-roles", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
+    Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route {
+        method: Method::Get, path: "/companies/relationship-types", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
+    })
+}
+// The catalog's address before Bilimbi named it relationship types.
+inventory::submit! {
+    Contribution::new(MOVED, "core/company.relationship-roles", provenance!(), &Moved {
+        from: "/companies/relationship-roles", to: "/companies/relationship-types",
     })
 }
 inventory::submit! {
@@ -99,9 +105,9 @@ inventory::submit! {
 bilibi_menu::contribute!(
     "core/company",
     MenuItem::page(
-        "admin.company.relationship-role",
+        "admin.company.relationship-type",
         "Relationship Roles",
-        "/companies/relationship-roles"
+        "/companies/relationship-types"
     )
     .under("admin.company")
     .requires(Requirement::Capability(LIST))
@@ -441,7 +447,7 @@ fn status(kind: BadgeKind, text: &str) -> Result<Html> {
 
 fn role_columns() -> Result<ListColumns> {
     ListColumns::mount(
-        "relationship-roles",
+        "relationship-types",
         vec![
             BuiltinColumn::new("code", "Code"),
             BuiltinColumn::new("name", "Name"),
@@ -543,14 +549,14 @@ impl RolesPage {
             .await?;
         let mut html = self.flash.render()?;
         let mut actions = render(&BackLink {
-            id: "relationship-roles-back",
+            id: "relationship-types-back",
             href: "/companies",
             title: "Back to companies",
             ..BackLink::default()
         })?;
         if can_create {
             actions.push(&render(&CreateButton {
-                noun: "Relationship Role",
+                noun: "Relationship Type",
                 id: "new-relationship-role-btn",
                 event: "new",
                 button_type: "button",
@@ -570,7 +576,7 @@ impl RolesPage {
         html.push(&render(&Wrap {
             class: "mb-4 flex flex-wrap items-center gap-2",
             body: render(&Button {
-                id: "relationship-roles-retired",
+                id: "relationship-types-retired",
                 event: "toggle_retired",
                 button_type: "button",
                 class: "text-xs py-1 px-2.5",
@@ -587,7 +593,7 @@ impl RolesPage {
             .iter()
             .map(|role| role_row(role, self.columns.mode(), can_update))
             .collect::<Result<Vec<_>>>()?;
-        let mut table = FlexTable::new("relationship-roles", self.columns.flex_columns(), rows);
+        let mut table = FlexTable::new("relationship-types", self.columns.flex_columns(), rows);
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
@@ -600,7 +606,7 @@ impl RolesPage {
             )));
         }
         html.push(&render(&Card {
-            id: "relationship-roles-card",
+            id: "relationship-types-card",
             inner_class: "p-0",
             body: render(&table)?,
             ..Card::default()
@@ -619,7 +625,7 @@ impl RolesPage {
             })?);
         }
         Ok(LiveBody {
-            html: page("relationship-roles-index", PageVariant::List, html)?,
+            html: page("relationship-types-index", PageVariant::List, html)?,
             rows: 1,
             ..LiveBody::default()
         })
@@ -685,11 +691,11 @@ impl RolesPage {
         })?;
         let (title, description) = match &modal.editing {
             Some(_) => (
-                "Edit Relationship Role",
+                "Edit Relationship Type",
                 "Rename the role. Its code and every relationship that uses it stay as they are.",
             ),
             None => (
-                "New Relationship Role",
+                "New Relationship Type",
                 "Define how a company relates to an organisation or a person. The role grants no access.",
             ),
         };

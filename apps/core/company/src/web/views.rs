@@ -135,9 +135,9 @@ pub(super) async fn list(
         "/companies/legal-entity-types",
     )?);
     actions.push(&link(
-        "companies-relationship-roles",
+        "companies-relationship-types",
         "Relationship Roles",
-        "/companies/relationship-roles",
+        "/companies/relationship-types",
     )?);
     let mut pin = IconButton::new("bilimbi-pin", "Pin Companies to sidebar");
     pin.id = "companies-pin";

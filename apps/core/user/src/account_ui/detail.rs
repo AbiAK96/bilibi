@@ -433,7 +433,7 @@ impl Detail {
                         workspace: self.framed,
                         kind: "core/person",
                         record_id: &id.get().to_string(),
-                        href: &format!("/persons/{}", id.get()),
+                        href: &format!("/contacts/{}", id.get()),
                         class: "text-link hover:underline",
                         body: Html::text(name),
                     })?
