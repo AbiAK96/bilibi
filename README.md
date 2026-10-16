@@ -197,8 +197,8 @@ watcher restarts the server. See [docs/live-pages.md](docs/live-pages.md).
 ```text
 apps/base/            Base composition root
 apps/core/            Core composition root
-apps/domains/         empty Domain composition root
-apps/extensions/      empty Extension composition root
+apps/domains/         Domain composition root; containers mount here (apps/domains/AGENTS.md)
+apps/extensions/      Extension composition root; containers mount here (apps/extensions/AGENTS.md)
 apps/base/module_registry  discovered module graph and typed service registry
 apps/base/database    pool, migrations ledger, errors, mutation boundary
 apps/base/audit       audit evidence schema, capture, redaction, SQL console engine
@@ -235,7 +235,8 @@ carry module/file/line provenance and are validated into an immutable catalog
 (see `apps/base/module_registry/README.md`). Unknown consumers, wrong payload
 types, duplicate contribution IDs and missing service references fail discovery.
 Service factories can resolve only their own module and declared direct dependencies.
-Domains and Extensions are empty composition roots, ready for later modules.
+Domains and Extensions are empty in the Platform repository; Domain and Extension
+repositories mount there as nested checkouts, two levels deep, and are never committed to it.
 All application SQL binds data and includes tenant predicates; session-token
 bootstrap and the explicit seed/migration commands are the exceptions.
 
