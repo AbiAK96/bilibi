@@ -11,9 +11,17 @@ Extension modules sit two levels deep inside a mounted container checkout
 `bilibi.container.toml`. The committed composition is always the unmounted one,
 so `--check` also refuses a staged or committed mounted composition or
 `Cargo.lock`.
+
+A company build mounts Domain and Extension containers at chosen revisions.
+`--pin` records the Platform and container HEADs plus the resolved `Cargo.lock`
+under `.local/composition/`, and `--restore` rebuilds exactly that composition
+(containers at the pinned HEADs, the pinned `Cargo.lock`) so that
+`cargo build --release --locked` is reproducible.
 """
 import argparse
+import hashlib
 import re
+import shutil
 import subprocess
 from pathlib import Path
 import tomllib
@@ -26,6 +34,8 @@ RESERVED_IDS = {'base', 'core', 'web', 'src'}
 SNAKE = re.compile(r'[a-z][a-z0-9]*(_[a-z0-9]+)*')
 # Path packages the Platform itself owns besides discovered Base and Core modules.
 PLATFORM_MANIFESTS = ('apps/web/Cargo.toml', 'fixtures/*/Cargo.toml')
+PIN_DIR = Path('.local/composition')
+PIN_FILES = ('Cargo.lock', 'manifest.txt')
 
 
 class Refused(Exception):
@@ -170,24 +180,128 @@ def check_unmounted_commit(root, modules):
             raise Refused(f'The {label} Cargo.lock names path packages outside the Platform: {", ".join(foreign)}. {advice}')
 
 
+def git(path, *args):
+    shown = subprocess.run(['git', '-C', str(path), *args], capture_output=True, text=True)
+    if shown.returncode != 0:
+        raise Refused(f'git {" ".join(args)} failed in {path}: {shown.stderr.strip() or "not a Git checkout"}')
+    return shown.stdout
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def mounted_containers(root, modules):
+    """Map `<layer>/<container>` to its folder for every container that mounts modules."""
+    return {f'{layer}/{path.split("/")[0]}': root / 'apps' / layer / path.split('/')[0]
+            for layer in CONTAINER_LAYERS for path, _ in modules[layer]}
+
+
+def checkout_head(label, folder):
+    """HEAD of a clean, independent checkout; a company build records nothing less."""
+    if Path(git(folder, 'rev-parse', '--show-toplevel').strip()).resolve() != folder.resolve():
+        raise Refused(f'{label} is not its own Git checkout; mount it with git clone')
+    if git(folder, 'status', '--porcelain').strip():
+        raise Refused(f'{label} has uncommitted or untracked files; commit them in its repository first')
+    return git(folder, 'rev-parse', 'HEAD').strip()
+
+
+def require_resolved_lock(root):
+    resolved = subprocess.run(['cargo', 'metadata', '--locked', '--format-version', '1'],
+                              cwd=root, capture_output=True, text=True)
+    if resolved.returncode != 0:
+        raise Refused('Cargo.lock does not resolve the mounted composition; run any Cargo command '
+                      f'(for example cargo metadata) without --locked first. {resolved.stderr.strip()}')
+
+
+def pin(root, modules, files):
+    """Record the Platform and container HEADs and the resolved Cargo.lock under .local/composition."""
+    changed = [line[3:] for line in git(root, 'status', '--porcelain', '--untracked-files=no').splitlines()]
+    composition_files = {str(path.relative_to(root)) for path in files} | {'Cargo.lock'}
+    unexpected = sorted(set(changed) - composition_files)
+    if unexpected:
+        raise Refused(f'Platform has uncommitted changes outside the composition: {", ".join(unexpected)}')
+    mounted = mounted_containers(root, modules)
+    if not mounted:
+        raise Refused('Nothing is mounted under apps/domains or apps/extensions; there is nothing to pin')
+    heads = {name: checkout_head(f'apps/{name}', folder) for name, folder in sorted(mounted.items())}
+    require_resolved_lock(root)
+    lock = root / 'Cargo.lock'
+    platform = git(root, 'rev-parse', 'HEAD').strip()
+    manifest = ('# Written by scripts/discover-modules.py --pin; read by --restore.\n'
+                f'platform = "{platform}"\n'
+                f'cargo_lock_sha256 = "{sha256(lock)}"\n')
+    manifest += ''.join(f'\n[containers."{name}"]\nhead = "{head}"\n' for name, head in heads.items())
+    target = root / PIN_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(lock, target / 'Cargo.lock')
+    (target / 'manifest.txt').write_text(manifest)
+    print(f'pinned {len(heads)} container(s) at Platform {platform[:12]} in {PIN_DIR}')
+
+
+def restore(root, modules, files):
+    """Rebuild the pinned composition: refuse any drift, then put the pinned Cargo.lock back."""
+    target = root / PIN_DIR
+    missing = [name for name in PIN_FILES if not (target / name).is_file()]
+    if missing:
+        raise Refused(f'{PIN_DIR} lacks {", ".join(missing)}; run --pin on the machine that built the release')
+    try:
+        manifest = tomllib.loads((target / 'manifest.txt').read_text())
+        platform, digest, pinned = manifest['platform'], manifest['cargo_lock_sha256'], manifest['containers']
+    except (tomllib.TOMLDecodeError, KeyError) as error:
+        raise Refused(f'{PIN_DIR}/manifest.txt is unreadable ({error!r}); run --pin again') from None
+    head = git(root, 'rev-parse', 'HEAD').strip()
+    if head != platform:
+        raise Refused(f'Platform is at {head[:12]} but the pin was made at {platform[:12]}; check out the pinned revision')
+    if sha256(target / 'Cargo.lock') != digest:
+        raise Refused(f'{PIN_DIR}/Cargo.lock does not match the pinned SHA-256; run --pin again')
+    mounted = mounted_containers(root, modules)
+    for name in sorted(set(pinned) - set(mounted)):
+        raise Refused(f'apps/{name} is pinned but not mounted; clone it and check out {pinned[name]["head"][:12]}')
+    for name in sorted(set(mounted) - set(pinned)):
+        raise Refused(f'apps/{name} is mounted but not in the pin; unmount it or run --pin again')
+    for name, folder in sorted(mounted.items()):
+        actual = checkout_head(f'apps/{name}', folder)
+        if actual != pinned[name]['head']:
+            raise Refused(f'apps/{name} is at {actual[:12]} but the pin was made at {pinned[name]["head"][:12]}; '
+                          f'run git -C apps/{name} checkout {pinned[name]["head"]}')
+    write_outputs(files)
+    shutil.copyfile(target / 'Cargo.lock', root / 'Cargo.lock')
+    print(f'restored {len(pinned)} container(s) and Cargo.lock; build with cargo build --release --locked')
+
+
+def write_outputs(files):
+    for path, text in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--check', action='store_true',
-                        help='refuse stale composition files and a staged or committed mounted composition')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true',
+                      help='refuse stale composition files and a staged or committed mounted composition')
+    mode.add_argument('--pin', action='store_true',
+                      help='record the mounted container HEADs and the resolved Cargo.lock in .local/composition')
+    mode.add_argument('--restore', action='store_true',
+                      help='rebuild the pinned composition, refusing any container or Platform drift')
     args = parser.parse_args()
     try:
         modules = discovered(ROOT)
         files = outputs(ROOT, modules)
-        if args.check:
+        if args.restore:
+            restore(ROOT, modules, files)
+        elif args.pin:
+            write_outputs(files)
+            pin(ROOT, modules, files)
+        elif args.check:
             for path, text in files.items():
                 if not path.exists() or path.read_text() != text:
                     raise Refused(f'Composition is stale: {path}. Run python3 scripts/discover-modules.py')
             check_unmounted_commit(ROOT, modules)
         else:
-            for path, text in files.items():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                if not path.exists() or path.read_text() != text:
-                    path.write_text(text)
+            write_outputs(files)
     except Refused as refusal:
         raise SystemExit(f'discover-modules: {refusal}') from None
 
