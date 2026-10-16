@@ -173,11 +173,9 @@ impl UploadEntry {
 
     /// Whole percent of the bytes received; an empty file is complete.
     pub fn progress(&self) -> u8 {
-        if self.size == 0 {
-            100
-        } else {
-            (self.received() * 100 / self.size).min(100) as u8
-        }
+        (self.received() * 100)
+            .checked_div(self.size)
+            .map_or(100, |percent| percent.min(100) as u8)
     }
 
     pub fn valid(&self) -> bool {
@@ -335,7 +333,6 @@ impl Uploads {
             class: String::new(),
             wrapper_class: String::new(),
             disabled: false,
-            required: false,
             spec,
             entries: self
                 .entries
@@ -449,11 +446,15 @@ impl Uploads {
     }
 
     /// Host side: drops one entry (Bilimbi `cancel_upload`); false when
-    /// there is none.
+    /// there is none. Removing an entry makes room again, so the input's
+    /// surplus refusal goes with it.
     pub fn cancel(&mut self, id: u64) -> bool {
-        let before = self.entries.len();
-        self.entries.retain(|entry| entry.id != id);
-        self.entries.len() != before
+        let Some(index) = self.entries.iter().position(|entry| entry.id == id) else {
+            return false;
+        };
+        let entry = self.entries.remove(index);
+        self.refusals.retain(|(upload, _)| *upload != entry.upload);
+        true
     }
 }
 
@@ -473,7 +474,6 @@ pub struct FileInput<'a> {
     pub class: String,
     pub wrapper_class: String,
     pub disabled: bool,
-    pub required: bool,
     pub spec: &'a UploadSpec,
     pub entries: Vec<&'a UploadEntry>,
     pub errors: Vec<UploadError>,
@@ -500,13 +500,10 @@ impl FileInput<'_> {
         self
     }
 
+    /// A final record accepts no more files; the control and every Remove
+    /// are disabled.
     pub fn disabled(mut self) -> Self {
         self.disabled = true;
-        self
-    }
-
-    pub fn required(mut self) -> Self {
-        self.required = true;
         self
     }
 

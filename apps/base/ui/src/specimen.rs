@@ -455,7 +455,9 @@ fn specimen_uploads() -> Uploads {
     let mut uploads = Uploads::new([
         UploadSpec::new("statement", 5 * 1024 * 1024).accept([".csv", ".txt", "text/csv"]),
         UploadSpec::new("documents", 25 * 1024 * 1024).max_entries(2),
-        UploadSpec::new("scan", 2 * 1024 * 1024).accept(["application/pdf", "image/*"]),
+        UploadSpec::new("scan", 2 * 1024 * 1024)
+            .accept(["application/pdf", "image/*"])
+            .max_entries(2),
         UploadSpec::new("locked", 1024),
     ]);
     let mut ids = 0;

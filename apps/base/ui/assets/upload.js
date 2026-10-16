@@ -34,6 +34,7 @@
   const FileUpload = {
     mounted() {
       this.pending = new Map(); // id -> {file, offset, size, chunk, inflight}
+      this.announced = 0; // choices the server has not yet answered
       this.generation = 0;
       this.resume = null;
       this.wrapper = this.el.closest('[data-file-input]') || this.el.parentElement;
@@ -82,10 +83,12 @@
       this.el.value = '';
       const generation = this.generation;
       const target = ownerTarget(this.el);
+      this.announced += 1;
       window.BilibiLive.send({type: 'upload', target, upload: this.el.dataset.upload, entries}, {
         source: this.el,
         onReply: (reply) => {
-          if (reply.type !== 'upload') return;
+          if (generation === this.generation) this.announced = Math.max(0, this.announced - 1);
+          if (reply.type !== 'upload') { this.settle(); return; }
           for (const registration of reply.entries || []) {
             if (registration.id == null) continue;
             // Files announced before a drop are gone with the old state.
@@ -158,8 +161,10 @@
       this.settle();
     },
 
+    // Files are busy from the moment they are chosen: a submit raised before
+    // the server has even answered the choice waits like one raised mid-stream.
     busy() {
-      return this.pending.size > 0;
+      return this.pending.size > 0 || this.announced > 0;
     },
 
     // The held submit goes once every stream has ended, whatever ended it.
@@ -176,6 +181,7 @@
     reset() {
       this.generation += 1;
       this.pending.clear();
+      this.announced = 0;
       this.resume = null;
       if (this.form) this.form.removeAttribute('aria-busy');
     },
