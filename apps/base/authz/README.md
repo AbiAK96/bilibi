@@ -16,7 +16,9 @@ carry contributor provenance. Existing two-part demo keys remain supported; new
 owners should use the source's `domain.resource.action` form.
 
 To extend a seeded role, contribute the same code, canonical name and grant-all
-flag, with additional capability keys. Capabilities are unioned across owners.
+flag, with additional capability keys. Capabilities are unioned across owners;
+Authz's built-in definitions retain their canonical metadata regardless of the
+extensions' catalog order.
 Deploying a contribution does not change stored role grants automatically:
 
 ```sh
