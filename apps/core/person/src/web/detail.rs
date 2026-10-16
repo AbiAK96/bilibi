@@ -114,15 +114,21 @@ impl Detail {
         self.active_panels.clear();
         for panel in &self.pages.person_panels {
             if self.pages.embed_allowed(scope, panel.access).await? {
+                let mut path = HashMap::from([
+                    ("panel".into(), panel.anchor.clone()),
+                    ("id".into(), self.id.get().to_string()),
+                    ("kinds".into(), "person".into()),
+                ]);
+                // The record-history panel accepts exactly panel/kinds/id
+                // (`bilibi_audit_views::history`); the Person panels also
+                // read the person under their own name.
+                if panel.anchor != "person-record-history" {
+                    path.insert("person_id".into(), self.id.get().to_string());
+                }
                 self.active_panels.push(PanelSpec {
                     id: panel.anchor.clone(),
                     embed: panel.embed.clone(),
-                    path: HashMap::from([
-                        ("panel".into(), panel.anchor.clone()),
-                        ("id".into(), self.id.get().to_string()),
-                        ("person_id".into(), self.id.get().to_string()),
-                        ("kinds".into(), "person".into()),
-                    ]),
+                    path,
                     query: HashMap::new(),
                 });
             }
