@@ -67,6 +67,18 @@ impl Affiliation {
         fields.remove("restricted");
         value
     }
+    /// The headless read model: the flattened audit shape, so Grid/Authz field
+    /// names address its work contacts, with `restricted` naming hidden ones.
+    pub fn json(&self) -> serde_json::Value {
+        let mut value = self.audit_values();
+        value["restricted"] = serde_json::Value::Array(
+            self.restricted
+                .iter()
+                .map(|f| serde_json::Value::String(f.clone()))
+                .collect(),
+        );
+        value
+    }
 }
 
 /// Affiliation endpoints are immutable: move by creating another affiliation,

@@ -1,8 +1,10 @@
 //! Person ↔ Organisation work affiliations, independent of People employment.
+mod agent_operations;
 pub mod contributions;
 pub mod identity;
 pub mod model;
-use bilibi_database::{Db, MutationBoundary, MutationTransaction, Result};
+pub mod web;
+use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
 pub use identity::{LockedAffiliation, OwnCompanyAffiliation};
 pub use model::{
@@ -157,15 +159,26 @@ impl AffiliationService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/affiliation", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "core/party", "core/person", "core/company"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/ui", "base/datetime", "base/locale", "base/principal_directory", "core/party", "core/person", "core/company"],
         migrations: &[("001-core-affiliation", include_str!("../migrations/001-affiliation.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate affiliation change sender".into()))?;
+            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+            agent_operations::bind(db.clone(), services.get("base/tenancy.parties")?)?;
             Ok(Arc::new(AffiliationService {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                db,
                 mutations: services.get("base/database.mutations")?,
                 authentication: services.get("base/tenancy.authentication")?,
             }))
+        }}, bilibi_module_registry::Service { id: web::SERVICE, factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                affiliations: services.get(SERVICE)?,
+                proofs: services.get("base/tenancy.parties")?,
+                directory: services.get("base/principal_directory.directory")?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
+            }))))
         }}],
     }
 }

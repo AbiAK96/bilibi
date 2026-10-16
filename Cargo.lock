@@ -233,16 +233,23 @@ dependencies = [
 name = "bilibi-affiliation"
 version = "0.1.0"
 dependencies = [
+ "askama",
+ "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
+ "bilibi-datetime",
  "bilibi-grid",
+ "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party",
  "bilibi-person",
+ "bilibi-principal-directory",
  "bilibi-tenancy",
+ "bilibi-ui",
  "bilibi-web",
  "inventory",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror",

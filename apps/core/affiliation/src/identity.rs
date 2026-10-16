@@ -344,3 +344,46 @@ pub(crate) async fn lock_for_employment<'tx>(
     let proof = lock_for_account_binding(tx, scope, id).await?;
     Ok(OwnCompanyAffiliation(proof))
 }
+
+/// Review a create without locks or writes: the authorization, shape,
+/// restriction and owner-eligibility checks `create` repeats inside its
+/// transaction. The normalized input is what the commit will store.
+pub async fn preview_create(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    proofs: &bilibi_tenancy::PartyProofs,
+    input: &AffiliationInput,
+) -> Result<AffiliationInput> {
+    authorize_key(client, scope, CREATE).await?;
+    let input = validate(input)?;
+    restricted_input(&input, &fields(client, scope).await?)?;
+    bilibi_company::organisation::require_writable(
+        client,
+        scope,
+        input.organisation_id.get(),
+        false,
+    )
+    .await
+    .map_err(company_error)?;
+    proofs.person(client, scope, input.person_id).await?;
+    Ok(input)
+}
+/// Review an update, end or unlink without locks: the capability, current
+/// version and linked state the write will recheck under its row lock.
+pub async fn preview_write(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: AffiliationId,
+    version: i64,
+    capability: &str,
+) -> Result<Affiliation> {
+    authorize_key(client, scope, capability).await?;
+    let current = raw(client, scope, id, false).await?;
+    if version < 1 || current.version != version {
+        return Err(Error::Conflict);
+    }
+    if current.unlinked_at.is_some() {
+        return Err(Error::Forbidden);
+    }
+    Ok(current.redact(&fields(client, scope).await?))
+}
