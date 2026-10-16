@@ -19,10 +19,10 @@ use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_ui::{
     lists::RecordLink,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Cell, Choice,
-    CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field, FlashGroup, FlexRow,
-    FlexTable, Header, InlineChoice, InlineEdit, InlineField, InputKind, ListColumns, PageVariant,
-    SecretInput, SectionHeading, SortDir, StatusKind, TableEmpty,
+    ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card,
+    Cell, Choice, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field,
+    FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField, InputKind,
+    ListColumns, PageVariant, SecretInput, SectionHeading, SortDir, StatusKind, TableEmpty,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,6 +49,7 @@ struct View {
 #[derive(Template)]
 #[template(path = "account_actions.html")]
 struct Actions {
+    impersonate: Html,
     back: Html,
 }
 #[derive(Template)]
@@ -1119,6 +1120,31 @@ impl Detail {
         })
     }
 
+    /// Bilimbi's guard, the users list's: the capability, never the signed-in
+    /// account, never while already impersonating, and never an
+    /// archived-company account, whose session cannot be opened. Hidden, not
+    /// disabled, when any of those fails, as on the source page.
+    async fn impersonate(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
+        if loaded.archived
+            || self.id == scope.user()
+            || scope.impersonator().is_some()
+            || !self
+                .pages
+                .allowed(scope, crate::impersonation::IMPERSONATE)
+                .await?
+        {
+            return Ok(Html::EMPTY);
+        }
+        render(&ActionLink {
+            id: "user-impersonate",
+            icon: "bilimbi-impersonate",
+            href: &format!("/admin/impersonate/{}", self.id),
+            method: "post",
+            title: "Impersonate this user",
+            body: Html::text("Impersonate"),
+        })
+    }
+
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let loaded = self.load(scope).await?;
         self.history = self.pages.allowed(scope, "admin.audit.log.list").await?;
@@ -1136,6 +1162,7 @@ impl Detail {
                 url: format!("/users/{}", self.id),
             })?,
             actions: render(&Actions {
+                impersonate: self.impersonate(scope, &loaded).await?,
                 back: render(&BackLink {
                     href: "/users",
                     id: "user-back",
@@ -1148,7 +1175,7 @@ impl Detail {
             render(&Alert {
                 kind: StatusKind::Warning,
                 id: "user-archived-company",
-                body: Html::text(&format!("{}'s company is archived, and archiving is final, so this account is read-only: its details, roles, permissions, password and person links can't be changed, and nobody can sign in as this user.", account.name)),
+                body: Html::text(&format!("{}'s company is archived, and archiving is final, so this account is read-only: its details, roles, permissions, password and person links can't be changed, and nobody can sign in as or impersonate this user.", account.name)),
                 ..Alert::default()
             })?
         } else {

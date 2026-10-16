@@ -10,8 +10,9 @@
 //! account rather than on a client-supplied id, so what was confirmed is what
 //! runs. Every write re-proves the actor inside Core User's command; the
 //! controls only decide what to draw. Impersonation posts Bilimbi's
-//! `/admin/impersonate/{id}`, the host adapter K14 lands; the control is drawn
-//! and disabled by the same rules as Bilimbi's.
+//! `/admin/impersonate/{id}` (the Web host adapter over Core User's
+//! `impersonate`); the control is drawn and disabled by the same rules as
+//! Bilimbi's.
 use crate::{
     list_users, Entry, Options, Sort, MAX_PAGE, MAX_ROLE_IDS, MAX_SEARCH_BYTES, PAGE_SIZES,
 };
@@ -448,7 +449,8 @@ impl Index {
             let label = format!("Impersonate {}", user.name);
             let id = format!("user-{}-impersonate", user.id);
             let href = format!("/admin/impersonate/{}", user.id);
-            if !user.company_archived && !own {
+            let impersonating = scope.impersonator().is_some();
+            if !user.company_archived && !own && !impersonating {
                 render(&IconButton {
                     id: &id,
                     href: &href,
@@ -462,6 +464,8 @@ impl Index {
                     disabled: true,
                     title: if own {
                         "You cannot impersonate yourself"
+                    } else if impersonating {
+                        "Cannot impersonate while impersonating"
                     } else {
                         "Archived-company users cannot be impersonated"
                     },
