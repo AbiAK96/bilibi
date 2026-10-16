@@ -143,6 +143,18 @@ locking (`identity::preview_create`, `identity::preview_write`) and commits
 write inside the plan's audited transaction. Records flatten the work fields
 and list hidden contacts as `{"restricted":true}`.
 
+`core.affiliation.contact.create` is Bilimbi's `core.person.contact.create`
+(the key carries this module's prefix, as the registry requires): a namecard
+creates a new human Person (name only) and their affiliation (organisation,
+title, work email/phone, dates) in one reviewed write. Its preview is the
+Person owner's `preview` plus `identity::preview_contact`, which runs every
+`preview_create` check except proving the Person the write creates; its
+commit is the Person owner's `create` followed by `identity::create` on the
+same transaction, so an archived company or a refused field rolls both back.
+It needs `admin.person.create` and `admin.affiliation.create` and creates no
+account, employment or grant. The result carries the person, the affiliation
+and the person's `path`.
+
 Migrate a disposable DB (the walkthrough installs its fixture), then run:
 
 ```sh

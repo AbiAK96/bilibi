@@ -8,8 +8,8 @@ use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
 pub use identity::{LockedAffiliation, OwnCompanyAffiliation};
 pub use model::{
-    Affiliation, AffiliationId, AffiliationInput, CalendarDate, EffectiveDates, OrganisationId,
-    Page, PersonId, Search, Update,
+    Affiliation, AffiliationId, AffiliationInput, CalendarDate, ContactFacts, EffectiveDates,
+    OrganisationId, Page, PersonId, Search, Update,
 };
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;

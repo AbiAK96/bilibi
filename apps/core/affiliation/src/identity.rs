@@ -354,19 +354,46 @@ pub async fn preview_create(
     proofs: &bilibi_tenancy::PartyProofs,
     input: &AffiliationInput,
 ) -> Result<AffiliationInput> {
+    let facts = preview_contact(
+        client,
+        scope,
+        &ContactFacts {
+            organisation_id: input.organisation_id,
+            title: input.title.clone(),
+            work_email: input.work_email.clone(),
+            work_phone: input.work_phone.clone(),
+            dates: input.dates.clone(),
+        },
+    )
+    .await?;
+    proofs.person(client, scope, input.person_id).await?;
+    Ok(facts.for_person(input.person_id))
+}
+/// Review the affiliation half of a namecard contact without locks: every
+/// `preview_create` check except proving the Person, which the same write
+/// creates. The commit is the Person owner's create followed by `create`.
+pub async fn preview_contact(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    facts: &ContactFacts,
+) -> Result<ContactFacts> {
     authorize_key(client, scope, CREATE).await?;
-    let input = validate(input)?;
-    restricted_input(&input, &fields(client, scope).await?)?;
+    let facts = facts.validate()?;
+    let masked = fields(client, scope).await?;
+    if (facts.work_email.is_some() && masked.contains("work_email"))
+        || (facts.work_phone.is_some() && masked.contains("work_phone"))
+    {
+        return Err(Error::Forbidden);
+    }
     bilibi_company::organisation::require_writable(
         client,
         scope,
-        input.organisation_id.get(),
+        facts.organisation_id.get(),
         false,
     )
     .await
     .map_err(company_error)?;
-    proofs.person(client, scope, input.person_id).await?;
-    Ok(input)
+    Ok(facts)
 }
 /// Review an update, end or unlink without locks: the capability, current
 /// version and linked state the write will recheck under its row lock.

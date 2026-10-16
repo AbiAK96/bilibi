@@ -5,7 +5,7 @@
 //! plan's audited transaction (E2 owns review, replay and the outer commit).
 use crate::{
     contributions::*, identity, model::Affiliation, AffiliationId, AffiliationInput, CalendarDate,
-    EffectiveDates, OrganisationId, PersonId, Search, Update,
+    ContactFacts, EffectiveDates, OrganisationId, PersonId, Search, Update,
 };
 use bilibi_agent_api::{
     json::{Data, Output, Page},
@@ -14,6 +14,7 @@ use bilibi_agent_api::{
 };
 use bilibi_database::{Db, Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_person::{PersonInput, PersonKind, WriteError};
 use bilibi_tenancy::{PartyProofs, Scope};
 use serde_json::{json, Value};
 use std::{
@@ -77,12 +78,54 @@ fn text(input: &Value, field: &str) -> bilibi_agent_api::Result<Option<String>> 
         _ => Err(invalid(field, "must be a string")),
     }
 }
+fn organisation(input: &Value) -> bilibi_agent_api::Result<OrganisationId> {
+    OrganisationId::new(positive(input, "organisation_id")?)
+        .map_err(|_| invalid("organisation_id", "must be a positive integer"))
+}
+/// A namecard: a new human Person (name only; personal contacts stay with
+/// `core.person.*`) and the work facts of their affiliation.
+fn contact_input(input: &Value) -> bilibi_agent_api::Result<(PersonInput, ContactFacts)> {
+    let name = input["name"]
+        .as_str()
+        .ok_or_else(|| invalid("name", "must be a string"))?;
+    Ok((
+        PersonInput {
+            name: name.to_owned(),
+            kind: PersonKind::Human,
+            email: None,
+            phone: None,
+        },
+        ContactFacts {
+            organisation_id: organisation(input)?,
+            title: text(input, "title")?,
+            work_email: text(input, "work_email")?,
+            work_phone: text(input, "work_phone")?,
+            dates: dates(input)?,
+        },
+    ))
+}
+/// The Person owner's refusals, with its field names.
+fn person_error(error: WriteError) -> bilibi_agent_api::Error {
+    match error {
+        WriteError::Validation(errors) => {
+            let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for error in errors {
+                fields
+                    .entry(error.field.into())
+                    .or_default()
+                    .push(error.message.into());
+            }
+            bilibi_agent_api::Error::InvalidInput(fields)
+        }
+        WriteError::Backend(error) => not_found(error),
+        WriteError::Retired | WriteError::SystemIdentity => Error::Forbidden.into(),
+    }
+}
 fn create_input(input: &Value) -> bilibi_agent_api::Result<AffiliationInput> {
     Ok(AffiliationInput {
         person_id: PersonId::new(positive(input, "person_id")?)
             .map_err(|_| invalid("person_id", "must be a positive integer"))?,
-        organisation_id: OrganisationId::new(positive(input, "organisation_id")?)
-            .map_err(|_| invalid("organisation_id", "must be a positive integer"))?,
+        organisation_id: organisation(input)?,
         title: text(input, "title")?,
         work_email: text(input, "work_email")?,
         work_phone: text(input, "work_phone")?,
@@ -159,6 +202,7 @@ impl ReadHandler for Read {
 
 enum Write {
     Create,
+    Contact,
     Update,
     End,
     Unlink,
@@ -188,6 +232,16 @@ impl WriteHandler for Write {
                     .await
                     .map_err(shape)?;
                     json!({"summary":format!("Affiliate person {} with organisation {}; no account, employment or grant follows", input.person_id, input.organisation_id),"affiliation":input})
+                }
+                Self::Contact => {
+                    let (person, facts) = contact_input(input)?;
+                    let person = bilibi_person::identity::preview(client, scope, &person)
+                        .await
+                        .map_err(person_error)?;
+                    let facts = identity::preview_contact(client, scope, &facts)
+                        .await
+                        .map_err(shape)?;
+                    json!({"summary":format!("Create contact {} affiliated with organisation {}; no account, employment or grant follows", person.name, facts.organisation_id),"person":person,"affiliation":facts})
                 }
                 Self::Update => {
                     let before = identity::preview_write(
@@ -241,6 +295,24 @@ impl WriteHandler for Write {
         Box::pin(async move {
             let affiliation = match self {
                 Self::Create => identity::create(tx, scope, &create_input(input)?).await,
+                Self::Contact => {
+                    let (person, facts) = contact_input(input)?;
+                    let person = bilibi_person::identity::create(tx, scope, &person)
+                        .await
+                        .map_err(person_error)?;
+                    let affiliation = identity::create(tx, scope, &facts.for_person(person.id))
+                        .await
+                        .map_err(shape)?;
+                    let masked: HashSet<_> = person.restricted.iter().cloned().collect();
+                    let mut data = BTreeMap::new();
+                    data.insert("person".into(), Data::restricted(person.json(), &masked));
+                    data.insert("affiliation".into(), record(affiliation));
+                    data.insert(
+                        "path".into(),
+                        Data::from(json!(format!("/persons/{}", person.id.get()))),
+                    );
+                    return Ok(Output::Data(Data::Object(data)));
+                }
                 Self::Update => {
                     let id = id(input)?;
                     let version = positive(input, "version")?;
@@ -298,6 +370,15 @@ fn create_schema() -> Value {
     properties.insert("organisation_id".into(), id_schema());
     json!({"type":"object","required":["person_id","organisation_id"],"properties":properties})
 }
+fn contact_schema() -> Value {
+    let mut properties = facts();
+    properties.insert("name".into(), json!({"type":"string","maxLength":160}));
+    properties.insert("organisation_id".into(), id_schema());
+    json!({"type":"object","required":["name","organisation_id"],"properties":properties})
+}
+fn contact_output() -> Value {
+    json!({"type":"object","description":"The new person (identity only), their affiliation and the person's page path. No account, employment or grant."})
+}
 fn update_schema() -> Value {
     let mut properties = facts();
     properties.insert("affiliation_id".into(), id_schema());
@@ -321,10 +402,11 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/affiliation.agent", Pr
         Operation { key:"core.affiliation.list", title:"List affiliations", summary:"List a person's or an organisation's dated work affiliations, optionally on one calendar day.", keywords:&["affiliation","contact","organisation","person","work"], capability:LIST, input:list_schema, output:many_output, handler:Handler::Read(&Read::List) },
         Operation { key:"core.affiliation.get", title:"Read an affiliation", summary:"Read one affiliation with its visible work contacts and dates.", keywords:&["affiliation","work","contact"], capability:VIEW, input:get_schema, output:one_output, handler:Handler::Read(&Read::Get) },
         Operation { key:"core.affiliation.create", title:"Affiliate a person with an organisation", summary:"Record a dated position with optional title and work contacts. Creates no account, employment or grant.", keywords:&["affiliation","add","position","work","contact"], capability:CREATE, input:create_schema, output:one_output, handler:Handler::SafeWrite(&Write::Create) },
+        Operation { key:"core.affiliation.contact.create", title:"Create a contact from a namecard", summary:"Create a new person and their dated affiliation with an organisation in one reviewed write: name, title and work contacts. Creates no account, employment or grant.", keywords:&["namecard","contact","vendor","customer","person","affiliation","add"], capability:CREATE, input:contact_schema, output:contact_output, handler:Handler::SafeWrite(&Write::Contact) },
         Operation { key:"core.affiliation.update", title:"Update an affiliation", summary:"Replace the title, visible work contacts and dates using the current version; person and organisation never change.", keywords:&["affiliation","edit","title","dates"], capability:UPDATE, input:update_schema, output:one_output, handler:Handler::SafeWrite(&Write::Update) },
         Operation { key:"core.affiliation.end", title:"End an affiliation", summary:"Set the inclusive end date; identity, contacts and history are kept.", keywords:&["affiliation","end","leave"], capability:UPDATE, input:end_schema, output:one_output, handler:Handler::SafeWrite(&Write::End) },
         Operation { key:"core.affiliation.unlink", title:"Unlink an affiliation", summary:"Retain the dated record while refusing further edits and binding proofs. Never deletes.", keywords:&["affiliation","unlink","remove"], capability:UNLINK, input:unlink_schema, output:one_output, handler:Handler::SafeWrite(&Write::Unlink) },
     ],
     guides: &[Guide { key:"core.affiliation", title:"Work affiliations", summary:"Dated person-to-organisation positions with work contacts, independent of accounts and People employment.", keywords:&["affiliation","work","contact","organisation","person","employment"], capability:LIST,
-        body:"An affiliation links one Person to one Organisation for a dated position: optional title, work email and work phone, and inclusive effective_from/effective_to calendar dates (YYYY-MM-DD); a missing bound is open. A person may hold several affiliations at once, including several positions at one organisation. Work contacts never replace personal contacts (core.person.*), and no affiliation creates a login, grant or employment: People owns Employment and points at an affiliation with our own company.\n\nList with core.affiliation.list by person_id or organisation_id; add on=YYYY-MM-DD to keep only affiliations in effect that day, and include_unlinked=true to see retained unlinked records. Create, update, end and unlink go through safe-write review and plan-code commit. Update sends affiliation_id, the current version and the replacement title, work_email, work_phone, effective_from and effective_to; an omitted or empty visible contact clears it, and a hidden contact (read as restricted) must be omitted and is preserved. The person and organisation of an affiliation never change: create another affiliation to move someone. End sets effective_to; unlink keeps the record read-only. Archived companies and retired or protected system persons refuse new or changed affiliations." }],
+        body:"An affiliation links one Person to one Organisation for a dated position: optional title, work email and work phone, and inclusive effective_from/effective_to calendar dates (YYYY-MM-DD); a missing bound is open. A person may hold several affiliations at once, including several positions at one organisation. Work contacts never replace personal contacts (core.person.*), and no affiliation creates a login, grant or employment: People owns Employment and points at an affiliation with our own company.\n\nFor a namecard (vendor or customer contact), search core.company.list, core.person.list and core.person.duplicates first; create or reuse the company and assign its role with core.company.relationship.assign. A new person and their position are one write, core.affiliation.contact.create (name, organisation_id, optional title, work_email, work_phone and dates); an existing person gets core.affiliation.create. List with core.affiliation.list by person_id or organisation_id; add on=YYYY-MM-DD to keep only affiliations in effect that day, and include_unlinked=true to see retained unlinked records. Create, update, end and unlink go through safe-write review and plan-code commit. Update sends affiliation_id, the current version and the replacement title, work_email, work_phone, effective_from and effective_to; an omitted or empty visible contact clears it, and a hidden contact (read as restricted) must be omitted and is preserved. The person and organisation of an affiliation never change: create another affiliation to move someone. End sets effective_to; unlink keeps the record read-only. Archived companies and retired or protected system persons refuse new or changed affiliations." }],
 }) }

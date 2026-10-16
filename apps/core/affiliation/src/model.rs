@@ -139,25 +139,59 @@ pub struct Page {
 }
 
 pub(crate) fn validate(input: &AffiliationInput) -> Result<AffiliationInput> {
-    // Reuse the Person owner's contact rules; work contacts remain separate.
-    let contact = bilibi_person::model::validate(&bilibi_person::PersonInput {
-        name: "Affiliation".into(),
-        kind: bilibi_person::PersonKind::Human,
-        email: input.work_email.clone(),
-        phone: input.work_phone.clone(),
-    })
-    .map_err(|_| Error::Invalid)?;
-    let title = bilibi_person::model::optional(&input.title);
-    if title
-        .as_ref()
-        .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))
-    {
-        return Err(Error::Invalid);
+    let facts = ContactFacts {
+        organisation_id: input.organisation_id,
+        title: input.title.clone(),
+        work_email: input.work_email.clone(),
+        work_phone: input.work_phone.clone(),
+        dates: input.dates.clone(),
     }
-    Ok(AffiliationInput {
-        title,
-        work_email: contact.email,
-        work_phone: contact.phone,
-        ..input.clone()
-    })
+    .validate()?;
+    Ok(facts.for_person(input.person_id))
+}
+
+/// The affiliation half of a namecard contact whose Person the same write
+/// creates: everything an `AffiliationInput` holds except the person.
+#[derive(Clone, Debug, Serialize)]
+pub struct ContactFacts {
+    pub organisation_id: OrganisationId,
+    pub title: Option<String>,
+    pub work_email: Option<String>,
+    pub work_phone: Option<String>,
+    pub dates: EffectiveDates,
+}
+impl ContactFacts {
+    pub fn for_person(&self, person_id: PersonId) -> AffiliationInput {
+        AffiliationInput {
+            person_id,
+            organisation_id: self.organisation_id,
+            title: self.title.clone(),
+            work_email: self.work_email.clone(),
+            work_phone: self.work_phone.clone(),
+            dates: self.dates.clone(),
+        }
+    }
+    pub(crate) fn validate(&self) -> Result<Self> {
+        // Reuse the Person owner's contact rules; work contacts remain separate.
+        let contact = bilibi_person::model::validate(&bilibi_person::PersonInput {
+            name: "Affiliation".into(),
+            kind: bilibi_person::PersonKind::Human,
+            email: self.work_email.clone(),
+            phone: self.work_phone.clone(),
+        })
+        .map_err(|_| Error::Invalid)?;
+        let title = bilibi_person::model::optional(&self.title);
+        if title
+            .as_ref()
+            .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))
+        {
+            return Err(Error::Invalid);
+        }
+        Ok(Self {
+            title,
+            work_email: contact.email,
+            work_phone: contact.phone,
+            ..self.clone()
+        })
+    }
 }
