@@ -1,0 +1,16 @@
+{#- The New/Edit type form inside the dialog (Bilimbi `ReferenceTypesLive`
+    render, `@spec.dom.form`). Values change raises validate (phx-change);
+    Enter or Save raises save with the same values (phx-submit). -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+<form id="{{ form_id }}" data-event="validate" data-change data-submit-event="save" class="mt-4 space-y-4">
+{% call form::input(field=code) %}{% endcall %}
+{% call form::input(field=name) %}{% endcall %}
+{% if let Some(category) = category %}{% call form::input(field=category) %}{% endcall %}{% endif %}
+{% call form::input(field=description) %}{% endcall %}
+{% if let Some(active) = active %}{% call form::input(field=active) %}{% endcall %}{% endif %}
+<div class="mt-6 flex justify-end gap-2">
+{% call ui::button(button_type="button", event="close_modal") %}Cancel{% endcall %}
+{% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary) %}Save{% endcall %}
+</div>
+</form>

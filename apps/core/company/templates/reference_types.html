@@ -1,0 +1,15 @@
+{#- Legal entity types / department types (Bilimbi `ReferenceTypesLive` render):
+    the header, category filter, table card, dialog and confirmation are rendered
+    by src/web/reference_types.rs through the shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id=page_id) %}
+{{ header|safe }}
+{% if !categories.is_empty() %}<div class="mb-4 flex flex-wrap items-center gap-2"><span class="w-full text-xs font-semibold text-ink-subtle sm:w-auto">Category:</span>{% for button in categories %}{{ button|safe }}{% endfor %}</div>{% endif %}
+{{ card|safe }}
+{{ modal|safe }}
+{{ confirm|safe }}
+{% endcall %}
+</div>

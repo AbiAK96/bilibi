@@ -1,0 +1,10 @@
+{#- Set Department Head (Bilimbi `DepartmentsLive` render, `department-head-form`). -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+<form id="department-head-form" data-event="save_head" class="mt-4 space-y-4">
+{% call form::input(field=head) %}{% endcall %}
+<div class="mt-6 flex justify-end gap-2">
+{% call ui::button(button_type="button", event="close_modal") %}Cancel{% endcall %}
+{% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary) %}Save Head{% endcall %}
+</div>
+</form>

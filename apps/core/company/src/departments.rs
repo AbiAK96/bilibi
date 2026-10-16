@@ -3,7 +3,10 @@
 //! in the scope's tenant; writes begin with `organisation::require_writable`,
 //! so an archived company's departments are read-only, and are authorized
 //! against the company (`authorize_target` with `admin.company.update`).
-//! A department's head is an affiliation; K18 adds the API that appoints one.
+//! A department's head is an affiliation with the company. Company cannot
+//! name one across the module boundary (Affiliation depends on Company), so
+//! the affiliation owner binds a [`HeadDirectory`] at boot and `update_head`
+//! accepts only an affiliation that directory offers for the company.
 use crate::{
     contributions::{UPDATE, VIEW},
     organisation::{authorize_target, require_live, require_writable},
@@ -13,7 +16,13 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::Scope;
 use serde::Serialize;
 use serde_json::json;
-use tokio_postgres::{GenericClient, Row};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
+use tokio_postgres::{types::ToSql, GenericClient, Row};
 
 pub const STATUSES: [&str; 3] = ["active", "inactive", "suspended"];
 
@@ -286,4 +295,144 @@ pub async fn delete(
     })
     .await?;
     Ok(())
+}
+
+pub type HeadFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+/// Object-safe read access that keeps the caller's connection or transaction
+/// for the directory (the shape of Tenancy's `ProofClient`, for many rows).
+pub trait HeadClient: Sync {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn ToSql + Sync)],
+    ) -> HeadFuture<'a, Vec<Row>>;
+}
+impl<T: GenericClient + Sync> HeadClient for T {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn ToSql + Sync)],
+    ) -> HeadFuture<'a, Vec<Row>> {
+        Box::pin(async move { Ok(GenericClient::query(self, sql, params).await?) })
+    }
+}
+/// One person who may lead a department of a company, by the affiliation
+/// that binds them to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadCandidate {
+    pub affiliation_id: i64,
+    pub label: String,
+}
+/// What the affiliation owner implements (Bilimbi named heads through
+/// `PrincipalDirectory.choices(scope, :employee, %{company_id})`). Answers
+/// come scoped by the query itself: a candidate is a live, linked affiliation
+/// with `company_id` in the scope's tenant; an ended or unlinked one is left
+/// out, never refused. The directory never orders a screen's rows and never
+/// decides authorization.
+pub trait HeadDirectory: Send + Sync {
+    fn candidates<'a>(
+        &'a self,
+        client: &'a dyn HeadClient,
+        scope: &'a Scope,
+        company_id: i64,
+    ) -> HeadFuture<'a, Vec<HeadCandidate>>;
+    /// Labels for affiliation ids the reader may see; a missing id stays
+    /// unnamed and a screen shows "—".
+    fn names<'a>(
+        &'a self,
+        client: &'a dyn HeadClient,
+        scope: &'a Scope,
+        ids: &'a [i64],
+    ) -> HeadFuture<'a, HashMap<i64, String>>;
+}
+static HEAD_DIRECTORY: OnceLock<Arc<dyn HeadDirectory>> = OnceLock::new();
+/// Binds the one directory, from the affiliation owner's service factory. A
+/// second binding is a boot error, as a second provider is for Tenancy.
+pub fn bind_head_directory(directory: Arc<dyn HeadDirectory>) -> Result<()> {
+    HEAD_DIRECTORY.set(directory).map_err(|_| Error::Internal)
+}
+pub fn head_directory() -> Option<&'static Arc<dyn HeadDirectory>> {
+    HEAD_DIRECTORY.get()
+}
+/// The eligible heads of a company, or none while no owner has bound a
+/// directory: a screen then offers no head and says so.
+pub async fn head_candidates(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    company_id: i64,
+) -> Result<Vec<HeadCandidate>> {
+    bilibi_authz::authorize_key(client, scope, VIEW).await?;
+    require_live(client, scope, company_id).await?;
+    match head_directory() {
+        Some(directory) => directory.candidates(client, scope, company_id).await,
+        None => Ok(Vec::new()),
+    }
+}
+/// The names of the heads among `departments`, for the Head column.
+pub async fn head_names(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    departments: &[Department],
+) -> Result<HashMap<i64, String>> {
+    let mut ids: Vec<i64> = departments
+        .iter()
+        .filter_map(|department| department.head_affiliation_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    match head_directory() {
+        Some(directory) if !ids.is_empty() => directory.names(client, scope, &ids).await,
+        _ => Ok(HashMap::new()),
+    }
+}
+
+/// Appoints (`Some`) or clears (`None`) a department's head; `version` is the
+/// one the dialog loaded. A head must be one of the directory's candidates for
+/// this company at the moment of the write, so a forged or foreign affiliation
+/// id is refused as not eligible, never stored.
+pub async fn update_head(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    company_id: i64,
+    department_id: i64,
+    head_affiliation_id: Option<i64>,
+    version: i64,
+) -> std::result::Result<Outcome, WriteError> {
+    authorize_target(tx.sql(), scope, company_id, UPDATE).await?;
+    require_writable(tx.sql(), scope, company_id, true).await?;
+    let before = lock(tx.sql(), scope, company_id, department_id).await?;
+    if before.version != version {
+        return Err(WriteError::Stale);
+    }
+    if let Some(head) = head_affiliation_id {
+        let eligible = match head_directory() {
+            Some(directory) => directory
+                .candidates(tx.sql(), scope, company_id)
+                .await?
+                .iter()
+                .any(|candidate| candidate.affiliation_id == head),
+            None => false,
+        };
+        if head <= 0 || !eligible {
+            return Ok(Outcome::Refused(vec![FieldError::new(
+                "head_id",
+                "is not eligible to lead this department",
+            )]));
+        }
+    }
+    if before.head_affiliation_id == head_affiliation_id {
+        return Ok(Outcome::Saved(before));
+    }
+    let saved = tx
+        .mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute("UPDATE company_departments SET head_affiliation_id=$2,version=version+1,updated_at=now() WHERE id=$1", &[&department_id,&head_affiliation_id]).await?;
+                let row = sql.query_one(&format!("SELECT {COLUMNS} FROM {FROM} WHERE d.id=$1"), &[&department_id]).await?;
+                let saved = Department::from_row(&row);
+                let change = Change { kind: "company.department".into(), id: department_id, old: before.to_json(), new: saved.to_json() };
+                Ok((saved, vec![change]))
+            })
+        })
+        .await?;
+    Ok(Outcome::Saved(saved))
 }

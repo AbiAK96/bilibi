@@ -1,15 +1,67 @@
-//! Company owns its page state, Grid arrangement and all business events.
+//! Company owns its page state, Grid arrangement and all business events:
+//! the list/create/detail pages here, the two reference catalogs in
+//! `reference_types` and a company's departments in `departments`.
+mod departments;
+mod reference_types;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
 use bilibi_database::{Db, Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
-use bilibi_ui::{page::*, CommitStates, CommitStatus, Filter, ListSpec, ListState, SortDir};
+use bilibi_ui::{
+    page::*, CommitStates, CommitStatus, Filter, FlashMap, ListColumns, ListSpec, ListState,
+    SortDir, StatusKind, NO_FLASH,
+};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
+pub(crate) use views::{allowed, render};
+
+/// The page's one flash message, by kind (Bilimbi `put_flash`/`clear_flash`),
+/// rendered by the page's own `flash_group`.
+#[derive(Default)]
+pub(crate) struct Flash(Option<(StatusKind, String)>);
+impl Flash {
+    pub fn put(&mut self, kind: StatusKind, message: impl Into<String>) {
+        self.0 = Some((kind, message.into()));
+    }
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+    /// The browser dismissed the message of this kind.
+    pub fn dismiss(&mut self, key: Option<&str>) {
+        if self
+            .0
+            .as_ref()
+            .is_some_and(|(kind, _)| Some(kind.name()) == key)
+        {
+            self.0 = None;
+        }
+    }
+    pub fn map(&self) -> FlashMap<'_> {
+        let mut flash = NO_FLASH;
+        if let Some((kind, message)) = &self.0 {
+            match kind {
+                StatusKind::Success => flash.success = message,
+                StatusKind::Error => flash.error = message,
+                StatusKind::Warning => flash.warning = message,
+                StatusKind::Info => flash.info = message,
+            }
+        }
+        flash
+    }
+}
+/// The flex table's operation values, as `ListColumns::handle` takes them.
+pub(crate) fn grid_values(event: &Value) -> HashMap<String, String> {
+    event
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect()
+}
 
 pub struct Pages {
     pub db: Db,
@@ -18,19 +70,44 @@ pub struct Pages {
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
 }
+fn record_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
+    request
+        .path
+        .get("id")
+        .and_then(|v| v.parse().ok())
+        .filter(|id: &i64| *id > 0)
+        .ok_or(Error::Invalid)
+}
 impl Pages {
+    /// The state of a page other than list/create/detail, by operation.
+    fn other(
+        &self,
+        request: &PageRequest<'_, Scope>,
+    ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>> {
+        Ok(Some(match request.operation {
+            "legal_entity_types" => Box::new(reference_types::ReferenceTypes::new(
+                self.db.clone(),
+                self.company.clone(),
+                &reference_types::LEGAL_ENTITY_TYPES,
+            )?),
+            "department_types" => Box::new(reference_types::ReferenceTypes::new(
+                self.db.clone(),
+                self.company.clone(),
+                &reference_types::DEPARTMENT_TYPES,
+            )?),
+            "departments" => Box::new(departments::Departments::new(
+                self.db.clone(),
+                self.company.clone(),
+                record_id(request)?,
+            )?),
+            _ => return Ok(None),
+        }))
+    }
     async fn state(&self, request: &PageRequest<'_, Scope>) -> Result<CompanyPage> {
         let scope = request.scope.ok_or(Error::Unauthorized)?;
         let id = match request.operation {
             "list" | "create" => None,
-            "detail" => Some(
-                request
-                    .path
-                    .get("id")
-                    .and_then(|v| v.parse().ok())
-                    .filter(|id: &i64| *id > 0)
-                    .ok_or(Error::Invalid)?,
-            ),
+            "detail" => Some(record_id(request)?),
             _ => return Err(Error::NotFound),
         };
         let client = self.db.get().await?;
@@ -50,6 +127,11 @@ impl Pages {
             statuses: CommitStates::default(),
             views: self.views.clone(),
             masked: masked.clone(),
+            departments_columns: ListColumns::mount(
+                "company-departments-table",
+                views::department_builtins(),
+            )
+            .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
             errors: Vec::new(),
             pending: None,
@@ -64,11 +146,28 @@ impl Page<Scope, Error> for Pages {
         Some(match operation {
             "create" => "Create Company",
             "detail" => "Company",
+            "legal_entity_types" => "Legal Entity Types",
+            "department_types" => "Department Types",
+            "departments" => "Departments",
             _ => "Companies",
         })
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
+            if let Some(mut other) = self.other(&request)? {
+                let scope = request.scope.ok_or(Error::Unauthorized)?;
+                let body = other
+                    .update(LiveRequest {
+                        scope,
+                        credential: "",
+                        input: LiveInput::Refresh,
+                    })
+                    .await?;
+                return Ok(PageBody {
+                    html: body.html,
+                    live: true,
+                });
+            }
             let mut state = self.state(&request).await?;
             let body = state
                 .draw(request.scope.ok_or(Error::Unauthorized)?)
@@ -81,6 +180,9 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
+            if let Some(other) = self.other(&request)? {
+                return Ok(Some(other));
+            }
             Ok(Some(
                 Box::new(self.state(&request).await?) as Box<dyn LiveState<Scope, Error>>
             ))
@@ -158,6 +260,9 @@ struct CompanyPage {
     statuses: CommitStates,
     views: Arc<PageViews>,
     masked: std::collections::HashSet<String>,
+    /// The detail page's Departments table arrangement (Bilimbi
+    /// `departments_columns`).
+    departments_columns: ListColumns,
     form: HashMap<String, String>,
     errors: Vec<FieldError>,
     pending: Option<Pending>,
@@ -239,10 +344,13 @@ impl CompanyPage {
                     &**client,
                     scope,
                     self.id.ok_or(Error::Invalid)?,
-                    &self.statuses,
-                    self.pending.as_ref(),
-                    &self.notice,
-                    self.pending_activity.as_ref(),
+                    views::DetailState {
+                        statuses: &self.statuses,
+                        pending: self.pending.as_ref(),
+                        notice: &self.notice,
+                        pending_activity: self.pending_activity.as_ref(),
+                        departments_columns: &mut self.departments_columns,
+                    },
                 )
                 .await?
             }
@@ -287,6 +395,9 @@ impl CompanyPage {
                 {
                     self.sort(&field)?;
                 }
+            }
+            "departments_grid" if self.operation == "detail" => {
+                self.departments_columns.handle(&grid_values(value));
             }
             "sort" => self.sort(if get("sort").is_empty() {
                 get("field")

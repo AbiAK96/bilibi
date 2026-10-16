@@ -585,6 +585,36 @@ impl CompanyService {
         finish(tx, matches!(outcome, departments::Outcome::Saved(_))).await?;
         Ok(outcome)
     }
+    /// Appoints or clears a department's head from the bound
+    /// `departments::HeadDirectory`, with the version the dialog loaded.
+    pub async fn update_department_head(
+        &self,
+        scope: &Scope,
+        company_id: i64,
+        department_id: i64,
+        head_affiliation_id: Option<i64>,
+        version: i64,
+    ) -> std::result::Result<departments::Outcome, WriteError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("company.department.update"),
+            )
+            .await?;
+        let outcome = departments::update_head(
+            &mut tx,
+            scope,
+            company_id,
+            department_id,
+            head_affiliation_id,
+            version,
+        )
+        .await?;
+        finish(tx, matches!(outcome, departments::Outcome::Saved(_))).await?;
+        Ok(outcome)
+    }
     pub async fn delete_department(
         &self,
         scope: &Scope,

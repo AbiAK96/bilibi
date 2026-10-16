@@ -185,6 +185,8 @@ pub struct NewType {
     pub name: String,
     pub category: Option<String>,
     pub description: Option<String>,
+    /// Absent is active, the catalog's default (Bilimbi `is_active: true`).
+    pub is_active: Option<bool>,
 }
 /// What an update submits: the code never changes (Bilimbi
 /// `update_changeset`), `version` is the one the form loaded.
@@ -248,6 +250,30 @@ fn validate_category(errors: &mut Vec<FieldError>, category: &Option<String>) ->
     }
 }
 
+/// What a create would refuse before touching the catalog, for a dialog
+/// that validates as values change (Bilimbi `phx-change`); the uniqueness of
+/// the code is only known at the write. `category` is checked for department
+/// types only.
+pub fn check_new(new: &NewType, category: bool) -> Vec<FieldError> {
+    let mut errors = Vec::new();
+    validate_code(&mut errors, &new.code);
+    validate_name(&mut errors, &new.name);
+    if category {
+        validate_category(&mut errors, &new.category);
+    }
+    errors
+}
+/// What an update would refuse: the name, and for a department type whose
+/// category is submitted, that category.
+pub fn check_update(update: &TypeUpdate, category: bool) -> Vec<FieldError> {
+    let mut errors = Vec::new();
+    validate_name(&mut errors, &update.name);
+    if category && update.category.is_some() {
+        validate_category(&mut errors, &update.category);
+    }
+    errors
+}
+
 /// `code` is unique across the catalog; the check runs after the advisory
 /// lock below so two creates of one code cannot both pass.
 async fn code_taken(client: &impl GenericClient, table: &str, code: &str) -> Result<bool> {
@@ -279,10 +305,11 @@ pub async fn create_legal_entity_type(
     if !errors.is_empty() {
         return Ok(Outcome::Refused(errors));
     }
+    let is_active = new.is_active.unwrap_or(true);
     let created = tx
         .mutate(move |sql| {
             Box::pin(async move {
-                let row = sql.query_one(&format!("INSERT INTO company_legal_entity_types(code,name,description) VALUES($1,$2,$3) RETURNING {LEGAL_COLUMNS}"), &[&code,&name,&description]).await?;
+                let row = sql.query_one(&format!("INSERT INTO company_legal_entity_types(code,name,description,is_active) VALUES($1,$2,$3,$4) RETURNING {LEGAL_COLUMNS}"), &[&code,&name,&description,&is_active]).await?;
                 let created = LegalEntityType::from_row(&row);
                 let change = Change { kind: "company.legal_entity_type".into(), id: created.id, old: serde_json::Value::Null, new: created.to_json() };
                 Ok((created, vec![change]))
@@ -309,10 +336,11 @@ pub async fn create_department_type(
     if !errors.is_empty() {
         return Ok(Outcome::Refused(errors));
     }
+    let is_active = new.is_active.unwrap_or(true);
     let created = tx
         .mutate(move |sql| {
             Box::pin(async move {
-                let row = sql.query_one(&format!("INSERT INTO company_department_types(code,name,category,description) VALUES($1,$2,$3,$4) RETURNING {DEPARTMENT_COLUMNS}"), &[&code,&name,&category,&description]).await?;
+                let row = sql.query_one(&format!("INSERT INTO company_department_types(code,name,category,description,is_active) VALUES($1,$2,$3,$4,$5) RETURNING {DEPARTMENT_COLUMNS}"), &[&code,&name,&category,&description,&is_active]).await?;
                 let created = DepartmentType::from_row(&row);
                 let change = Change { kind: "company.department_type".into(), id: created.id, old: serde_json::Value::Null, new: created.to_json() };
                 Ok((created, vec![change]))

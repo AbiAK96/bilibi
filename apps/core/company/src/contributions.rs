@@ -76,6 +76,46 @@ bilibi_menu::contribute!(
         .requires(Requirement::Capability(LIST))
         .order(10)
 );
+// The two global catalogs sit under Companies, as the source's menu nests
+// them; their routes are operator pages (Bilimbi `operator: true`), which the
+// shell's menu reflects through the route's access.
+bilibi_menu::contribute!(
+    "core/company",
+    MenuItem::page(
+        "admin.company.department-type",
+        "Department Types",
+        "/companies/department-types"
+    )
+    .under("admin.company")
+    .requires(Requirement::Capability(LIST))
+    .order(10)
+);
+bilibi_menu::contribute!(
+    "core/company",
+    MenuItem::page(
+        "admin.company.legal-entity-type",
+        "Legal Entity Types",
+        "/companies/legal-entity-types"
+    )
+    .under("admin.company")
+    .requires(Requirement::Capability(LIST))
+    .order(20)
+);
+inventory::submit! {
+    Contribution::new(ROUTES, "core/company.legal_entity_types", provenance!(), &Route {
+        method: Method::Get, path: "/companies/legal-entity-types", service: "core/company.pages", operation: "legal_entity_types", access: Access::OperatorCapability(LIST), framed: true,
+    })
+}
+inventory::submit! {
+    Contribution::new(ROUTES, "core/company.department_types", provenance!(), &Route {
+        method: Method::Get, path: "/companies/department-types", service: "core/company.pages", operation: "department_types", access: Access::OperatorCapability(LIST), framed: true,
+    })
+}
+inventory::submit! {
+    Contribution::new(ROUTES, "core/company.departments", provenance!(), &Route {
+        method: Method::Get, path: "/companies/{id}/departments", service: "core/company.pages", operation: "departments", access: Access::Capability(VIEW), framed: true,
+    })
+}
 
 // The Companies catalog includes the Organisation facts. `record_types`
 // names the audit kind a company is written under, so a restriction on a
@@ -98,6 +138,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("jurisdiction", "Jurisdiction", String),
             Field::new("website", "Website", String),
             Field::new("parent_id", "Parent", Integer).hidden(),
+            Field::new("legal_entity_type_id", "Legal entity type", Integer).hidden(),
             Field::new("name", "Name", String),
             Field::choice("status", "Status", &["active", "suspended", "pending", "archived"]).protected(),
             Field::new("email", "Email", String),
@@ -110,10 +151,51 @@ static GRID: GridContribution = GridContribution {
     )
     .label_field("name")
     .time_field("created_at")
-    .record_types(&["company"])],
+    .record_types(&["company"]),
+    // A department is in the tenant through its company, so the source joins
+    // the tenant's live companies (Bilimbi `Grid.DepartmentsSource`); the
+    // head is the affiliation id, which the affiliation owner links.
+    TableDecl::new(
+        "departments",
+        "Departments",
+        LIST,
+        Source::tenant(
+            "SELECT d.id, d.company_id, d.head_affiliation_id AS head_id, d.status, t.code AS type_code, t.name AS type_name, d.created_at FROM company_departments d JOIN companies c ON c.tenant_id = d.tenant_id AND c.id = d.company_id AND c.deleted_at IS NULL LEFT JOIN company_department_types t ON t.id = d.department_type_id WHERE d.tenant_id = $1",
+        ),
+        "id",
+        &[
+            Field::new("id", "ID", Integer),
+            Field::new("type_name", "Type", String),
+            Field::new("type_code", "Type code", String),
+            Field::choice("status", "Status", &["active", "inactive", "suspended"]),
+            Field::new("created_at", "Created", DateTime),
+            Field::new("company_id", "Company", Integer).hidden(),
+            Field::new("head_id", "Head", Integer).hidden(),
+        ],
+    )
+    .label_field("type_name")
+    .time_field("created_at"),
+    // Global reference data: no tenant parameter (Bilimbi `Grid.LegalEntityTypesSource`).
+    TableDecl::new(
+        "legal_entity_types",
+        "Legal entity types",
+        LIST,
+        Source::global("SELECT id, code, name, is_active FROM company_legal_entity_types"),
+        "id",
+        &[
+            Field::new("id", "ID", Integer),
+            Field::new("code", "Code", String),
+            Field::new("name", "Name", String),
+            Field::new("is_active", "Active", Boolean),
+        ],
+    )
+    .label_field("name")],
     links: &[
         LinkDecl::on("parent", "Parent company", LinkKind::One, "companies", "parent_id", "companies", "id"),
         LinkDecl::on("children", "Subsidiaries", LinkKind::Many, "companies", "id", "companies", "parent_id"),
+        LinkDecl::on("legal_entity_type", "Legal entity type", LinkKind::One, "companies", "legal_entity_type_id", "legal_entity_types", "id"),
+        LinkDecl::on("departments", "Departments", LinkKind::Many, "companies", "id", "departments", "company_id"),
+        LinkDecl::on("company", "Company", LinkKind::One, "departments", "company_id", "companies", "id"),
     ],
 };
 bilibi_grid::contribute!("core/company", "company.grid", &GRID);

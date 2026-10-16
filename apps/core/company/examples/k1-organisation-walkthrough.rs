@@ -236,6 +236,7 @@ async fn main() -> Result<(), Error> {
                 name: "LLP".into(),
                 description: Some("Limited liability partnership".into()),
                 category: None,
+                is_active: None,
             },
         )
         .await?;
@@ -332,6 +333,7 @@ async fn main() -> Result<(), Error> {
                 code: "WT_RND".into(),
                 name: "Research".into(),
                 category: Some("operational".into()),
+                is_active: None,
                 description: None,
             },
         )
@@ -349,6 +351,7 @@ async fn main() -> Result<(), Error> {
                     code: "WT_BAD".into(),
                     name: "Bad".into(),
                     category: Some("other".into()),
+                    is_active: None,
                     description: None,
                 },
             )

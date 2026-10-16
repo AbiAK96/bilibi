@@ -1,0 +1,12 @@
+{#- Add Department (Bilimbi `DepartmentsLive` render, `department-form`):
+    changes validate, Enter or the button saves. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+<form id="department-form" data-event="validate" data-change data-submit-event="save" class="mt-4 space-y-4">
+{% call form::input(field=department_type) %}{% endcall %}
+{% call form::input(field=status) %}{% endcall %}
+<div class="mt-6 flex justify-end gap-2">
+{% call ui::button(button_type="button", event="close_modal") %}Cancel{% endcall %}
+{% call ui::button(button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, disabled=no_types) %}Add Department{% endcall %}
+</div>
+</form>

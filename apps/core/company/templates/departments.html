@@ -1,0 +1,17 @@
+{#- A company's departments (Bilimbi `DepartmentsLive` render): the header
+    carries the company code as its subtitle; the archived alert, card, dialogs
+    and confirmation are rendered by src/web/departments.rs. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "workspace.html" as workspace -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(variant=bilibi_ui::PageVariant::Detail) %}
+{% call workspace::announce(kind="core/company", record_id=company_id) %}{% endcall %}
+{% call ui::header(subtitle_html=code, actions=back) %}{{ title }}{% endcall %}
+{{ archived|safe }}
+{{ card|safe }}
+{{ modal|safe }}
+{{ confirm|safe }}
+{% endcall %}
+</div>

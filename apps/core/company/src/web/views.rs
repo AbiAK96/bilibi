@@ -12,10 +12,10 @@ use std::{
 };
 use tokio_postgres::GenericClient;
 
-fn render(value: &impl Template) -> Result<Html> {
+pub(crate) fn render(value: &impl Template) -> Result<Html> {
     Html::render(value).map_err(|_| Error::Internal)
 }
-async fn allowed(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<bool> {
+pub(crate) async fn allowed(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<bool> {
     match bilibi_authz::authorize_key(client, scope, key).await {
         Ok(()) => Ok(true),
         Err(Error::Forbidden) => Ok(false),
@@ -43,7 +43,7 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
     .collect();
     PageColumns::mount(views, "companies", columns).map_err(|_| Error::Internal)
 }
-fn badge(status: &str) -> Result<Html> {
+pub(super) fn badge(status: &str) -> Result<Html> {
     render(&Badge::status(
         match status {
             "active" => BadgeKind::Success,
@@ -430,15 +430,28 @@ fn operation_name(op: crate::lifecycle::Operation) -> (&'static str, &'static st
         Archive => ("archive", "Archive"),
     }
 }
+/// What the detail page's live state hands its view: commit outcomes, the
+/// open dialog, the notice and the Departments table arrangement.
+pub(super) struct DetailState<'a> {
+    pub statuses: &'a CommitStates,
+    pub pending: Option<&'a Pending>,
+    pub notice: &'a str,
+    pub pending_activity: Option<&'a (String, i64)>,
+    pub departments_columns: &'a mut ListColumns,
+}
 pub(super) async fn detail(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: i64,
-    statuses: &CommitStates,
-    pending: Option<&Pending>,
-    notice: &str,
-    pending_activity: Option<&(String, i64)>,
+    state: DetailState<'_>,
 ) -> Result<String> {
+    let DetailState {
+        statuses,
+        pending,
+        notice,
+        pending_activity,
+        departments_columns,
+    } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
     let editable = allowed(client, scope, crate::UPDATE).await? && !company.archived();
     let can_target = allowed(client, scope, crate::TENANT_WIDE).await?
@@ -742,6 +755,7 @@ pub(super) async fn detail(
         children_body.push(&render(&table)?);
         content.push(&card("company-subsidiaries-card", children_body, false)?);
     }
+    content.push(&departments_section(client, scope, id, departments_columns).await?);
     let modal = if let Some((activity, _)) = pending_activity {
         render(&ConfirmDialog {
             id: "company-remove-activity-dialog",
@@ -1077,9 +1091,9 @@ struct ActivityBody {
 
 #[derive(Template)]
 #[template(source = "<div class=\"{{ class }}\">{{ body }}</div>", ext = "html")]
-struct Actions<'a> {
-    class: &'a str,
-    body: Html,
+pub(super) struct Actions<'a> {
+    pub class: &'a str,
+    pub body: Html,
 }
 #[derive(Template)]
 #[template(
@@ -1105,4 +1119,116 @@ struct RecordPin {
 )]
 struct MutedValue<'a> {
     text: &'a str,
+}
+
+/// The detail page's Departments table (Bilimbi `ShowLive` section 5):
+/// built-in columns only, with Manage leading to the departments page.
+pub(super) fn department_builtins() -> Vec<BuiltinColumn> {
+    vec![
+        BuiltinColumn::new("type", "Department Type"),
+        BuiltinColumn::new("category", "Category"),
+        BuiltinColumn::new("head", "Head"),
+        BuiltinColumn::new("status", "Status"),
+    ]
+}
+#[derive(Template)]
+#[template(path = "department_section.html")]
+struct DepartmentSection {
+    heading: Html,
+    table: Html,
+}
+async fn departments_section(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    id: i64,
+    columns: &mut ListColumns,
+) -> Result<Html> {
+    let departments = crate::departments::list(
+        client,
+        scope,
+        id,
+        crate::departments::DepartmentSort::Name,
+        crate::reference_types::Direction::Asc,
+    )
+    .await?;
+    let heads = crate::departments::head_names(client, scope, &departments).await?;
+    columns.load(&departments, |department| department.id.to_string());
+    let href = format!("/companies/{id}/departments");
+    let heading = render(&SectionHeading {
+        id: "company-departments-heading",
+        title: "Departments",
+        count: Some(departments.len()),
+        actions: render(&ActionLink {
+            id: "company-departments-manage",
+            icon: "manage",
+            title: "Manage departments",
+            href: &href,
+            body: Html::text("Manage"),
+            ..ActionLink::default()
+        })?,
+        ..SectionHeading::default()
+    })?;
+    let mut rows = Vec::with_capacity(departments.len());
+    for department in &departments {
+        let key = department.id.to_string();
+        let mut row = FlexRow::new(&key);
+        row.dom_id = Some(format!("department-{key}"));
+        let head = department
+            .head_affiliation_id
+            .and_then(|head| heads.get(&head))
+            .map(String::as_str)
+            .unwrap_or("—");
+        let muted = |text: &str| {
+            Html::raw(format!(
+                "<span class=\"text-sm text-ink-subtle\">{}</span>",
+                Html::text(text)
+            ))
+        };
+        rows.push(
+            row.slot(
+                "type",
+                Html::raw(format!(
+                    "<span class=\"font-medium text-ink-strong\">{}</span>",
+                    Html::text(&department.type_name)
+                )),
+            )
+            .slot("category", muted(&department.type_category))
+            .slot("head", muted(head))
+            .slot(
+                "status",
+                render(&Badge::status(
+                    if department.status == "active" {
+                        BadgeKind::Success
+                    } else {
+                        BadgeKind::Warning
+                    },
+                    &super::reference_types::capitalize(&department.status),
+                ))?,
+            ),
+        );
+    }
+    let mut table = FlexTable::new("company-departments-table", columns.flex_columns(), rows);
+    table.event = "departments_grid";
+    table.zoom = columns.zoom;
+    table.suggestions = columns.flex_suggestions();
+    table.add_query = &columns.add_query;
+    table.caption = "Departments";
+    table.framed = false;
+    if departments.is_empty() {
+        table.empty = Some(TableEmpty::Content(Html::text(
+            "No departments configured.",
+        )));
+    }
+    render(&Card {
+        id: "company-departments-card",
+        class: "mt-6",
+        inner_class: "p-0",
+        role: "region",
+        labelledby: "company-departments-heading",
+        body: render(&DepartmentSection {
+            heading,
+            table: render(&table)?,
+        })?,
+        ..Card::default()
+    })
 }
