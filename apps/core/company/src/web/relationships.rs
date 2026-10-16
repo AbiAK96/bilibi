@@ -217,9 +217,25 @@ impl page::Page<Scope, Error> for RelationshipPages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
+            // Bilimbi titles the relationships page after its company.
+            let title = match request.operation {
+                "company" => {
+                    let id: i64 = request
+                        .path
+                        .get("id")
+                        .and_then(|v| v.parse().ok())
+                        .ok_or(Error::Invalid)?;
+                    let client = self.db.get().await?;
+                    organisation::identity(&**client, scope, id)
+                        .await?
+                        .map(|company| format!("{} — Relationships", company.display_name))
+                }
+                _ => None,
+            };
             Ok(PageBody {
                 html: body.html,
                 live: true,
+                title,
             })
         })
     }
