@@ -4,8 +4,8 @@
 `address_attachments`. Pages, panels and future headless adapters call its
 APIs; no other module reads or writes these tables. Every call refreshes the
 actor's scope and rechecks contributed `admin.address.*` capabilities; no API
-accepts a client-selected tenant. K12 adds the `/addresses` pages and the two
-owner panels on these APIs, and its menu entry with them.
+accepts a client-selected tenant. The `/addresses` pages and the two owner
+panels (`src/web/`) are built on these APIs.
 
 ## Address facts and normalization
 
@@ -81,6 +81,29 @@ the live operator tenant's primary company, its first address (primary, then
 priority, then id) and that country's Geonames name, languages and currency.
 Any missing step is `None`, never an error. Base Locale does not query Core;
 K15 passes these facts to `Locales::resolve`/`adopt_inferred`.
+
+## Pages and owner panels (K12)
+
+`src/web/` ports Bilimbi's `IndexLive`, `CreateLive`, `ShowLive` and
+`AddressesPanel`; the Addresses menu entry sits under Administration.
+
+- `/addresses`: search, sort (label, country, status) and 25/50/100-row pages
+  in the URL under `search`/`sortBy`/`sortDir`/`perPage`, built-in
+  `ListColumns` on the shared FlexTable, and delete confirmed on the listed
+  record and its version. An attached address is refused (`InUse`).
+- `/addresses/create`: the shared location fields (`src/web/location.rs`,
+  which only draws what `suggest`/`options` decide) and provenance.
+- `/addresses/{id}`: read first; text facts and the verification status
+  commit in place, the four location facts commit together through Apply
+  with the version the edit began from. Linked Entities sorts in the URL
+  (`linked_sort_by`/`linked_sort_dir`); `?company=` or `?person=` naming a
+  linked owner adds the way back. History is the shared audit embed.
+- `company.addresses` / `person.addresses` embeds: Company and Person detail
+  discover them by record kind and pass `company_id`/`person_id`. Attach,
+  Create & Attach (both owners: a Person has no employer whose addresses it
+  would borrow), kinds, primary, priority and confirmed unlink. Controls show
+  only to an owner's updater while the owner is writable; every write is
+  still refused by the service. Pages refresh on `subscribe()` changes.
 
 ## Runtime walkthrough (no unit tests)
 
