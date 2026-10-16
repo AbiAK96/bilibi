@@ -1,11 +1,25 @@
 //! Installation-locale facts from the platform operator's primary company
 //! address (Bilimbi `Address.platform_operator_locale_bootstrap/0`). Base
-//! Locale never queries Core; whoever resolves the locale (K15) asks here and
-//! passes the `Bootstrap` along.
+//! Locale never queries Core: Address binds `Source` as Locale's
+//! `BootstrapSource` at boot (K15), so every `Locales::resolve(.., None)`
+//! infers from these facts until a global locale is stored.
+use crate::AddressService;
 use bilibi_database::{Error, Result};
 use bilibi_geonames::Geonames;
-use bilibi_locale::Bootstrap;
+use bilibi_locale::{Bootstrap, BootstrapSource};
+use bilibi_tenancy::ProofFuture;
+use std::sync::Arc;
 use tokio_postgres::GenericClient;
+
+/// The bound source: reads on the Address service's own pool, since Locale
+/// asks outside any transaction and must never fail a page on a broken
+/// primary-company assignment.
+pub struct Source(pub Arc<AddressService>);
+impl BootstrapSource for Source {
+    fn bootstrap(&self) -> ProofFuture<'_, Option<Bootstrap>> {
+        Box::pin(self.0.platform_operator_bootstrap())
+    }
+}
 
 /// `None` unless a live platform-operator tenant stands on a primary company
 /// whose first address (primary, then priority, then id) has a country.

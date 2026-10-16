@@ -4,7 +4,8 @@
 //! actor, so tenant, operator and company proofs are never bypassed here.
 //!
 //! Resolution is stateless (user override → stored global → inferred from the
-//! supplied `Bootstrap` → declared default). A read never writes: inference is
+//! supplied `Bootstrap`, or from the bound `BootstrapSource` when the caller
+//! supplies none → declared default). A read never writes: inference is
 //! reported as pending until an operator-proven transaction calls
 //! `Locales::adopt_inferred`. Nothing here changes process-global locale; the
 //! request edge carries the `Resolved` value explicitly.
@@ -19,9 +20,9 @@ use bilibi_module_registry::{Module, Service};
 use bilibi_settings::{
     Definition, ScopeKind, Setting, Settings, Target, Validator, ValueType, DEFINITIONS,
 };
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio_postgres::GenericClient;
 
 pub const LOCALE_KEY: &str = "ui.locale";
@@ -63,6 +64,15 @@ impl Bootstrap {
         self.languages = Some(languages.into());
         self
     }
+}
+
+/// The owner of companies and addresses (Core Address, K11/K15) binds this
+/// once so every page's `resolve(.., None)` sees the installation facts
+/// without naming Core. It is asked only when no global locale is stored
+/// (Bilimbi `RequestContext.locale_bootstrap/0`), reads on its own
+/// connection, and answers `None` when no live operator address exists.
+pub trait BootstrapSource: Send + Sync {
+    fn bootstrap(&self) -> ProofFuture<'_, Option<Bootstrap>>;
 }
 
 /// Where the effective locale came from.
@@ -196,14 +206,30 @@ async fn lock_global(client: &(impl GenericClient + Sync)) -> Result<()> {
 
 pub struct Locales {
     settings: Arc<Settings>,
+    source: OnceLock<Arc<dyn BootstrapSource>>,
 }
 impl Locales {
     pub fn new(settings: Arc<Settings>) -> Self {
-        Self { settings }
+        Self {
+            settings,
+            source: OnceLock::new(),
+        }
+    }
+    /// One source per process, bound by the Core owner's service factory.
+    pub fn bind_bootstrap(
+        &self,
+        source: Arc<dyn BootstrapSource>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.source.set(source).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate locale bootstrap source".into(),
+            )
+        })
     }
 
     /// The locale this actor should render with. The explicit actor and the
-    /// supplied bootstrap are the only inputs; nothing is queried upward.
+    /// supplied bootstrap are the only inputs; with no bootstrap supplied the
+    /// bound source's facts stand in. Nothing is queried upward.
     pub async fn resolve(
         &self,
         client: &(impl GenericClient + Sync),
@@ -253,6 +279,17 @@ impl Locales {
                 return Ok(resolved(stored, source, country, true));
             }
         }
+        let supplied;
+        let bootstrap = match bootstrap {
+            Some(bootstrap) => Some(bootstrap),
+            None => match self.source.get() {
+                Some(source) => {
+                    supplied = source.bootstrap().await?;
+                    supplied.as_ref()
+                }
+                None => None,
+            },
+        };
         if let Some(bootstrap) = bootstrap {
             if let Some(inferred) = infer(bootstrap) {
                 return Ok(resolved(

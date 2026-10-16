@@ -278,12 +278,17 @@ inventory::submit! {
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;
-            Ok(Arc::new(AddressService {
+            let addresses = Arc::new(AddressService {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 mutations: services.get("base/database.mutations")?,
                 authentication: services.get("base/tenancy.authentication")?,
                 geonames: services.get(bilibi_geonames::SERVICE)?,
-            }))
+            });
+            // Address owns the operator's address facts, so it supplies Locale's
+            // installation bootstrap (K15) without Base naming Core.
+            services.get::<bilibi_locale::Locales>("base/locale.locales")?
+                .bind_bootstrap(Arc::new(bootstrap::Source(addresses.clone())))?;
+            Ok(addresses)
         }}, bilibi_module_registry::Service { id: web::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
