@@ -30,6 +30,8 @@ bilibi-locale = { path = "../../base/locale" }
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-grid = { path = "../../base/grid" }
 bilibi-person = { path = "../person" }
+bilibi-media = { path = "../../base/media" }
+bilibi-artifacts = { path = "../../base/artifacts" }
 
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
