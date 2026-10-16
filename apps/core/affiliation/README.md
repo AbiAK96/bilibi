@@ -107,7 +107,7 @@ repeatable records; do not run the fixture on a shared working database.
 (`Record { kind: "core/person" }`) and `company.affiliations`
 (`Record { kind: "core/company" }`), gated on `admin.affiliation.list`. Person
 detail mounts every `core/person` record embed; Company detail mounts every
-`core/company` one through `web::company_panels` (`apps/core/company/src/web/panels.rs`),
+`core/company` one through `record_panels` in `apps/core/company/src/web.rs`,
 the counterpart of Bilimbi's `<.discovered_panel key="company.employees">`.
 The host passes its own proven record ID (`id`) and a stable anchor (`panel`);
 the panel never guesses a company-to-person link and reauthorizes every read
