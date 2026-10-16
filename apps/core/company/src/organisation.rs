@@ -8,10 +8,12 @@ use crate::{
     contributions::{CREATE, TENANT_WIDE},
     Company, FieldError, WriteError, MASK,
 };
-use bilibi_authz::{authorize_key, restrictions};
+use bilibi_authz::{authorize_key, authorize_proof, decide_proof, restrictions};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
-use bilibi_tenancy::{OrganisationProvider, ProofClient, ProofFuture, Scope};
+use bilibi_tenancy::{
+    NamedOrganisation, OrganisationDirectory, OrganisationProvider, ProofClient, ProofFuture, Scope,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
@@ -169,6 +171,142 @@ impl OrganisationProvider for Provider {
                 return Err(Error::Forbidden);
             }
             Ok(())
+        })
+    }
+}
+
+/// Tenancy's naming directory (`PartyProofs::bind_directory`, K15): the
+/// companies a Base picker may offer and the target proof a Base binder asks
+/// for, on the caller's sealed connection. `in_scope` is Bilimbi
+/// `AuthzCompanyDirectory.companies_in_scope/1`; `selectable` and `target`
+/// are `Company.list_selectable_companies/2` and
+/// `authorize_company_target/3`: the operation capability now, and the
+/// actor's own company unless `admin.company.tenant-wide.manage` widens the
+/// reach to the whole tenant. Archived companies are flagged, never hidden
+/// from `in_scope`, and never offered by `selectable`: a write into one is
+/// refused anyway, and a picker must not offer what submit would reject.
+pub struct Directory;
+const NAMED_SQL: &str =
+    "SELECT id,name,legal_name,status FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL";
+fn named(row: &tokio_postgres::Row) -> Result<NamedOrganisation> {
+    let legal_name: Option<String> = row.get(2);
+    let name: String = row.get(1);
+    Ok(NamedOrganisation {
+        id: OrganisationId::new(row.get(0)).map_err(|_| Error::Internal)?,
+        name: display_name(legal_name.as_deref(), &name),
+        archived: row.get::<_, String>(3) == ARCHIVED,
+    })
+}
+async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<NamedOrganisation>> {
+    // The proof connection answers one row; a tenant's companies arrive as
+    // one JSON array of tenant-scoped rows, never as client input.
+    let rows: serde_json::Value = client
+        .query_opt(
+            "SELECT COALESCE(json_agg(json_build_object('id',id,'name',name,'legal_name',legal_name,'status',status) ORDER BY id),'[]'::json) FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL",
+            &[&scope.tenant()],
+        )
+        .await?
+        .map(|row| row.get(0))
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    let mut companies = Vec::new();
+    for row in rows.as_array().into_iter().flatten() {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or(Error::Internal)?;
+        let name = row
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(Error::Internal)?;
+        let legal_name = row.get("legal_name").and_then(serde_json::Value::as_str);
+        let status = row
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(Error::Internal)?;
+        companies.push(NamedOrganisation {
+            id: OrganisationId::new(id).map_err(|_| Error::Internal)?,
+            name: display_name(legal_name, name),
+            archived: status == ARCHIVED,
+        });
+    }
+    companies.sort_by_cached_key(|company| (company.name.to_lowercase(), company.id.get()));
+    Ok(companies)
+}
+/// Own company, or the whole tenant with the tenant-wide reach.
+async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
+    if scope
+        .actor()
+        .organisation()
+        .is_some_and(|organisation| organisation.get() == id)
+    {
+        return Ok(true);
+    }
+    Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
+}
+impl OrganisationDirectory for Directory {
+    fn in_scope<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
+        Box::pin(named_in_scope(client, scope))
+    }
+    fn selectable<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        capability: &'a str,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
+        Box::pin(async move {
+            if !decide_proof(client, scope, capability).await?.allowed {
+                return Ok(Vec::new());
+            }
+            let tenant_wide = decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+            let own = scope.actor().organisation();
+            Ok(named_in_scope(client, scope)
+                .await?
+                .into_iter()
+                .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
+                .collect())
+        })
+    }
+    fn target<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        id: OrganisationId,
+        capability: &'a str,
+    ) -> ProofFuture<'a, NamedOrganisation> {
+        Box::pin(async move {
+            authorize_proof(client, scope, capability).await?;
+            let row = client
+                .query_opt(
+                    &format!("{NAMED_SQL} AND id=$2"),
+                    &[&scope.tenant(), &id.get()],
+                )
+                .await?
+                .ok_or(Error::NotFound)?;
+            if !reaches(client, scope, id.get()).await? {
+                return Err(Error::Forbidden);
+            }
+            named(&row)
+        })
+    }
+    fn lookup<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        id: OrganisationId,
+    ) -> ProofFuture<'a, Option<NamedOrganisation>> {
+        Box::pin(async move {
+            client
+                .query_opt(
+                    &format!("{NAMED_SQL} AND id=$2"),
+                    &[&scope.tenant(), &id.get()],
+                )
+                .await?
+                .map(|row| named(&row))
+                .transpose()
         })
     }
 }

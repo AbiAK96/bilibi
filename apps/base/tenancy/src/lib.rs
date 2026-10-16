@@ -302,6 +302,57 @@ pub trait PersonProvider: Send + Sync {
         id: PersonId,
     ) -> ProofFuture<'a, ()>;
 }
+/// One organisation of the actor's tenant, named as the actor may see it.
+/// `archived` companies are listed so a picker can show them read-only, and
+/// an id here is still a request: every write reproves it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedOrganisation {
+    pub id: OrganisationId,
+    pub name: String,
+    pub archived: bool,
+}
+/// Core Company's naming half of the organisation seam (Bilimbi
+/// `Authz.CompanyDirectory` + `Company.list_selectable_companies/2` +
+/// `authorize_company_target/3`), bound beside `OrganisationProvider` so Base
+/// pickers and binders never query the `companies` table. Every method keeps
+/// to the actor's own tenant; a missing or cross-tenant id is `NotFound` and
+/// never confirms that a company exists elsewhere.
+pub trait OrganisationDirectory: Send + Sync {
+    /// Every live company of the tenant, sorted case-insensitively by the
+    /// displayed name, archived ones flagged.
+    fn in_scope<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>>;
+    /// The unarchived companies this actor may target with `capability`:
+    /// none without the capability, the actor's own company, or every company
+    /// of the tenant with Company's tenant-wide reach.
+    fn selectable<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        capability: &'a str,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>>;
+    /// One company as the target of `capability`: `Forbidden` without the
+    /// capability or the reach, `NotFound` when missing or in another tenant.
+    /// An archived company is returned flagged; the caller decides whether
+    /// the operation is a read.
+    fn target<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        id: OrganisationId,
+        capability: &'a str,
+    ) -> ProofFuture<'a, NamedOrganisation>;
+    /// A live company's name for display, `None` when missing or elsewhere.
+    fn lookup<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        id: OrganisationId,
+    ) -> ProofFuture<'a, Option<NamedOrganisation>>;
+}
 #[derive(Clone, Debug)]
 pub struct OrganisationProof {
     scope: Scope,
@@ -407,14 +458,74 @@ bilibi_menu::contribute!(
         .order(10)
 );
 
-/// Optional owner bindings. Missing Company/Person adapters always refuse proof;
-/// installing unrelated Core modules never implicitly makes targets trusted.
+/// Optional owner bindings. Missing Company/Person adapters always refuse proof
+/// and name nothing; installing unrelated Core modules never implicitly makes
+/// targets trusted.
 #[derive(Default)]
 pub struct PartyProofs {
     organisations: OnceLock<Arc<dyn OrganisationProvider>>,
     persons: OnceLock<Arc<dyn PersonProvider>>,
+    directory: OnceLock<Arc<dyn OrganisationDirectory>>,
 }
 impl PartyProofs {
+    pub fn bind_directory(
+        &self,
+        directory: Arc<dyn OrganisationDirectory>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.directory.set(directory).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate organisation directory".into(),
+            )
+        })
+    }
+    /// Listings are empty, not refused, when no Company owner is installed:
+    /// a picker then says no company is available, and nothing is trusted.
+    pub async fn organisations_in_scope(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+    ) -> Result<Vec<NamedOrganisation>> {
+        match self.directory.get() {
+            Some(directory) => directory.in_scope(client, scope).await,
+            None => Ok(Vec::new()),
+        }
+    }
+    pub async fn selectable_organisations(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        capability: &str,
+    ) -> Result<Vec<NamedOrganisation>> {
+        match self.directory.get() {
+            Some(directory) => directory.selectable(client, scope, capability).await,
+            None => Ok(Vec::new()),
+        }
+    }
+    /// A target with no directory bound is refused, like a missing provider.
+    pub async fn organisation_target(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        id: OrganisationId,
+        capability: &str,
+    ) -> Result<NamedOrganisation> {
+        self.directory
+            .get()
+            .ok_or(Error::Forbidden)?
+            .target(client, scope, id, capability)
+            .await
+    }
+    pub async fn organisation_name(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        id: OrganisationId,
+    ) -> Result<Option<NamedOrganisation>> {
+        match self.directory.get() {
+            Some(directory) => directory.lookup(client, scope, id).await,
+            None => Ok(None),
+        }
+    }
     pub fn bind_organisations(
         &self,
         provider: Arc<dyn OrganisationProvider>,

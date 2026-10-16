@@ -675,6 +675,7 @@ inventory::submit! {
                 // Tenancy and reads for the agent operations.
                 let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
+                proofs.bind_directory(Arc::new(organisation::Directory))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
                 agent_operations::bind(db.clone())?;
                 relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;

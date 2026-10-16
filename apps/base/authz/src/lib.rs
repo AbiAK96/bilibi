@@ -13,7 +13,7 @@ mod roles_web;
 pub mod vocabulary;
 mod web;
 use bilibi_database::{Error, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ProofClient, Scope};
 pub use effective::{effective_capabilities, effective_capabilities_of, Effective};
 use std::{
     collections::HashSet,
@@ -75,10 +75,7 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
         None => Decision::deny("denied_unknown_capability"),
         Some(cap) => {
             let live = client
-                .query_opt(
-                    "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
-                    &[&scope.tenant()],
-                )
+                .query_opt(LIVE_TENANT_SQL, &[&scope.tenant()])
                 .await?
                 .is_some();
             let operator = !cap.definition.platform || is_operator(client, scope.tenant()).await?;
@@ -87,26 +84,93 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
             } else if !operator {
                 Decision::deny("denied_platform_scope")
             } else {
-                let row = client.query_one("SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)",&[&scope.tenant(),&scope.user(),&key]).await?;
-                if row.get::<_, bool>(0) {
-                    Decision::deny("denied_explicitly")
-                } else if row.get::<_, bool>(1) {
-                    Decision::allow("direct_capability")
-                } else if row.get::<_, bool>(2) {
-                    Decision::allow("grant_all")
-                } else if row.get::<_, bool>(3) {
-                    Decision::allow("role_capability")
-                } else {
-                    Decision::deny("denied_missing_capability")
-                }
+                let row = client
+                    .query_one(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
+                    .await?;
+                judge(&row)
             }
         }
     };
     log(client, scope.tenant(), scope.user(), None, key, decision).await?;
     Ok(decision)
 }
+/// `decide` for an owner adapter that holds only Tenancy's sealed proof
+/// connection (`OrganisationDirectory`, Media `SubjectOwner`, Artifacts
+/// `Owner`): the same vocabulary, tenant, operator and deny-wins rules, the
+/// same decision log, on the caller's connection or transaction.
+pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<Decision> {
+    if key.is_empty() || key.len() > 200 {
+        return Err(Error::Invalid);
+    }
+    let decision = match vocabulary()?.capabilities.get(key) {
+        None => Decision::deny("denied_unknown_capability"),
+        Some(cap) => {
+            let live = client
+                .query_opt(LIVE_TENANT_SQL, &[&scope.tenant()])
+                .await?
+                .is_some();
+            let operator = !cap.definition.platform
+                || client
+                    .query_opt(OPERATOR_SQL, &[&scope.tenant()])
+                    .await?
+                    .is_some();
+            if !live {
+                Decision::deny("denied_invalid_actor_context")
+            } else if !operator {
+                Decision::deny("denied_platform_scope")
+            } else {
+                let row = client
+                    .query_opt(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
+                    .await?
+                    .ok_or(Error::Internal)?;
+                judge(&row)
+            }
+        }
+    };
+    let kind = "user";
+    let principal: Option<&str> = None;
+    client
+        .query_opt(
+            LOG_RETURNING_SQL,
+            &[
+                &scope.tenant(),
+                &scope.user(),
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
+    Ok(decision)
+}
+/// `authorize_key` on a sealed proof connection.
+pub async fn authorize_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<()> {
+    decide_proof(client, scope, key).await?.require()
+}
+const LIVE_TENANT_SQL: &str =
+    "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL";
+const OPERATOR_SQL: &str = "SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL";
+const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
+const LOG_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)";
+const LOG_RETURNING_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id";
+/// Deny wins over every allow; an allow names the grant that carried it.
+fn judge(row: &tokio_postgres::Row) -> Decision {
+    if row.get::<_, bool>(0) {
+        Decision::deny("denied_explicitly")
+    } else if row.get::<_, bool>(1) {
+        Decision::allow("direct_capability")
+    } else if row.get::<_, bool>(2) {
+        Decision::allow("grant_all")
+    } else if row.get::<_, bool>(3) {
+        Decision::allow("role_capability")
+    } else {
+        Decision::deny("denied_missing_capability")
+    }
+}
 pub(crate) async fn is_operator(client: &impl GenericClient, tenant: i64) -> Result<bool> {
-    Ok(client.query_opt("SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL",&[&tenant]).await?.is_some())
+    Ok(client.query_opt(OPERATOR_SQL, &[&tenant]).await?.is_some())
 }
 async fn log(
     client: &impl GenericClient,
@@ -117,7 +181,20 @@ async fn log(
     decision: Decision,
 ) -> Result<()> {
     let kind = if user == 0 { "system" } else { "user" };
-    client.execute("INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)",&[&tenant,&user,&key,&decision.allowed,&decision.reason,&kind,&principal]).await?;
+    client
+        .execute(
+            LOG_SQL,
+            &[
+                &tenant,
+                &user,
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
     Ok(())
 }
 /// Trusted worker identity; not deserializable or usable as a user scope. It
