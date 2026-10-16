@@ -235,6 +235,34 @@ The header carries the record-history panel (`audit.record-history`, kind
 `user`) and the pin control. Every command re-proves the actor, authorizes
 inside its `MutationTransaction`, and is audited as kind `user`.
 
+The tenant-wide `/users` index is `core/user_administration` (K13); Core
+User contributes the `admin.user` menu entry to it and the `users` Grid table
+(links `company` and `person`, inbound `users` and `accounts`), as Bilimbi's
+Core User does.
+
+## Account panels (K13; `src/panels/`)
+
+Core User mounts four embeds by id on other owners' pages, as Bilimbi's
+`company.users`, `employee.accounts`, `dashboard.users` and `dashboard.people`
+do; the host page never names this module. Each read is one tenant-scoped
+statement over `users` and proves the embed's capability again.
+
+- `company.users` (record panel, kind `core/company`, `admin.company.view`):
+  the accounts signing in under the company on the shared FlexTable
+  (name, email, verified), searched, sorted and paged in the panel's own
+  state. Read-only, as Bilimbi's.
+- `person.accounts` (record panel, kind `core/person`, `admin.user.view`):
+  the accounts that sign in as the Person, the company each signs in under
+  and its verification. Under `admin.user.update` and while the Person is
+  current, a select links an unlinked account (`link_person`) and each row
+  unlinks behind the shared confirm dialog (`unlink`), the same binder
+  commands the account page uses; the outcome is the panel's own notice.
+- `dashboard.users` (entry `base-dashboard-user-stats`): the Users stat
+  strip, total/verified/pending. `dashboard.people` (section `recent-users`):
+  the first five accounts on the FlexTable with "All users". Both are offered
+  by `admin.user.list` and read once per refresh period; without the
+  capability they show an em dash and read nothing.
+
 ## Audit
 
 Credential writes are audited as kind `user` with marker values
