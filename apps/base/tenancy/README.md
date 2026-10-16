@@ -8,7 +8,9 @@ Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. R
 
 `prove_operator` returns a sealed proof only when the live scope tenant is explicitly recorded in the singleton `platform_operator` table. Numeric tenant IDs and `grant_all` have no operator meaning. Migration `005-tenancy-operator` leaves the marker unset; K17 owns bootstrap. Operator proof establishes identity, not a permission grant: use Authz `authorize_operator` for an operation that requires both. The migration does not replay the historical tenancy schema in `001-base`.
 
-Named system principals, impersonation and delegated job rehydration require the corresponding P6/Q2/K14 owner adapters; an unverified worker or system identity cannot construct an authenticated Scope through this API.
+Named system principals and delegated job rehydration require the corresponding P6/Q2 owner adapters; an unverified worker or system identity cannot construct an authenticated Scope through this API.
+
+Impersonation (K14): `authenticate_session` takes the operator the durable session row names (`sessions.impersonator_id`) and re-proves that account live in the same tenant beside the actor; `Scope::impersonator()` then carries it, and `mutation_context` and Audit's `Attribution::from_scope` record the actor/impersonator pair. To refresh a scope an edge already sealed, call `Authentication::reprove(client, scope)`, not `authenticate(tenant, user, csrf)`: the latter drops the operator (and the agent facet), so the owner's writes would lose half the audit pair. Self-service writes of the account's own preferences, pins, credentials re-proof and agent connections refuse a scope with an impersonator.
 
 ## Tenant administration and `/tenancy/tenants`
 

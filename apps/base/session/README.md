@@ -28,6 +28,17 @@ so a change applies to the next request. The throttle never exceeds half the
 lifetime (`Policy::from_minutes`). The 24-hour absolute expiry set at sign-in
 remains.
 
+## Impersonation
+
+`sessions.impersonator_id` names the operator behind an impersonated session
+(migration `002-impersonation`; Core User adds the scoped account key).
+`check`/`activity` pass it to Tenancy, which re-proves it and seals it on the
+Scope. `switch(sql, token, tenant, from, to)` moves a still-valid session from
+one `Holder` to another inside the caller's transaction and rotates its CSRF
+secret; a session that no longer holds `from` is `Conflict`. A switch is not
+announced as a termination. `end_user_sessions` also ends the sessions a user
+holds as an impersonating operator.
+
 ## Listing
 
 `/system/sessions` needs the platform operator identity and

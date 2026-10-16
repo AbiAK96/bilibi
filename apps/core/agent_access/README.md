@@ -44,8 +44,8 @@ compare a credential yourself.
   self-reported and grants no authority.
 - `list_connections` and `revoke` are the person's own connections only.
   Bilimbi refuses impersonated sessions and agent facets there. The one gate
-  `self_service` refuses a scope carrying the agent facet (`access_denied`);
-  K14 adds impersonation there.
+  `self_service` refuses a scope carrying the agent facet or an impersonating
+  operator (`access_denied`).
 - Operator-registered MCP clients live in `agent_access.oauth_clients`: client
   IDs mapped to a name and exact HTTPS `redirect_uris` (`src/oauth_client.rs`
   validates the setting and each request). PKCE S256 and the resource are
@@ -76,7 +76,7 @@ The pages render instants through `templates/datetime.html`, the Bilimbi
 `<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in
 `base/ui` once the shell's display-mode control and `DateTime` hook land (P10,
 C5). The flash outlet renders inside each page until the shared shell owns it.
-Agent facets (and, after K14, impersonation) are refused by `self_service` in
+Agent facets and impersonation are refused by `self_service` in
 `src/lib.rs`, not by the pages.
 
 ## Injected identity

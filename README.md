@@ -252,7 +252,7 @@ cargo build --workspace --release --locked
 Other business modules, user/role administration, registration, the password
 reset, forgot-password and verification pages (their services exist, see
 `apps/core/user/README.md`),
-saved column layouts, tiling, settings, impersonation, audit and decision-log
+saved column layouts, tiling, settings, audit and decision-log
 screens, distributed notification fan-out, production login throttling and
 operational hardening. Broadcasts are process-local; use one app process for this
 slice. A reconnect/periodic refresh reads durable notification counts. This

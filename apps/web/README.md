@@ -22,7 +22,10 @@ proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
 Other methods also require the configured Origin and, for an authenticated
-scope, `X-CSRF-Token`. Owners must reauthorize mutations inside their transaction.
+scope, `X-CSRF-Token`. The secret rotates when the session switches identity
+(impersonation), so a request from a page rendered before the switch is refused;
+the live socket likewise binds the identity and secret it was opened under
+(`live::Identity`) and reloads its page, without acting, once they differ. Owners must reauthorize mutations inside their transaction.
 The adapter receives the operation, proven optional scope, path/query values,
 bounded request body and presentation flag. HTML escaping belongs to the owner.
 

@@ -40,7 +40,8 @@ at a call site, and name non-secret fields differently.
 behind an impersonated session and must be a user; a `system` principal with a
 non-zero id becomes `system/0` plus `system_principal`. Any other kind, or a
 non-numeric user/agent id, is refused. `Attribution::from_scope` is the sealed
-session identity; K14/Q2 supply impersonation and job rehydration contexts.
+session identity, operator included under impersonation (K14); Q2 supplies job
+rehydration contexts.
 The committed action row carries `event = Context::action`, so name actions as
 `owner.operation` (`company.update`), the way Bilimbi names explicit actions.
 

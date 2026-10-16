@@ -65,8 +65,24 @@ Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`),
 a 422 `{error}` for a refused value. The shell renders the account's theme
 (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and
 `/settings/appearance` (`src/appearance.rs`) is the same three choices as a
-live form. Impersonation is not ported; when it lands it must refuse these
-writes for the account being viewed, as Bilimbi does.
+live form. An impersonated session reads the viewed account's choices but
+`PreferenceError::Impersonating` refuses every write (the shell answers 403
+`{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
+
+## Impersonation (K14; `src/impersonation.rs`)
+
+`UserService::impersonate` and `leave_impersonation` are Bilimbi's
+`BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and
+`/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs
+`admin.user.impersonate`, a session that is not already impersonating, another
+account, and a target whose `identity::standing` is live (an archived company is
+refused). Each switch is one transaction through `Sessions::switch`: the session
+must still hold the identity the request came from, its CSRF secret rotates, and
+the retained `impersonation.started`/`impersonation.stopped` action (operator as
+actor, target as subject, Bilimbi's payload) commits with it, so a trail that
+cannot be written refuses the switch. A return that cannot be made ends the
+session instead of trapping the operator. Every authentication re-proves both
+accounts, so removing or freezing either ends the borrowed session.
 
 ## Token storage
 
@@ -273,8 +289,7 @@ the token.
 ## Known gaps
 
 No throttle exists on guessing a password at login. Authorization of the link
-commands is tenant-scoped (K15); impersonation (K14) must re-prove standing
-through `identity::standing` as sign-in does.
+commands is tenant-scoped (K15).
 
 ## Walkthrough
 
