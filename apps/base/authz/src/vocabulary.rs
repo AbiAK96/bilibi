@@ -122,6 +122,11 @@ impl Vocabulary {
                 {
                     return Err(invalid(format!("conflicting system role {}", role.code)));
                 }
+                // Other modules extend built-in roles with capabilities. Their
+                // catalog order must not replace Authz's canonical metadata.
+                if entry.provenance.module == "base/authz" && entry.id == "authz.builtin" {
+                    existing.definition = *role;
+                }
                 existing
                     .capabilities
                     .extend(role.capabilities.iter().copied());
