@@ -528,7 +528,7 @@
     event.preventDefault();
     if (form.hasAttribute('data-change') && !form.dataset.submitEvent) return sendChange(form);
     const values = formValues(form);
-    const target = form.dataset.target || 'page';
+    const target = ownerTarget(form);
     const source = event.submitter || form;
     const type = form.dataset.submitEvent || form.dataset.event;
     if (type === 'params') {
@@ -549,6 +549,13 @@
   // twice within 500ms are sent once.
   const changeTimers = new WeakMap();
   const changeSent = new WeakMap();
+  // A control inside a mounted panel names no data-target of its own: the
+  // panel's root carries it, as for bilibi:event below.
+  function ownerTarget(el) {
+    if (el.dataset.target) return el.dataset.target;
+    const owner = el.parentElement && el.parentElement.closest('[data-target]');
+    return owner ? owner.dataset.target : 'page';
+  }
   function sendChange(form) {
     clearTimeout(changeTimers.get(form));
     const type = form.dataset.event;
@@ -558,7 +565,7 @@
     if (last && last.key === key && performance.now() - last.at < 500) return;
     changeSent.set(form, {key, at: performance.now()});
     if (type === 'params') enqueue({type: 'params', params: values}, {source: form, loading: true});
-    else enqueue({type: 'event', target: form.dataset.target || 'page', payload: {type, ...values}}, {source: form});
+    else enqueue({type: 'event', target: ownerTarget(form), payload: {type, ...values}}, {source: form});
   }
   for (const kind of ['input', 'change']) {
     document.addEventListener(kind, (event) => {
@@ -578,7 +585,8 @@
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-event]');
     if (!button || button.disabled) return;
-    const {event: type, target, field, delta} = button.dataset;
+    const {event: type, field, delta} = button.dataset;
+    const target = ownerTarget(button);
     // `page` with data-delta is the relative pager; with data-page it carries
     // the absolute page as an ordinary value.
     const relative = type === 'page' && delta !== undefined;
@@ -591,7 +599,7 @@
       }
       if (button.name) payload[button.name] = button.value;
     }
-    enqueue({type: 'event', target: target || 'page', payload}, {source: button});
+    enqueue({type: 'event', target, payload}, {source: button});
   });
 
   // Back and Forward remount the historical URL, except within a page that
