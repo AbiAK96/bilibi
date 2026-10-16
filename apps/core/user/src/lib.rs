@@ -8,6 +8,7 @@ mod directory;
 pub mod identity;
 mod inbox;
 pub mod notifications;
+mod panels;
 pub mod password;
 mod preferences;
 mod query_ui;

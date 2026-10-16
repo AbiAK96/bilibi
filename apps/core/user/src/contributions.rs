@@ -139,6 +139,74 @@ inventory::submit! {
     })
 }
 
+// The account panels other owners' pages mount by embed id (`crate::panels`;
+// Bilimbi `company.users`, `employee.accounts`, `dashboard.users`,
+// `dashboard.people`). A record panel's access is the host route's gate for
+// the company one (read-only, as Bilimbi's) and `admin.user.view` for the
+// Person one, whose link controls then prove `admin.user.update` per write.
+// The dashboard embeds stay signed-in only: the entry's capability offers the
+// widget and the panel shows an em dash without it (see `base/dashboard`).
+macro_rules! embed {
+    ($id:literal, $slot:literal, $context:expr, $operation:literal, $access:expr) => {
+        inventory::submit! {
+            Contribution::new(EMBEDS, $id, Provenance { module: "core/user", source: file!(), line: line!() }, &Embed {
+                slot: $slot, context: $context, service: "core/user.pages", operation: $operation, access: $access,
+            })
+        }
+    };
+}
+embed!(
+    "user.company-users",
+    "company.users",
+    EmbedContext::Record {
+        kind: "core/company"
+    },
+    "company_users",
+    Access::Capability(bilibi_company::VIEW)
+);
+embed!(
+    "user.person-accounts",
+    "person.accounts",
+    EmbedContext::Record {
+        kind: "core/person"
+    },
+    "person_accounts",
+    Access::Capability(VIEW)
+);
+embed!(
+    "user.dashboard-users",
+    "dashboard.users",
+    EmbedContext::Dashboard,
+    "dashboard_users",
+    Access::SignedIn
+);
+embed!(
+    "user.dashboard-people",
+    "dashboard.people",
+    EmbedContext::Dashboard,
+    "dashboard_people",
+    Access::SignedIn
+);
+bilibi_dashboard::contribute!(
+    "core/user",
+    bilibi_dashboard::Widget::new("base-dashboard-user-stats", "Users", "user.dashboard-users")
+        .order(20)
+        .requires(LIST)
+        .refresh(60_000)
+);
+bilibi_dashboard::contribute!(
+    "core/user",
+    bilibi_dashboard::Widget::new(
+        "recent-users",
+        "People in this workspace",
+        "user.dashboard-people"
+    )
+    .section()
+    .order(20)
+    .requires(LIST)
+    .refresh(60_000)
+);
+
 // The top-bar bell. Web renders and mounts every `EmbedContext::Shell`
 // contribution itself, keyed by the slot's element id (`app-notifications`).
 inventory::submit! {

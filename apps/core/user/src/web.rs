@@ -165,6 +165,21 @@ impl Pages {
             _ => return Ok(None),
         }))
     }
+    /// The panels other owners' pages mount by embed id (`crate::panels`).
+    fn panel_state(
+        &self,
+        request: &PageRequest<'_, Scope>,
+    ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>, Error> {
+        Ok(Some(match request.operation {
+            "company_users" => Box::new(crate::panels::CompanyUsers::new(self.clone(), request)?),
+            "person_accounts" => {
+                Box::new(crate::panels::PersonAccounts::new(self.clone(), request)?)
+            }
+            "dashboard_users" => Box::new(crate::panels::Stats::new(self.clone(), request)?),
+            "dashboard_people" => Box::new(crate::panels::People::new(self.clone(), request)?),
+            _ => return Ok(None),
+        }))
+    }
 }
 
 impl Page<Scope, Error> for Pages {
@@ -226,6 +241,10 @@ impl Page<Scope, Error> for Pages {
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
             if let Some(state) = self.account_state(&request)? {
+                request.scope.ok_or(Error::Unauthorized)?;
+                return Ok(Some(state));
+            }
+            if let Some(state) = self.panel_state(&request)? {
                 request.scope.ok_or(Error::Unauthorized)?;
                 return Ok(Some(state));
             }
