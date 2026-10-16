@@ -57,8 +57,21 @@ impl Person {
         }
         self
     }
-    pub(crate) fn json(&self) -> serde_json::Value {
-        serde_json::to_value(self).expect("Person read model serializes")
+    /// The headless and audit shape: instants as RFC 3339 UTC strings, as
+    /// Affiliation's read model gives them, never serde's raw epoch pairs.
+    pub fn json(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).expect("Person read model serializes");
+        for (key, instant) in [
+            ("created_at", Some(self.created_at)),
+            ("updated_at", Some(self.updated_at)),
+            ("retired_at", self.retired_at),
+        ] {
+            value[key] = match instant.and_then(|t| jiff::Timestamp::try_from(t).ok()) {
+                Some(stamp) => serde_json::Value::String(stamp.to_string()),
+                None => serde_json::Value::Null,
+            };
+        }
+        value
     }
 }
 
