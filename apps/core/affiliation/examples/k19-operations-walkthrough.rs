@@ -57,8 +57,8 @@ async fn main() -> Result<(), Failure> {
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let people = app.services.get::<PersonService>(bilibi_person::SERVICE)?;
     let password = bilibi_web::seed::DEMO_PASSWORD;
-    let manager_login = app.user.login(1, "manager@example.test", password).await?;
-    let viewer_login = app.user.login(1, "viewer@example.test", password).await?;
+    let manager_login = app.user.login("manager@example.test", password).await?;
+    let viewer_login = app.user.login("viewer@example.test", password).await?;
     let manager = app.security.guard(&manager_login.token).await?;
     let viewer = app.security.guard(&viewer_login.token).await?;
     let client = db.get().await?;
