@@ -232,7 +232,7 @@ async fn dispatch(
     if framed && !bound.route.framed {
         return Err(Error::Forbidden.into());
     }
-    let page = bound
+    let rendered = bound
         .page
         .0
         .render(PageRequest {
@@ -243,7 +243,16 @@ async fn dispatch(
             body: &body,
             framed,
         })
-        .await?;
+        .await;
+    let page = match rendered {
+        Err(Error::NotFound) if bound.route.method == Method::Get => {
+            return match crate::auth::missing_record_redirect(&app, bound.route.path) {
+                Some(response) => Ok(response),
+                None => Err(Error::NotFound.into()),
+            }
+        }
+        page => page?,
+    };
     if let Some(destination) = bound.page.0.redirect(bound.route.operation) {
         return Ok(axum::response::Redirect::to(destination).into_response());
     }
@@ -269,7 +278,27 @@ async fn dispatch(
         .as_deref()
         .or_else(|| bound.page.0.title(bound.route.operation))
         .unwrap_or("Bilibi");
-    let mut response = crate::document_themed(title, &shell.html, shell.theme)?.into_response();
+    // A missing record elsewhere sent the visitor here with its message.
+    let waiting = crate::auth::missing_record_flash(&headers).filter(|_| !framed);
+    let html = match waiting {
+        Some(message) => format!(
+            "{}{}",
+            shell.html,
+            bilibi_ui::Html::render(&bilibi_ui::FlashGroup {
+                id: "flash-redirect",
+                flash: bilibi_ui::FlashMap {
+                    error: message,
+                    ..bilibi_ui::FlashMap::default()
+                },
+            })
+            .map_err(|_| Error::Internal)?
+        ),
+        None => shell.html,
+    };
+    let mut response = crate::document_themed(title, &html, shell.theme)?.into_response();
+    if waiting.is_some() {
+        crate::auth::clear_flash(&mut response);
+    }
     if framed {
         response.headers_mut().insert(
             header::HeaderName::from_static("x-bilibi-framed"),

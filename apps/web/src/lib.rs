@@ -1,6 +1,7 @@
 //! Axum host: routes, cookie/Origin boundary, and one server-held page per socket.
 mod api;
 mod auth;
+mod errors;
 mod live;
 mod mcp;
 mod media;
@@ -277,6 +278,7 @@ pub fn router(app: App) -> Router {
             }),
         )
         .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
@@ -325,7 +327,9 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
     response
 }
 
-struct HttpError(Error);
+/// A failed request. API clients read the status and text; `errors::pages`
+/// turns the same response into an error page for browsers.
+struct HttpError(Error, Option<std::sync::Arc<errors::Failure>>);
 /// The cause of a server-side `HttpError`, for `response_headers` to log.
 #[derive(Clone)]
 struct Failure(String);
@@ -338,24 +342,20 @@ pub(crate) fn server_fault(error: &Error) -> bool {
 }
 impl From<Error> for HttpError {
     fn from(error: Error) -> Self {
-        Self(error)
+        let failure = errors::Failure::capture(&error);
+        Self(error, failure)
     }
 }
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        let status = match self.0 {
-            Error::Unauthorized => StatusCode::UNAUTHORIZED,
-            Error::Forbidden => StatusCode::FORBIDDEN,
-            Error::NotFound => StatusCode::NOT_FOUND,
-            Error::Invalid => StatusCode::BAD_REQUEST,
-            Error::Conflict => StatusCode::CONFLICT,
-            _ => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        let mut response = (status, self.0.to_string()).into_response();
+        let mut response = (errors::status_of(&self.0), self.0.to_string()).into_response();
         if server_fault(&self.0) {
             response
                 .extensions_mut()
                 .insert(Failure(format!("{:?}", self.0)));
+        }
+        if let Some(failure) = self.1 {
+            response.extensions_mut().insert(failure);
         }
         response
     }

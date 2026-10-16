@@ -37,8 +37,44 @@ pub const FLASH_RESET: &str = "reset";
 pub const FLASH_EXPIRED: &str = "expired";
 const FLASH_KEYS: [&str; 2] = [FLASH_RESET, FLASH_EXPIRED];
 
+/// Record pages whose missing record sends the visitor back to the list with
+/// an error flash, as Bilimbi's `put_flash` + `push_navigate` do:
+/// (flash key, record route, list route, message). A route not listed here
+/// answers its missing record with the 404 page.
+const MISSING_RECORDS: [(&str, &str, &str, &str); 2] = [
+    (
+        "exchange-missing",
+        "/system/api-exchanges/{id}",
+        "/system/api-exchanges",
+        "Exchange unavailable: not_found.",
+    ),
+    (
+        "role-missing",
+        "/authz/roles/{id}",
+        "/authz/roles",
+        "That role does not exist in this tenant.",
+    ),
+];
+
+/// The redirect for a missing record of `route`, when it has a list to return to.
+pub fn missing_record_redirect(app: &App, route: &str) -> Option<Response> {
+    let (key, _, list, _) = MISSING_RECORDS.iter().find(|row| row.1 == route)?;
+    let mut response = Redirect::to(list).into_response();
+    set_flash(app, &mut response, key);
+    Some(response)
+}
+
+/// The message waiting for this visitor from a missing-record redirect.
+pub fn missing_record_flash(headers: &HeaderMap) -> Option<&'static str> {
+    let value = cookie(headers, FLASH_COOKIE)?;
+    MISSING_RECORDS
+        .iter()
+        .find(|row| row.0 == value)
+        .map(|row| row.3)
+}
+
 pub fn set_flash(app: &App, response: &mut Response, key: &'static str) {
-    debug_assert!(FLASH_KEYS.contains(&key));
+    debug_assert!(FLASH_KEYS.contains(&key) || MISSING_RECORDS.iter().any(|row| row.0 == key));
     let cookie = format!(
         "{FLASH_COOKIE}={key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=60{}",
         secure(app)
@@ -47,7 +83,7 @@ pub fn set_flash(app: &App, response: &mut Response, key: &'static str) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
 }
-fn clear_flash(response: &mut Response) {
+pub fn clear_flash(response: &mut Response) {
     response.headers_mut().append(
         header::SET_COOKIE,
         HeaderValue::from_static("bilibi_flash=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),

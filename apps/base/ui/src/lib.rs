@@ -11,6 +11,7 @@ extern crate self as bilibi_ui;
 
 mod auth;
 pub mod components;
+mod error_page;
 mod feedback;
 mod feedback_specimen;
 pub mod flex_sample;
@@ -42,6 +43,9 @@ pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
     Fact, Facts, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
     SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
+};
+pub use error_page::{
+    copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,
 };
 pub use feedback::{
     Alert, ConfirmDialog, ConnectionBanners, Flash, FlashGroup, FlashMap, Modal, ModalWidth,

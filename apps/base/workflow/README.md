@@ -438,7 +438,9 @@ generic action, pending-work and history adapter ported from Bilimbi's
   `Conflict` is "This record changed. Refresh the page and try again.", a
   `Forbidden` is "Your role does not allow this action.", an entry no longer in
   the rendered list is "That action is no longer available. Refresh the page.",
-  and a `NotFound`/unregistered subject is "This record is not available."
+  a `NotFound` subject is "This record is not available.", and an
+  unregistered subject kind is Bilimbi's generic "Workflow could not complete
+  the request. Refresh the page and review the record."
   Only `Unauthorized` propagates, so the host clears the page.
 - Two submissions of one rendering (a double-click, a resend after a reconnect)
   carry the same key: the second replays the first result and the owner effect
@@ -449,7 +451,7 @@ generic action, pending-work and history adapter ported from Bilimbi's
 The route requires `admin.reference.record.approve`, which this module declares
 and grants to no system role; the seeded admin holds it through grant-all. The
 `reference.record` subject is contributed only by the fixture executables, so
-a production install shows "This record is not available." there; do not turn
+a production install shows the generic "Workflow could not complete the request. Refresh the page and review the record." there; do not turn
 the page into a generic workflow administration product.
 
 To run the page against the disposable reference owner, in a fresh disposable

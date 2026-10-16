@@ -16,7 +16,8 @@
 //! The route requires `admin.reference.record.approve`, which this module
 //! declares and grants to no system role. The `reference.record` subject is
 //! contributed only by the disposable fixture executables (see README), so a
-//! production install answers "This record is not available." here.
+//! production install answers Bilimbi's generic "Workflow could not complete
+//! the request. Refresh the page and review the record." here.
 use crate::{
     history::Fact,
     pending::{PendingEntry, PendingQuery},
@@ -80,10 +81,11 @@ impl Failure {
         }
     }
     /// A kernel refusal while loading the record. An unregistered subject
-    /// kind (`Invalid`) is the production answer, so it reads as not available.
+    /// kind (`Invalid`) is the production answer, and Bilimbi words it with
+    /// its generic copy rather than "not available", so it is `Other`.
     fn on_load(error: &Error) -> Self {
         match error {
-            Error::NotFound | Error::Invalid => Self::SubjectNotFound,
+            Error::NotFound => Self::SubjectNotFound,
             Error::Forbidden => Self::MissingCapability,
             _ => Self::Other,
         }

@@ -17,6 +17,10 @@ ROUTE_ID = "bilibi-local-route"
 TLS_POLICY_ID = "bilibi-local-tls-policy"
 CERT_ID = "bilibi-local-certificate"
 CERT_TAG = "bilibi-local-certificate"
+ERROR_ROUTE_ID = "bilibi-local-error-route"
+WAITING_PAGE = Path(__file__).resolve().with_name("waiting-page.html")
+# What reverse_proxy reports when the backend refuses, resets or times out.
+BACKEND_DOWN = "[502, 503, 504]"
 
 
 class ApiError(RuntimeError):
@@ -112,6 +116,46 @@ def choose_port(server, host, requested_port):
     if port > 65535:
         raise RuntimeError("No free backend port is available for Bilibi.")
     return port
+
+
+def waiting_route(host):
+    """Caddy's error route: a branded page while the proxy is up and Bilibi is not.
+
+    The page rides in the config itself because Caddy may not be able to read
+    this checkout. static_response expands {placeholders} in its body, so every
+    brace in the page is escaped. X-Bilibi-Waiting lets the page tell its own
+    answer from the app's when it polls for the backend to return.
+    """
+    body = WAITING_PAGE.read_text().replace("{", "\\{")
+    return {
+        "@id": ERROR_ROUTE_ID,
+        "match": [{
+            "host": [host],
+            "expression": "{http.error.status_code} in " + BACKEND_DOWN,
+        }],
+        "handle": [{
+            "handler": "static_response",
+            "status_code": 503,
+            "headers": {
+                "Content-Type": ["text/html; charset=utf-8"],
+                "Cache-Control": ["no-store"],
+                "Retry-After": ["3"],
+                "X-Bilibi-Waiting": ["1"],
+            },
+            "body": body,
+        }],
+        "terminal": True,
+    }
+
+
+def install_waiting_route(server_path, server, host):
+    route = waiting_route(host)
+    if get_id(ERROR_ROUTE_ID) is not None:
+        request("PATCH", "/id/" + quote(ERROR_ROUTE_ID, safe=""), route)
+    elif server.get("errors"):
+        request("POST", server_path + "/errors/routes", route)
+    else:
+        request("PUT", server_path + "/errors", {"routes": [route]})
 
 
 def allowed_clients():
@@ -237,6 +281,7 @@ def main():
         request("POST", server_path + "/routes", route_config)
     else:
         request("PATCH", "/id/" + quote(ROUTE_ID, safe=""), route_config)
+    install_waiting_route(server_path, server, host)
     print(port)
 
 
