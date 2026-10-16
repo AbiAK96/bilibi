@@ -1772,6 +1772,7 @@ impl LiveState<Scope, Error> for Detail {
                         // `push_navigate` does.
                         return Ok(LiveBody {
                             redirect: Some("/users".into()),
+                            flash: self.flash.take(),
                             ..LiveBody::default()
                         });
                     }

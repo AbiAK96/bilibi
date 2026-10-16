@@ -5,6 +5,7 @@ use crate::{
 };
 use bilibi_ui::{
     BackLink, Button, ButtonVariant, Field, Header, InputKind, PageVariant, RestrictedField,
+    StatusKind,
 };
 
 #[derive(Template)]
@@ -163,6 +164,9 @@ impl Create {
             .to_string(),
             notice: self.notice.clone(),
             redirect: self.created.map(|id| format!("/persons/{}", id.get())),
+            flash: self
+                .created
+                .map(|_| (StatusKind::Success, "Contact created.".into())),
             ..LiveBody::default()
         })
     }

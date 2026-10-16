@@ -217,7 +217,13 @@ impl Setup {
                     return Ok(None);
                 };
                 match self.company.designate_operator_company(scope, id).await {
-                    Ok(_) => return Ok(Some(format!("/companies/{id}"))),
+                    Ok(_) => {
+                        self.flash.put(
+                            StatusKind::Success,
+                            "Platform-operator primary company designated successfully.",
+                        );
+                        return Ok(Some(format!("/companies/{id}")));
+                    }
                     Err(WriteError::Access(Error::Unauthorized)) => {
                         return Err(Error::Unauthorized)
                     }
@@ -272,7 +278,11 @@ impl Setup {
                 };
                 match self.company.create_operator_company(scope, &new).await {
                     Ok(CreateOutcome::Created(company)) => {
-                        return Ok(Some(format!("/companies/{}", company.id)))
+                        self.flash.put(
+                            StatusKind::Success,
+                            "Platform-operator primary company created successfully.",
+                        );
+                        return Ok(Some(format!("/companies/{}", company.id)));
                     }
                     Ok(CreateOutcome::Refused(errors)) => self.errors = errors,
                     Err(WriteError::Access(Error::Unauthorized)) => {
@@ -303,6 +313,7 @@ impl LiveState<Scope, Error> for Setup {
                     if let Some(url) = self.event(request.scope, value).await? {
                         return Ok(LiveBody {
                             redirect: Some(url),
+                            flash: self.flash.take(),
                             ..LiveBody::default()
                         });
                     }

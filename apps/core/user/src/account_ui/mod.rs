@@ -38,6 +38,10 @@ impl Flash {
     pub fn clear(&mut self) {
         self.0 = None;
     }
+    /// The message for the page a redirect lands on (`LiveBody.flash`).
+    pub fn take(&mut self) -> Option<(StatusKind, String)> {
+        self.0.take()
+    }
     /// The browser dismissed the message of this kind.
     pub fn dismiss(&mut self, key: Option<&str>) {
         if self

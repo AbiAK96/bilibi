@@ -29,7 +29,7 @@ use bilibi_ui::{
     params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
     ColumnsOutcome, CreateButton, Fact, Facts, Field, FilterToolbar, FlashGroup, FlashMap, FlexRow,
     FlexTable, Header, Html, IconButton, IconContext, InputKind, ListColumns, ListSpec, ListState,
-    PageCounts, PageVariant, Pagination, RowMode, SectionHeading, SortDir, TableEmpty,
+    PageCounts, PageVariant, Pagination, RowMode, SectionHeading, SortDir, StatusKind, TableEmpty,
     ToolbarControl,
 };
 use std::{
@@ -802,6 +802,10 @@ impl LiveState<Scope, Error> for RoleCreate {
                                         {
                                             return Ok(LiveBody {
                                                 redirect: Some(to),
+                                                flash: Some((
+                                                    StatusKind::Success,
+                                                    "Role created.".into(),
+                                                )),
                                                 ..LiveBody::default()
                                             });
                                         }

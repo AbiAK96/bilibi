@@ -210,6 +210,9 @@ impl Create {
             .to_string(),
             notice: self.notice.clone(),
             redirect: self.created.map(|id| format!("/users/{id}")),
+            flash: self
+                .created
+                .map(|_| (StatusKind::Success, "User created successfully.".into())),
             ..LiveBody::default()
         })
     }

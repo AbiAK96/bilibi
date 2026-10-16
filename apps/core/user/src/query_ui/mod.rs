@@ -12,7 +12,7 @@ use bilibi_module_registry::{
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveState, MountFuture, Page, PageBody, PageFuture, PageRequest},
-    Html, ListSpec, ListState,
+    Html, ListSpec, ListState, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 

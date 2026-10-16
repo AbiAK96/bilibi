@@ -104,6 +104,7 @@ impl Create {
         if self.created {
             return Ok(LiveBody {
                 redirect: Some("/addresses".into()),
+                flash: Some((StatusKind::Success, "Address created successfully.".into())),
                 ..LiveBody::default()
             });
         }

@@ -14,7 +14,7 @@ use bilibi_module_registry::{
     contributions::{Access, Download, Method, Route, DOWNLOADS, ROUTES},
     RegistryError, Services,
 };
-use bilibi_ui::{download::DownloadRequest, page::PageRequest};
+use bilibi_ui::{download::DownloadRequest, page::PageRequest, StatusKind};
 use std::{collections::HashMap, sync::Arc};
 
 type PageService = bilibi_ui::page::PageService<bilibi_security::Scope, Error>;
@@ -332,11 +332,11 @@ async fn dispatch(
         topbar_actions(&bound, framed),
     )
     .await?;
-    if let (Some(credential), Some(_)) = (credential, scope) {
+    if let (Some(credential), Some(_)) = (&credential, scope) {
         let client = app.db.get().await.map_err(Error::from)?;
         app.security
             .sessions
-            .activity(&**client, &credential)
+            .activity(&**client, credential)
             .await?;
     }
     let title = page
@@ -344,22 +344,20 @@ async fn dispatch(
         .as_deref()
         .or_else(|| bound.page.0.title(bound.route.operation))
         .unwrap_or("Bilibi");
-    // A missing record elsewhere sent the visitor here with its message.
+    // A missing record or a refused action elsewhere sent the visitor here with
+    // its message (a one-shot cookie), or a live action redirected here with a
+    // success of its own (held by `landing`).
     let waiting = crate::auth::waiting_flash(&headers).filter(|_| !framed);
-    let html = match waiting {
-        Some(message) => format!(
-            "{}{}",
-            shell.html,
-            bilibi_ui::Html::render(&bilibi_ui::FlashGroup {
-                id: "flash-redirect",
-                flash: bilibi_ui::FlashMap {
-                    error: message,
-                    ..bilibi_ui::FlashMap::default()
-                },
-            })
-            .map_err(|_| Error::Internal)?
-        ),
-        None => shell.html,
+    let landed = match (&waiting, credential.as_deref()) {
+        (None, Some(credential)) if !framed && crate::auth::navigating(&headers) => {
+            app.landing.take(credential, uri.path())
+        }
+        _ => None,
+    };
+    let html = match (waiting, &landed) {
+        (Some(message), _) => flash_group(&shell.html, StatusKind::Error, message)?,
+        (None, Some((kind, message))) => flash_group(&shell.html, *kind, message)?,
+        (None, None) => shell.html,
     };
     let mut response = crate::document_themed(title, &html, shell.theme)?.into_response();
     if waiting.is_some() {
@@ -424,6 +422,24 @@ async fn download(
             .insert(HeaderName::from_static(name), value);
     }
     Ok(response)
+}
+
+/// The page with one flash group after it, the outlet for a message that
+/// arrived with the visitor.
+fn flash_group(page: &str, kind: StatusKind, message: &str) -> Result<String> {
+    let mut flash = bilibi_ui::FlashMap::default();
+    match kind {
+        StatusKind::Error => flash.error = message,
+        StatusKind::Warning => flash.warning = message,
+        StatusKind::Success => flash.success = message,
+        StatusKind::Info => flash.info = message,
+    }
+    let group = bilibi_ui::Html::render(&bilibi_ui::FlashGroup {
+        id: "flash-redirect",
+        flash,
+    })
+    .map_err(|_| Error::Internal)?;
+    Ok(format!("{page}{group}"))
 }
 
 /// Resolve the same discovered GET routes as HTTP, with literal siblings first.

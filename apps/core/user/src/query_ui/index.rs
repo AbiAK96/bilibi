@@ -36,6 +36,8 @@ pub(super) struct Index {
     columns: ListColumns,
     pending: Option<queries::SavedQuery>,
     success: String,
+    /// What the page a redirect lands on shows (Bilimbi `put_flash` + `push_navigate`).
+    landing: Option<(StatusKind, String)>,
     error: String,
 }
 impl Index {
@@ -63,6 +65,7 @@ impl Index {
             .map_err(|_| Error::Internal)?,
             pending: None,
             success: String::new(),
+            landing: None,
             error: String::new(),
         })
     }
@@ -113,7 +116,10 @@ impl Index {
                         .duplicate(scope, queries::QueryKey::Id(id))
                         .await
                     {
-                        Ok(query) => return Ok(Some(format!("{ROOT}/{}", query.slug))),
+                        Ok(query) => {
+                            self.landing = Some((StatusKind::Success, "Query duplicated.".into()));
+                            return Ok(Some(format!("{ROOT}/{}", query.slug)));
+                        }
                         Err(error) => self.error = message(error),
                     }
                 }
@@ -203,6 +209,7 @@ impl LiveState<Scope, Error> for Index {
             Ok(LiveBody {
                 html,
                 query: self.list.to_params(),
+                flash: redirect.as_ref().and(self.landing.take()),
                 redirect,
                 ..LiveBody::default()
             })

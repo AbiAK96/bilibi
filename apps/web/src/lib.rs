@@ -4,6 +4,7 @@ mod api;
 mod auth;
 mod errors;
 mod impersonation;
+mod landing;
 mod live;
 mod mcp;
 mod media;
@@ -44,6 +45,8 @@ pub struct App {
     pub display: Arc<bilibi_base::datetime::DisplayPolicy>,
     pub mutations: Arc<bilibi_database::MutationBoundary>,
     pub perf: Arc<bilibi_base::perf::Recorder>,
+    /// Messages a live redirect carries to the page it lands on.
+    pub landing: Arc<landing::Landing>,
     api: Arc<api::Edge>,
     webhooks: Arc<webhooks::Boundary>,
 }
@@ -83,6 +86,7 @@ impl App {
             display,
             mutations,
             perf,
+            landing: Arc::default(),
             api,
             webhooks,
             services: Arc::new(services),

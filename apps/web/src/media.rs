@@ -5,7 +5,7 @@ use crate::{token, App};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
 };
 use bilibi_base::media::{Error, Media, StreamFile};
 use std::{collections::HashMap, time::Duration};
@@ -66,7 +66,8 @@ fn delivered(file: StreamFile, private: bool) -> Response {
     response
 }
 
-/// Private attachment download. Needs a live session, and Media asks the
+/// Private attachment download. Needs a live session (an anonymous visitor goes
+/// where every page sends one, `auth::sign_in_redirect`), and Media asks the
 /// subject's owner on every request whether this user may download it.
 pub async fn attachment(
     State(app): State<App>,
@@ -74,11 +75,13 @@ pub async fn attachment(
     headers: HeaderMap,
 ) -> Response {
     let Ok(credential) = token(&headers) else {
-        return Redirect::to("/login").into_response();
+        return crate::auth::sign_in_redirect(&app, false);
     };
     let scope = match app.security.guard(&credential).await {
         Ok(scope) => scope,
-        Err(bilibi_database::Error::Unauthorized) => return Redirect::to("/login").into_response(),
+        Err(bilibi_database::Error::Unauthorized) => {
+            return crate::auth::sign_in_redirect(&app, true)
+        }
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "Unavailable").into_response(),
     };
     let result = async {
@@ -102,7 +105,7 @@ pub async fn attachment(
         }
         Err(Error::Postgres(_)) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable").into_response(),
         Err(Error::Database(bilibi_database::Error::Unauthorized)) => {
-            Redirect::to("/login").into_response()
+            crate::auth::sign_in_redirect(&app, true)
         }
         Err(Error::Database(bilibi_database::Error::Forbidden)) | Err(_) => {
             (StatusCode::FORBIDDEN, "Forbidden").into_response()

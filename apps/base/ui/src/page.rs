@@ -81,6 +81,11 @@ pub struct LiveBody {
     /// A full browser navigation instead of installing `html`, for a page that
     /// hands the person to an external callback (an OAuth client's redirect).
     pub redirect: Option<String>,
+    /// The message the page `redirect` lands on shows (Bilimbi's `put_flash` +
+    /// `push_navigate`). The host holds it for the visitor's next navigation to
+    /// that path; set it only with a local `redirect` and word it as the source
+    /// does (`Some((StatusKind::Success, "Company created successfully.".into()))`).
+    pub flash: Option<(crate::StatusKind, String)>,
     /// Pushes to browser hooks, dispatched after the patch as `window` events
     /// `bilibi:<name>` with `detail` (Bilimbi's `push_event`). Names are fixed
     /// by the owner; a hook must ignore detail not addressed to its element.

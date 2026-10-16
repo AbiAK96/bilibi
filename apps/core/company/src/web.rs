@@ -36,6 +36,10 @@ impl Flash {
     pub fn clear(&mut self) {
         self.0 = None;
     }
+    /// The message for the page a redirect lands on (`LiveBody.flash`).
+    pub fn take(&mut self) -> Option<(StatusKind, String)> {
+        self.0.take()
+    }
     /// The browser dismissed the message of this kind.
     pub fn dismiss(&mut self, key: Option<&str>) {
         if self
@@ -180,6 +184,7 @@ impl Pages {
             record_panels: self.record_panels.clone(),
             active_panels: Vec::new(),
             notice: String::new(),
+            landing: Flash::default(),
         })
     }
 }
@@ -324,6 +329,8 @@ struct CompanyPage {
     record_panels: Vec<RecordPanel>,
     active_panels: Vec<PanelSpec>,
     notice: String,
+    /// What the page a create redirects to shows.
+    landing: Flash,
 }
 impl CompanyPage {
     /// The contributed record panels this reader may mount.
@@ -674,7 +681,11 @@ impl CompanyPage {
                         .create_with_context(scope, &new, activities, metadata)
                         .await?
                     {
-                        CreateOutcome::Created(_) => return Ok(Some("/companies".into())),
+                        CreateOutcome::Created(_) => {
+                            self.landing
+                                .put(StatusKind::Success, "Company created successfully.");
+                            return Ok(Some("/companies".into()));
+                        }
                         CreateOutcome::Refused(errors) => self.errors = errors,
                     }
                 }
@@ -697,6 +708,7 @@ impl LiveState<Scope, Error> for CompanyPage {
                     if let Some(url) = self.event(request.scope, request.credential, value).await? {
                         return Ok(LiveBody {
                             redirect: Some(url),
+                            flash: self.landing.take(),
                             ..LiveBody::default()
                         });
                     }

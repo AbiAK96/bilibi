@@ -327,7 +327,7 @@ impl Session {
     ) -> Result<Vec<Value>> {
         let scope = self.scope(app, token).await?;
         if target == "page" {
-            let body = self
+            let mut body = self
                 .page
                 .as_mut()
                 .ok_or(Error::Invalid)?
@@ -338,6 +338,7 @@ impl Session {
                     input,
                 })
                 .await?;
+            hold_flash(app, token, &mut body);
             // A page may move only among its own routes; any other path is a
             // module bug, not a navigation.
             if let Some(path) = body.path.as_deref().filter(|path| *path != self.path) {
@@ -354,7 +355,7 @@ impl Session {
             None => self.panels.get_mut(target).ok_or(Error::Invalid)?,
         };
         routes::check_access(app, panel.mounted.access, Some(token)).await?;
-        let body = panel
+        let mut body = panel
             .mounted
             .state
             .update(LiveRequest {
@@ -363,6 +364,7 @@ impl Session {
                 input,
             })
             .await?;
+        hold_flash(app, token, &mut body);
         Ok(vec![fragment(target, body)])
     }
     async fn page_message(&mut self, app: &App, scope: &Scope, body: LiveBody) -> Result<Value> {
@@ -527,6 +529,12 @@ impl Session {
         let scope = app.security.sessions.activity(&**client, token).await?;
         self.bound(scope)?;
         Ok(messages)
+    }
+}
+/// Holds the message a redirecting reply carries for the page it lands on.
+fn hold_flash(app: &App, token: &str, body: &mut LiveBody) {
+    if let (Some(to), Some((kind, message))) = (&body.redirect, body.flash.take()) {
+        app.landing.hold(token, to, kind, message);
     }
 }
 fn fragment(id: &str, body: LiveBody) -> Value {

@@ -1827,6 +1827,7 @@ impl LiveState<Scope, Error> for Mounted {
                 notice,
                 rows: self.workspace.layout.count(),
                 redirect,
+                flash: None,
                 events,
             })
         })

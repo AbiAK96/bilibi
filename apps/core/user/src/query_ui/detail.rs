@@ -31,6 +31,8 @@ pub(super) struct Detail {
     pub descending: bool,
     pub error: String,
     pub success: String,
+    /// What the page a redirect lands on shows (Bilimbi `put_flash` + `push_navigate`).
+    landing: Option<(StatusKind, String)>,
     pub pending: bool,
     pub dirty: bool,
 }
@@ -74,6 +76,7 @@ impl Detail {
             descending: false,
             error: String::new(),
             success: String::new(),
+            landing: None,
             pending: false,
             dirty: false,
         };
@@ -274,6 +277,9 @@ impl Detail {
                         self.dirty = false;
                         self.error.clear();
                         self.success = "Query saved.".into();
+                        if redirect.is_some() {
+                            self.landing = Some((StatusKind::Success, self.success.clone()));
+                        }
                         return Ok(redirect);
                     }
                     Err(error) => self.error = message(error),
@@ -287,7 +293,10 @@ impl Detail {
                         .duplicate(scope, queries::QueryKey::Id(old.id))
                         .await
                     {
-                        Ok(saved) => return Ok(Some(format!("{ROOT}/{}", saved.slug))),
+                        Ok(saved) => {
+                            self.landing = Some((StatusKind::Success, "Query duplicated.".into()));
+                            return Ok(Some(format!("{ROOT}/{}", saved.slug)));
+                        }
                         Err(error) => self.error = message(error),
                     }
                 }
@@ -304,11 +313,18 @@ impl Detail {
                             .delete(scope, queries::QueryKey::Id(old.id), old.version)
                             .await
                         {
-                            Ok(_) => return Ok(Some(ROOT.into())),
+                            Ok(_) => {
+                                self.landing = Some((
+                                    StatusKind::Success,
+                                    format!("Query “{}” was deleted.", old.name),
+                                ));
+                                return Ok(Some(ROOT.into()));
+                            }
                             Err(error) => self.error = message(error),
                         }
                     }
                 } else {
+                    self.landing = Some((StatusKind::Info, "Query discarded.".into()));
                     return Ok(Some(ROOT.into()));
                 }
             }
@@ -356,6 +372,7 @@ impl LiveState<Scope, Error> for Detail {
                 } else {
                     HashMap::new()
                 },
+                flash: redirect.as_ref().and(self.landing.take()),
                 redirect,
                 rows: self.result.as_ref().map_or(0, |result| result.rows.len()),
                 ..LiveBody::default()

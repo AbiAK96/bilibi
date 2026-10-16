@@ -775,7 +775,10 @@ impl Show {
                     .delete(&mut client, scope, &self.id)
                     .await
                 {
-                    Ok(()) => return Ok(Some(INDEX_PATH.to_owned())),
+                    Ok(()) => {
+                        self.flash(StatusKind::Success, "Exchange deleted.".into());
+                        return Ok(Some(INDEX_PATH.to_owned()));
+                    }
                     Err(Error::Unauthorized) => return Err(Error::Unauthorized),
                     Err(error) => self.flash(
                         StatusKind::Error,
@@ -800,6 +803,7 @@ impl LiveState<Scope, Error> for Show {
                     if let Some(to) = self.event(request.scope, value).await? {
                         return Ok(LiveBody {
                             redirect: Some(to),
+                            flash: self.flash.take(),
                             ..LiveBody::default()
                         });
                     }
