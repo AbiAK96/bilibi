@@ -45,13 +45,14 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## Run it locally
 
-Needs Rust 1.99, PostgreSQL 18, Node.js 22 (only to rebuild CSS), Caddy, mkcert and Python 3.11. On Ubuntu or WSL2:
+On Ubuntu, Debian or WSL2:
 
 ```sh
-sudo apt install caddy mkcert libnss3-tools postgresql-18 postgresql-client-18 python3
-cargo install cargo-watch --version 8.5.3 --locked
+./scripts/setup.sh
 ./scripts/start-app.sh
 ```
+
+`setup.sh` installs everything once (Rust, PostgreSQL 18, Caddy, mkcert, Node.js) and is safe to rerun.
 
 Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). The launcher starts a private database, builds, migrates, seeds, serves local HTTPS and rebuilds on change. Restart it after changing an environment variable.
 
