@@ -1,4 +1,4 @@
-# Belimbing Project and Bilibi
+# Bilibi
 
 I'm Kiat, a solo builder. I started Belimbing in 2025. It is named after Bukit Belimbing, a small industrial area in Malaysia where about a hundred small and medium companies operated. The people there are the experts in their own work. They know what they want. The software built for them often does not work the way they want. It is expensive, inflexible, and the licenses are a burden. That is the digitization bottleneck. With AI, this must change. Belimbing is an application platform. It started in Bukit Belimbing, but it is for businesses everywhere.
 
