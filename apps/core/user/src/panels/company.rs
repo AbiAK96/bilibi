@@ -9,10 +9,10 @@ use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_security::Scope;
 use bilibi_ui::{
-    list_state::FILTERS_FORM,
+    list_state::{InvalidPageSize, ParamNames, FILTERS_FORM},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageRequest},
-    params, Badge, BuiltinColumn, Card, ColumnsOutcome, Field, FlexRow, FlexTable, Html, InputKind,
-    ListColumns, ListSpec, ListState, Pagination, SortDir, TableEmpty,
+    params, Badge, BuiltinColumn, Card, ColumnsOutcome, FilterToolbar, FlexRow, FlexTable, Html,
+    ListColumns, ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -30,7 +30,16 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         default_sort: Some("name".into()),
         page_sizes: PAGE_SIZES.to_vec(),
         default_page_size: 25,
-        page_size_param: "perPage".into(),
+        page_size_param: "per_page".into(),
+        page_size_aliases: vec!["perPage".into()],
+        invalid_page_size: InvalidPageSize::Default,
+        param_prefix: "users_".into(),
+        param_names: ParamNames {
+            sort_by: "sort".into(),
+            sort_dir: "dir".into(),
+            ..ParamNames::default()
+        },
+        omit_defaults: true,
         ..ListSpec::default()
     }
     .shared()
@@ -45,10 +54,9 @@ struct View<'a> {
 }
 #[derive(Template)]
 #[template(path = "company_users_card.html")]
-struct CardBody<'a> {
-    id: &'a str,
+struct CardBody {
     count: Html,
-    search: Html,
+    filters: Html,
     table: Html,
     pagination: Html,
 }
@@ -148,24 +156,24 @@ impl CompanyUsers {
         pagination.filters_event = "users_filters";
         pagination.page_event = "users_page";
         pagination.target = &self.anchor;
-        let search = Field::in_form(FILTERS_FORM, "search")
-            .id("company-users-search")
-            .kind(InputKind::Search)
-            .label("Search users")
-            .label_class("sr-only")
-            .wrapper_class("mb-0")
-            .value(self.list.search.clone())
-            .placeholder("Search by name or email...")
-            .attr("data-debounce", "300")
-            .attr("maxlength", "255")
-            .autocomplete("off");
+        let mut filters = FilterToolbar::new(
+            "company-users-filters",
+            vec![ToolbarControl::search(
+                "company-users-search",
+                "search",
+                "Search users",
+                &self.list.search,
+                "Search by name or email...",
+            )],
+        );
+        filters.event = "users_filters";
+        filters.target = &self.anchor;
         let body = render(&CardBody {
-            id: &self.anchor,
             count: render(&Badge {
                 body: Html::text(&count.to_string()),
                 ..Badge::default()
             })?,
-            search: render(&search)?,
+            filters: render(&filters)?,
             table: render(&table)?,
             pagination: render(&pagination)?,
         })?;
@@ -182,17 +190,24 @@ impl CompanyUsers {
                 card,
             })?
             .to_string(),
+            query: self.list.to_params(),
             rows: counts.total_entries as usize,
             ..LiveBody::default()
         })
     }
 }
 impl LiveState<Scope, Error> for CompanyUsers {
+    fn query_prefix(&self) -> &str {
+        &self.list.spec().param_prefix
+    }
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(_) => return Err(Error::Invalid),
+                LiveInput::Params(values) => {
+                    self.list =
+                        ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
+                }
                 LiveInput::Event(value) => match event(value)? {
                     "users_filters" => self
                         .list
