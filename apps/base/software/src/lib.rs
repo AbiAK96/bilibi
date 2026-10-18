@@ -19,7 +19,7 @@ mod toolchain;
 mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_database::{Db, Error, MutationTransaction, Result};
+use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{Composition, Contribution, Provenance};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_settings::{
@@ -27,7 +27,7 @@ use bilibi_settings::{
 };
 use bilibi_step_up::StepUp;
 use bilibi_system::Instance;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Authentication, Scope};
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 
@@ -75,6 +75,15 @@ pub const ACTION_CHANGE: &str = "software.change";
 pub const ACTION_INSTALL: &str = "software.install";
 pub const ACTION_UNDO: &str = "software.undo";
 pub const ACTION_CANCEL: &str = "software.cancel";
+/// The action a worker's outcome is settled under (`Software::settle`).
+pub const ACTION_FINISHED: &str = "software.finished";
+/// The action a notification of a settled outcome is sent under.
+const ACTION_NOTIFIED: &str = "software.notified";
+/// The most of a worker's message a notification carries; a tool's error can
+/// be far longer than a notice may be.
+const NOTICE_BODY_CHARS: usize = 900;
+/// How often the server records the outcomes workers wrote.
+const SETTLE_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
 bilibi_step_up::declare!(
     "base/software",
@@ -90,9 +99,11 @@ bilibi_step_up::declare!(
 /// `PageContracts`).
 pub struct Software {
     db: Db,
+    mutations: Arc<MutationBoundary>,
     settings: Arc<Settings>,
     step_up: Arc<StepUp>,
     notifications: Arc<NotificationBoundary>,
+    authentication: Arc<Authentication>,
     composition: Arc<Composition>,
     catalogue: catalogue::Reader,
 }
@@ -120,6 +131,7 @@ impl Software {
         let job = match shown {
             Some(job) => {
                 let mut value = job.json();
+                value["result"] = json!(jobs::with_loss(job.result.clone()));
                 value["steps"] = Value::Array(jobs::steps_json(&**client, tenant, job.id).await?);
                 value["cancel"] = json!(cancel_state(&**client, tenant, &job).await?);
                 value
@@ -150,6 +162,116 @@ impl Software {
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
                 "summary": job.review["summary"], "requested_at": job.requested_at, "finished_at": job.finished_at})).collect::<Vec<_>>(),
         }))
+    }
+
+    /// Puts the outcomes the builder and the installer wrote into the audit
+    /// trail: each finished job becomes one audited change, from the job as
+    /// queued to the job as the worker left it, attributed to that worker as
+    /// a system principal. Returns how many were settled.
+    pub async fn settle(&self) -> Result<usize> {
+        let mut client = self.db.get().await?;
+        let pending = jobs::unsettled(&**client).await?;
+        let mut settled = 0;
+        for (tenant, job) in pending {
+            let worker = job.worker.clone().unwrap_or_else(|| "worker".into());
+            let mut tx = self
+                .mutations
+                .begin(
+                    &mut client,
+                    Context::system(tenant, &worker, ACTION_FINISHED),
+                )
+                .await?;
+            let recorded = jobs::settle(&mut tx, tenant, &job).await?;
+            tx.commit().await?;
+            if recorded {
+                settled += 1;
+                if let Err(error) = self.announce(&mut client, tenant, &job, &worker).await {
+                    eprintln!(
+                        "warning: software job {} was recorded but its notification was not sent: {error:?}",
+                        job.id
+                    );
+                }
+            }
+        }
+        Ok(settled)
+    }
+    /// Tells the person who asked how their job ended, as the builder does
+    /// for its own, after the outcome is recorded, so a notification that
+    /// cannot be sent never keeps a job unsettled. Their account is
+    /// re-proved live for the notification's scope; an account that is gone
+    /// gets none.
+    async fn announce(
+        &self,
+        client: &mut tokio_postgres::Client,
+        tenant: i64,
+        job: &jobs::Job,
+        worker: &str,
+    ) -> Result<()> {
+        let mut tx = self
+            .mutations
+            .begin(client, Context::system(tenant, worker, ACTION_NOTIFIED))
+            .await?;
+        let title = match job.state.as_str() {
+            "done" => format!("Software job {} finished", job.id),
+            "failed" => format!("Software job {} failed", job.id),
+            "interrupted" => format!("Software job {} was interrupted", job.id),
+            _ => format!("Software job {} stopped", job.id),
+        };
+        let body = brief(
+            job.result
+                .as_ref()
+                .and_then(|result| result["message"].as_str())
+                .unwrap_or_default(),
+        );
+        let user = job.requested_by;
+        match self
+            .authentication
+            .authenticate(
+                tx.sql(),
+                tenant,
+                user,
+                format!("software-settle-{tenant}-{user}"),
+            )
+            .await
+        {
+            Ok(scope) => {
+                self.notifications
+                    .notify(
+                        &mut tx,
+                        &scope,
+                        &[user],
+                        &Notice::new(title).kind("software.job").body(&body),
+                    )
+                    .await?;
+            }
+            Err(_) => {
+                eprintln!(
+                    "software: account {user} of tenant {tenant} cannot be notified (not active)"
+                );
+            }
+        }
+        tx.commit().await
+    }
+    /// Runs beside the server for as long as it serves (`bilibi-web run`
+    /// starts it like the queue executor): settles outcomes every few
+    /// seconds, so a job the installer finished while this program was
+    /// restarting is recorded as soon as the new program is up.
+    pub async fn run_settling(
+        self: Arc<Self>,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<()> {
+        loop {
+            if *stop.borrow() {
+                return Ok(());
+            }
+            if let Err(error) = self.settle().await {
+                eprintln!("warning: software outcomes were not settled this round: {error:?}");
+            }
+            tokio::select! {
+                _ = stop.changed() => {}
+                _ = tokio::time::sleep(SETTLE_EVERY) => {}
+            }
+        }
     }
 
     /// The published catalogue, or why it could not be read.
@@ -375,11 +497,20 @@ impl Software {
             Some(id) => jobs::get(client, tenant, id).await?,
             None => None,
         };
+        // What a restore would lose, counted now so the owner reads a number.
+        let lost = match last.as_ref().map(review::undo_facts) {
+            Some(Ok(facts)) if facts.restores_backup => match &facts.backup_at {
+                Some(since) => Some(jobs::changes_since(client, since).await?),
+                None => None,
+            },
+            _ => None,
+        };
         review::undo(
             &instance,
             active.as_ref(),
             last.as_ref(),
             named.as_ref(),
+            lost.as_ref(),
             input,
         )
     }
@@ -401,6 +532,18 @@ impl Software {
         let past_pause = jobs::past_pause(client, tenant, job.id).await?;
         review::cancel(&job, past_pause)
     }
+}
+
+/// `text` cut at a word boundary to fit a notification, with an ellipsis.
+fn brief(text: &str) -> String {
+    if text.chars().count() <= NOTICE_BODY_CHARS {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(NOTICE_BODY_CHARS - 1).collect();
+    let words = cut
+        .rsplit_once(char::is_whitespace)
+        .map_or(cut.as_str(), |(head, _)| head);
+    format!("{}…", words.trim_end())
 }
 
 /// `"available"`, `"requested"`, `"too_late"` or `"not_running"`.
@@ -453,13 +596,15 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
-        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql"))],
+        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                mutations: services.get("base/database.mutations")?,
                 settings: services.get("base/settings.store")?,
                 step_up: services.get(bilibi_step_up::SERVICE)?,
                 notifications: services.get("base/notifications.sink")?,
+                authentication: services.get("base/tenancy.authentication")?,
                 // What this program is made of, as the host compiled it in.
                 composition: services.get::<Composition>("bootstrap.composition")?,
                 catalogue: catalogue::Reader::new(services.get("base/integration.exchanges")?),
