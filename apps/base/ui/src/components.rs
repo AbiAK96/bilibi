@@ -218,13 +218,22 @@ pub fn card_flat(inner_class: &str) -> bool {
     class_tokens(inner_class).any(|token| token == "p-0")
 }
 
-/// The body pads itself with `p-2` unless the caller states a padding
-/// shorthand (`p-0`, `p-3`, `p-5 sm:p-6`), which replaces the default outright.
-/// Two utilities of equal specificity follow stylesheet order, and `.p-0` is
-/// emitted before `.p-2`, so merely appending the caller's class would still
-/// render 8px. An axis-only class (`px-4`) keeps the default on the other axis.
-pub fn card_pads(inner_class: &str) -> bool {
-    !class_tokens(inner_class).any(|token| token.starts_with("p-"))
+/// The shared card owns its padding: 12px, or zero for a flat table frame.
+/// Retain layout classes but discard legacy padding overrides, including
+/// responsive ones, so an existing caller cannot undo the compact scale.
+pub fn card_body_class(inner_class: &str) -> String {
+    let mut classes = vec![if card_flat(inner_class) {
+        "p-0"
+    } else {
+        "p-panel"
+    }];
+    classes.extend(class_tokens(inner_class).filter(|token| {
+        let utility = token.rsplit(':').next().unwrap_or(token);
+        !["p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-", "ps-", "pe-"]
+            .iter()
+            .any(|prefix| utility.starts_with(prefix))
+    }));
+    classes.join(" ")
 }
 
 pub fn stat_strip_columns(count: usize) -> &'static str {
