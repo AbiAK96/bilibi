@@ -148,7 +148,10 @@ flash, never a page-clearing error.
   update, a fallback to the cached file is a warning that says how old that
   data is, and a failed download or import says the data was not changed.
 - **Admin1 Divisions**: country filter (only countries with divisions), code,
-  name (inline edit → `update_admin1_name`), alt name, updated date.
+  name (inline edit → `update_admin1_name`), alt name, updated date. Update
+  (operators; Belimbing's Admin1 `update`, absent from Bilimbi) runs the same
+  background import for the Admin1 dataset: GeoNames' whole
+  `admin1CodesASCII.txt`, every country's divisions, with the same report.
 - **Postcodes**: the per-country totals card with its own sort, the index
   with a `Local` badge on operator rows, an inline place-name correction
   that carries the row's revision in the fact's id (`{id}|{revision}`), the
