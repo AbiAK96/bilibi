@@ -68,7 +68,9 @@ Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (dev
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
 
-`BILIBI_ENV` decides one thing today: whether Base Step-up is enforced.
+Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. Every instance but production shows a badge in the top bar and on the sign-in page; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
+
+`BILIBI_ENV` decides one more thing: whether Base Step-up is enforced.
 
 | `BILIBI_ENV` | Step-up operations (declared by each module, set per tenant) |
 |--------------|--------------------------------------------------------------|

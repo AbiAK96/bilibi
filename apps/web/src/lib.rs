@@ -41,6 +41,7 @@ pub struct App {
     pub origin: Arc<str>,
     /// `BILIBI_ENV`: development turns Base Step-up enforcement off, nothing else.
     pub environment: Environment,
+    settings: Arc<bilibi_base::settings::Settings>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
@@ -60,6 +61,13 @@ pub struct App {
     webhooks: Arc<webhooks::Boundary>,
 }
 impl App {
+    /// Which instance this is, with the operator's label and colour
+    /// (`bilibi_base::system::Instance::resolve`): what every page, consent
+    /// page and agent answer names.
+    pub async fn instance(&self) -> Result<bilibi_base::system::Instance> {
+        let client = self.db.get().await?;
+        bilibi_base::system::Instance::resolve(&self.settings, &**client).await
+    }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
         let environment = Environment::from_env()?;
         let modules = modules()?;
@@ -73,6 +81,7 @@ impl App {
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
         step_up.set_enforced(environment.requires_step_up());
+        let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
@@ -93,6 +102,7 @@ impl App {
             db,
             origin: origin.into(),
             environment,
+            settings,
             step_up,
             listen_address: None,
             company,

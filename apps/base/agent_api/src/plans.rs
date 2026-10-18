@@ -3,6 +3,7 @@
 use crate::{Error, Handler, OperationClient, Registry, Result, CONTENT_NOTICE};
 use bilibi_database::{Db, MutationBoundary};
 use bilibi_settings::Settings;
+use bilibi_system::Instance;
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -52,6 +53,12 @@ impl Plans {
             registry,
             settings,
         }
+    }
+    /// The installation every plan and commit names (`instance` in both
+    /// answers), so the person's review says where the change lands.
+    pub async fn instance(&self) -> bilibi_database::Result<Instance> {
+        let client = self.db.get().await?;
+        Instance::resolve(&self.settings, &**client).await
     }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
@@ -183,7 +190,8 @@ impl Plans {
         let binding = binding(&identity)?;
         let encoded = self.shape(&tx, operations).await?;
         let (results, digest, valid) = self.previews(&tx, &identity.scope, operations).await?;
-        let mut response = json!({"valid":valid,"operations":operations,"results":results,"meta":{"content_notice":CONTENT_NOTICE}});
+        let instance = Instance::resolve(&self.settings, &tx).await?;
+        let mut response = json!({"valid":valid,"instance":instance.agent_json(),"operations":operations,"results":results,"meta":{"content_notice":CONTENT_NOTICE}});
         if valid {
             let seconds = self
                 .settings
@@ -281,8 +289,11 @@ impl Plans {
         }
         self.unexpired(tx.sql(), scope, code).await?;
         tx.sql().execute("UPDATE base_agent_api_plans SET used_at=clock_timestamp() WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8'))",&[&scope.tenant(),&code]).await.map_err(bilibi_database::Error::from)?;
+        let instance = Instance::resolve(&self.settings, tx.sql()).await?;
         tx.commit().await?;
-        Ok(json!({"results":committed,"meta":{"content_notice":CONTENT_NOTICE}}))
+        Ok(
+            json!({"instance":instance.agent_json(),"results":committed,"meta":{"content_notice":CONTENT_NOTICE}}),
+        )
     }
     /// One write reviewed and committed in a single transaction, for a caller
     /// whose person has just reviewed the input (a page's form). The owner's
