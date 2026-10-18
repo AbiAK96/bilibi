@@ -180,6 +180,15 @@ pub async fn provision_tenant(client: &impl GenericClient, name: &str) -> Result
     })
 }
 
+/// The explicitly marked platform-operator tenant, or `None` until
+/// `platform-provision`, `create-owner` or the development seed marks one.
+pub async fn platform_operator(client: &impl GenericClient) -> Result<Option<TenantIdentity>> {
+    Ok(client
+        .query_opt(&format!("{SELECT} AND o.tenant_id IS NOT NULL"), &[])
+        .await?
+        .map(|row| TenantIdentity::from_row(&row)))
+}
+
 /// The explicit platform-operator tenant: resolved when the marker exists
 /// (`false`), created and marked otherwise (`true`). The marker table is
 /// locked for the transaction, so a second operator is never created.
