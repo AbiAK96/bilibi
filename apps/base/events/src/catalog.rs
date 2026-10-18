@@ -74,10 +74,10 @@ fn validate_subscribers(entries: &[Entry]) -> Result<()> {
         let mut seen = BTreeSet::new();
         for on in subscriber.events {
             let Some((_, publisher)) = named(on.event) else {
-                return Err(refuse(entry, format!("subscribes to {}, which is not an event name (<container>/<module>.<snake_case name>)", on.event)));
+                return Err(refuse(entry, format!("subscribes to {}, which is not an event name (<name>/<module>.<snake_case name>)", on.event)));
             };
             if publisher == container(own) {
-                return Err(refuse(entry, format!("subscribes to {} in its own container {publisher}; call that module directly instead", on.event)));
+                return Err(refuse(entry, format!("subscribes to {} published inside its own {publisher}; call that module directly instead", on.event)));
             }
             if on.versions.is_empty() || on.versions.contains(&0) || !seen.insert(on.event) {
                 return Err(refuse(

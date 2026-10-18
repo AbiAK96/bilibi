@@ -1,40 +1,60 @@
 # bilibi-events
 
-Domain events (`base/events`): how a module reacts to a fact that a module in
-another container recorded, with neither naming the other. When Supply Chain
-receives goods it records `supply_chain/receiving.goods_received` in its own
-transaction. Finance Payables subscribes by that name and keeps its own copy
-of what it needs for matching. Neither crate depends on the other, neither
-descriptor names the other, and neither reads the other's tables. Each
-composes and boots alone.
+Events (`base/events`) let a module react to something that happened in another Domain or Extension, without either module knowing the other exists.
 
-## Events or ports
+## What is an event?
 
-- **Events** are the asynchronous, cross-domain seam. Use them when a
-  container must react to another container's fact and the reaction can
-  happen after the publisher commits: copy a receipt, open a payable, start
-  a workflow. The publisher does not wait for the reaction and cannot be
-  refused by it. A subscriber that is unmounted, failing or new does not
-  hold the publisher back.
-- **Ports** (`apps/base/ports/README.md`) are the synchronous, optional seam.
-  Use one when a caller needs an answer now, inside its own transaction,
-  from a module that may be unmounted: Payables reading a purchase order
-  line to show a three-way match. The caller handles `Unavailable`.
-- Never use a Cargo dependency, a descriptor edge or SQL on another
-  container's tables. Inside one container, call the neighbouring module
-  directly. Boot refuses a subscriber to its own container's events.
+An event is a fact a module records about its own work. Any module can publish one, whether it lives in a Domain, in Core or in an Extension. (Domain-Driven Design calls this a *domain event*, where "domain" means the business, not Bilibi's Domain layer.) Two examples: "goods were received" and "an order was sent". Other modules can react to that fact later, in their own transaction.
 
-## Publisher
+Here is the whole idea in one example. Supply Chain receives goods, and Finance Payables wants to know so it can match the receipt against a bill:
 
-A publisher declares each event type it records in its own namespace,
-`<module ID>.<snake_case name>`, and depends on `base/events`:
+1. Supply Chain saves the goods receipt, and in the same transaction it records `supply_chain/receiving.goods_received`.
+2. Finance Payables has said it reads that event. Supply Chain doesn't know or care.
+3. After Supply Chain commits, a background job hands the event to Finance Payables.
+4. Finance Payables saves its own copy of what it needs for matching.
+
+Notice what is **not** there:
+
+- Neither crate depends on the other.
+- Neither module descriptor names the other.
+- Neither reads the other's tables.
+
+Each Domain composes and boots on its own. That is the point of events: Domains and Extensions stay apart, yet they can still work together.
+
+You may already have questions: what if Finance isn't mounted, what if it fails, what if the same receipt arrives twice? Don't worry, we cover each of these below.
+
+## Events or ports: which to choose?
+
+Bilibi has two ways for one Domain or Extension to use another without depending on it. Events are one; ports (`apps/base/ports/README.md`) are the other.
+
+**Use an event when the reaction can happen later.** The publisher records the fact and moves on. It never waits for subscribers, and a subscriber can't refuse it. A subscriber that is unmounted, failing or brand new doesn't hold the publisher back. Typical reactions are copying a receipt, opening a payable or starting a workflow.
+
+**Use a port when you need an answer now.** The caller asks inside its own transaction and gets a reply straight away. The module behind the port may be unmounted, so the caller handles `Unavailable`. A typical case is Payables reading a purchase order line to show a three-way match.
+
+| | Event | Port |
+| --- | --- | --- |
+| Timing | After the publisher commits | Now, inside the caller's transaction |
+| Can the other side refuse? | No | Yes |
+| Other side unmounted | Publisher carries on | Caller gets `Unavailable` |
+
+> [!WARNING]
+> Never link Domains or Extensions any other way: no Cargo dependency, no descriptor edge, no SQL on another one's tables. Inside one Domain or Extension (or within Base, or within Core), call the neighbouring module directly. Boot refuses a subscriber to events from its own Domain or Extension.
+
+## Publishing an event
+
+A module that records an event is called the **publisher**. Publishing takes two steps: declare the event type once, then record each event as it happens.
+
+### Declaring the event type
+
+The publisher depends on `base/events` and declares each event type in its own namespace. The name has the form `<module ID>.<snake_case name>`:
 
 ```rust
 inventory::submit! { Contribution::new(EVENTS, "supply_chain/receiving.goods_received", provenance!(), &EventType { version: 1 }) }
 ```
 
-It records the event in the same `MutationTransaction` as the write it
-describes:
+### Recording an event
+
+Record the event in the same `MutationTransaction` as the write it describes:
 
 ```rust
 let events = services.get::<Events>(bilibi_events::SERVICE)?;
@@ -47,32 +67,48 @@ events.record(&mut tx, NewEvent {
 tx.commit().await?;
 ```
 
-- **One commit.** The event row, one pending delivery per mounted
-  subscriber, the audit row (without the payload) and the delivery job
-  commit or roll back with the owner's writes. A refusal poisons the
-  owner's transaction. Nothing is broadcast in process, and
-  `after_commit` is not a delivery path: the outbox rows are the source of
-  truth.
-- **Key.** The key is the publisher's idempotency key, unique per publisher
-  and tenant. Recording the same event again answers `Recorded::Existing`
-  and writes nothing. A different event under a used key is `Conflict`.
-  Subscribers receive the key and use it as their own.
-- **Subject.** The subject is the record the event is about. Delivery keeps
-  one subject's events in recording order, so record them while holding
-  the owner's lock on that record.
-- **Version.** `EventType::version` is the version recorded now. Raise it
-  when the payload changes incompatibly, and keep older versions
-  documented while any subscriber reads them.
-- **Payload.** The payload uses the queue's JSON bounds (object root, depth
-  8, 64 KiB encoded). Carry references and the facts subscribers need,
-  never secrets. Document every name, version and payload in the publisher
-  module's README. That documented shape is the whole contract.
+Notice that nothing is sent here. The call writes rows in your transaction, and they commit or roll back with your own writes:
 
-## Subscriber
+- the event;
+- one pending delivery for each mounted subscriber;
+- an audit row (without the payload);
+- the job that will deliver it.
 
-A subscriber depends on `base/events`, never on the publisher, and
-contributes under a key in its own namespace. It lists every event name it
-reads and the versions it understands:
+If `record` refuses, your whole transaction fails.
+
+> [!NOTE]
+> Events are never broadcast in memory, and `after_commit` is not a way to deliver them. The stored rows are the source of truth, so a crash between commit and delivery loses nothing.
+
+### The four parts of an event
+
+Each event carries a subject, a key, a version and a payload. Here is what each one is for.
+
+**Subject** is the record the event is about, such as `goods_receipt:42`. We deliver one subject's events in the order they were recorded. So record them while you hold the owner's lock on that record.
+
+**Key** is your idempotency key for the event. It is unique per publisher and tenant:
+
+- Recording the same event again answers `Recorded::Existing` and writes nothing.
+- A different event under a key you already used is a `Conflict`.
+- Subscribers receive the key and can use it as their own.
+
+**Version** (`EventType::version`) is the version of the payload you record now. Raise it when the payload changes in a way older readers can't handle. Keep the older versions documented while any subscriber still reads them.
+
+**Payload** carries references and the facts subscribers need, and never secrets. It follows the queue's JSON limits:
+
+- the root is an object;
+- it nests at most 8 levels deep;
+- it is at most 64 KiB encoded.
+
+> [!TIP]
+> Document every event name, version and payload in your module's README. That documented shape is the whole contract: subscribers rely on nothing else.
+
+## Subscribing to an event
+
+A module that reacts to an event is called a **subscriber**. It depends on `base/events`, never on the publisher.
+
+### Declaring what you read
+
+Contribute a subscriber under a key in your own namespace. List every event name you read and the versions you understand:
 
 ```rust
 inventory::submit! { Contribution::new(SUBSCRIBERS, "finance/payables.goods_receipts", provenance!(), &Subscriber {
@@ -81,78 +117,125 @@ inventory::submit! { Contribution::new(SUBSCRIBERS, "finance/payables.goods_rece
 }) }
 ```
 
-`Subscribe::handle` gets the delivery transaction, the `domain-events`
-system scope of the event's tenant and the `Event`. It writes only in that
-transaction and returns every `Change`. Its effects, its receipt and their
-audit commit together. An error rolls the effects back and the delivery is
-retried. It must never open or commit another transaction or do network or
-file IO. Such work goes in the subscriber's own outbox, keyed by `Event::key`.
-The publisher's actor is not carried, because an event is a fact, not
-authority.
+### Handling an event
 
-Boot refuses:
+We call your `Subscribe::handle` with three things:
 
-- a subscriber or event type whose key is outside the contributor's module;
-- an event name that is not `<container>/<module>.<snake_case name>`;
-- a subscriber to an event of its own container;
-- a contributor that does not depend on `base/events`;
-- a subscriber to a mounted publisher that does not declare that event, or
-  that does not read the version the publisher records.
+- the delivery transaction;
+- the `domain-events` system scope for the event's tenant;
+- the `Event`.
 
-An unmounted publisher is not an error: its subscribers receive nothing.
+Write only in that transaction, and return every `Change`. Your effects, the record that the delivery is done, and their audit all commit together.
 
-## Delivery
+To refuse an event, return an error. Your effects roll back, and we try the delivery again later.
 
-Each recorded event with subscribers enqueues one `base/events-delivery` job
-on `base/queue`, which runs as the `domain-events` system principal. For each
-mounted subscriber still pending on the event, the job walks that
-subscriber's pending events of the same subject in recording order, up to
-this event. Each event is delivered in one transaction: the job locks the
-delivery row, runs the subscriber, sets the receipt and writes the audit.
+You might be wondering why the handler doesn't get the publisher's user. **An event is a fact, not authority**, so the publisher's actor isn't carried across.
 
-- **At least once.** A refusal, panic or lost lease rolls back that
-  subscriber's effects. The delivery records a bounded failure code
-  (`subscriber_conflict`, `unsupported_event_version`, …) and the job
-  retries with the queue's backoff (`min(3600, 2^attempt)` seconds, up to
-  100 attempts). A later event of the same subject waits behind the refused
-  one. Other subscribers and other subjects carry on.
-- **Idempotent.** A delivered row is never handed to that subscriber again.
-  Overlapping jobs serialize on the row lock, and a replay skips delivered
-  rows.
-- **Grant.** Declaring `domain-events` grants nothing. A tenant
-  administrator grants it `events.delivery.deliver` once per tenant
-  (`Grants::set_system`). Without the grant, deliveries cancel with
-  `actor_refused`, the rows stay pending, and a replay delivers them once
-  the grant exists.
-- **Mounting.** Deliveries are created for the subscribers mounted when an event is recorded. An event recorded while a subscriber is unmounted (or before it was first mounted) gets no delivery for it, and its pending rows wait without holding the job. Nothing is replayed automatically: the gap shows on the Domain Events page, and an operator or agent closes it with a replay (Operators).
+> [!WARNING]
+> A handler must never open or commit another transaction, and must never do network or file IO. If you need either, put the work in your own outbox and key it by `Event::key`.
 
-## Operators
+### What boot checks
 
-Replay closes a subscriber's gap after a remount: it creates a delivery for each event the subscriber has none for and requeues its pending ones. Delivery then runs as usual.
+Boot refuses to start when:
 
-| Facade (`Events`) | Answers | Needs |
+- a subscriber or event type has a key outside the contributing module;
+- an event name isn't `<name>/<module>.<snake_case name>` (`<name>` is the publisher's Domain or Extension, or `base` or `core`);
+- a module subscribes to an event from its own Domain or Extension;
+- a contributor doesn't depend on `base/events`;
+- a subscriber reads from a mounted publisher that doesn't declare that event, or doesn't record a version the subscriber reads.
+
+An unmounted publisher is not an error. Its subscribers simply receive nothing.
+
+## How delivery works
+
+Now that you've seen both sides, let's follow an event after the publisher commits.
+
+Each recorded event that has subscribers enqueues one `base/events-delivery` job on `base/queue`. The job runs as the `domain-events` system principal. For each mounted subscriber still pending on the event, the job delivers that subscriber's pending events for the same subject, oldest first, up to this one. Each event gets its own transaction:
+
+1. lock the delivery row;
+2. run your handler;
+3. mark the delivery done;
+4. write the audit.
+
+### What you can rely on
+
+**At least once.** If your handler refuses, panics or loses its lease, its effects roll back. The delivery records a short failure code, such as `subscriber_conflict` or `unsupported_event_version`, and the job retries.
+
+**In order, per subject.** A later event for the same subject waits behind a refused one. Other subscribers and other subjects carry on.
+
+**Never twice.** Once delivered, an event is never handed to that subscriber again. Overlapping jobs take turns on the row lock, and a replay skips delivered rows.
+
+Retries follow the queue's backoff: `min(3600, 2^attempt)` seconds between tries, up to 100 attempts.
+
+### Why an event might not arrive
+
+There are two common reasons. Both leave the event safely recorded, and both are fixed the same way, with a replay.
+
+**The tenant hasn't allowed delivery yet.** Declaring the `domain-events` principal grants it nothing. A tenant administrator grants it `events.delivery.deliver` once per tenant (`Grants::set_system`). Until then, deliveries are cancelled with `actor_refused` and stay pending. A replay delivers them once the grant exists.
+
+**The subscriber wasn't mounted.** We create deliveries only for the subscribers mounted when an event is recorded. So an event recorded while a subscriber was unmounted, or before it was ever mounted, has no delivery for it. The pending rows of an unmounted subscriber wait without holding the job up.
+
+> [!NOTE]
+> Nothing is replayed automatically. The gap shows on the Events page, and an operator or agent closes it with a replay, described next.
+
+## Closing a gap with a replay
+
+A **gap** is the set of events a subscriber reads but has no delivery for. It usually appears after a subscriber is remounted. A **replay** closes it in two ways:
+
+- it creates a delivery for each missed event;
+- it puts the subscriber's pending deliveries back on the queue.
+
+Delivery then runs as usual.
+
+We compute the gap when the page or an operation asks for it, so a remount shows its gap at once. Boot writes nothing.
+
+### Choosing where to start
+
+Start from an event with `ReplayFrom::Event(id)`, or from a time with `ReplayFrom::Time(instant)`. A time starts at the first event recorded at or after it. Starting earlier than you need is safe, as the next part explains.
+
+### Why replaying is safe
+
+A replay creates a delivery only where the subscriber has none (`ON CONFLICT DO NOTHING`). It never hands over a delivered event again. A replay with nothing to create or requeue writes nothing, not even audit, and asks for no step-up.
+
+### Limits and records
+
+- **Batches.** One replay looks at no more than `limit` events (1 to 1,000). `next` tells you where the following batch starts.
+- **Audit.** Each replay writes one `base/events.replay` change, attributed to the operator. It names the subscriber, the first and last event, the deliveries created and the deliveries pending. Each delivery then audits as `domain-events`.
+- **Step-up.** The `base.events.replay` step-up is off by default, because a replay only hands over recorded facts, and never twice. A tenant can turn it on at Administration › Authorization › Two-factor Requirements.
+- **Mounted subscribers only.** A replay to an unmounted subscriber is refused with `NotFound`. Its pending rows wait for the remount.
+
+### Replaying from code
+
+The `Events` facade offers four calls:
+
+| Call | Answers | Needs |
 | --- | --- | --- |
-| `subscriber_states(client, scope)` | Each subscriber: mounted, events it reads, last delivered event, pending and failing deliveries, missed events (no delivery at all) and `gap_from` | `admin.events.view` |
-| `deliveries(client, scope, from_event, pending_only, limit)` | The tenant's deliveries (1–500 rows) with attempts and the last failure code | `admin.events.view` |
+| `subscriber_states(client, scope)` | Each subscriber's state (see the list below) | `admin.events.view` |
+| `deliveries(client, scope, from_event, pending_only, limit)` | The tenant's deliveries (1 to 500 rows), with attempts and the last failure code | `admin.events.view` |
 | `replay_review(client, scope, subscriber, from, limit)` | What a replay would do, writing nothing | `admin.events.replay` |
 | `replay(scope, subscriber, from, limit)` / `replay_in(tx, …)` | The replay, in its own transaction or the caller's | `admin.events.replay`, step-up `base.events.replay` |
 
-- **Gap.** A subscriber's missed events are those of a name it reads with no delivery for it. They are computed when the page or the operation reads them, so a remount shows its gap at once, and boot writes nothing.
-- **Start.** `ReplayFrom::Event(id)` or `ReplayFrom::Time(instant)` (the first event recorded at or after it). Starting earlier is safe.
-- **Idempotent.** A delivery is created only where the subscriber has none (`ON CONFLICT DO NOTHING`) and a delivered event is never handed over again. A replay with nothing to create or requeue writes nothing, not even audit, and asks for no step-up.
-- **Batch.** At most `limit` events (1–1,000) are looked at; `next` names where the following batch starts.
-- **Audit.** One `base/events.replay` change per replay (subscriber, first and last event, deliveries created, pending), attributed to the operator. Each delivery then audits as `domain-events`.
-- **Step-up.** `base.events.replay` is off by default, because a replay hands over only recorded facts and never twice. A tenant turns it on at Administration › Authorization › Two-factor Requirements.
-- **Mounted only.** Replay to an unmounted subscriber is refused (`NotFound`); its pending rows wait for the remount.
+For each subscriber, `subscriber_states` reports:
 
-### Page
+- whether it is mounted, and the events it reads;
+- its last delivered event;
+- its pending and failing deliveries;
+- its missed events (those with no delivery at all);
+- `gap_from`, where the gap starts.
 
-**Administration › System › Domain Events** (`/system/events`, `admin.events.view`). No Bilimbi counterpart; the list follows Sessions.
+### Replaying from the page
 
-- One row per subscriber: status (Up to date, Gap, Not mounted), events it reads, last delivered event and when, pending (and failing), missed (and from which event).
-- A row with a gap has Replay (`admin.events.replay`). It confirms through `ConfirmDialog`, then calls the `base.events.replay` contract from `gap_from` (`PageContracts::submit`, ADR 01). The owner rechecks the capability and the step-up policy; a step-up sends the browser to its check and back.
+Open **Administration › System › Events** (`/system/events`, which needs `admin.events.view`). The page has no Bilimbi counterpart, and its list follows the Sessions page. Each subscriber gets one row:
 
-### Agent operations
+- its status: Up to date, Gap or Not mounted;
+- the events it reads;
+- its last delivered event, and when it was delivered;
+- its pending deliveries, and how many are failing;
+- its missed events, and which event they start from.
+
+A row with a gap shows a Replay button, for people with `admin.events.replay`. It asks for confirmation through `ConfirmDialog`. It then calls the `base.events.replay` contract from `gap_from` (`PageContracts::submit`, ADR 01). The owner rechecks the capability and the step-up policy. If a step-up is needed, the browser goes to the check and comes back.
+
+### Replaying from an agent
 
 | Key | Kind | Capability |
 | --- | --- | --- |
@@ -160,32 +243,38 @@ Replay closes a subscriber's gap after a remount: it creates a delivery for each
 | `base.events.delivery.list` | Read (`from_event`, `pending_only`, `limit`) | `admin.events.view` |
 | `base.events.replay` | Reviewed write (`subscriber`, exactly one of `from_event` or `from_time`, `limit`) | `admin.events.replay`, step-up `base.events.replay` |
 
-The guide `base.events` tells an agent how to find a gap and close it.
+The guide `base.events` walks an agent through finding a gap and closing it.
+
+## Tables
 
 This module owns `base_events` and `base_events_deliveries`.
 
-## Proof
+## Seeing it work
 
-`apps/web/examples/events-reference.rs` drives the reference publisher
-`fixtures/containers/event_publisher` and subscriber
-`fixtures/containers/event_subscriber`, two Domain containers that are never
-mounted in the Platform and never name each other. Its header gives the four
-compositions to run in order on a fresh disposable database. The example
-covers:
+The example `apps/web/examples/events-reference.rs` runs everything above on a fresh disposable database. Its header lists four compositions to run in order. It uses two reference Domains: the publisher `fixtures/containers/event_publisher` and the subscriber `fixtures/containers/event_subscriber`. They are never mounted in the Platform and never name each other.
 
-- With nothing mounted, the publisher's command is unknown.
-- With the publisher alone, an event is recorded with no deliveries.
-- With both mounted, the subscriber is new and the earlier event is not
-  delivered to it.
-- A receipt from a supplier the subscriber has not onboarded is refused and
-  retried, while the return of that receipt waits behind it. Once the
-  supplier exists, both are delivered in order.
-- A receipt received twice records one event.
-- A replay from the first event delivers the earlier receipt, and a second
-  replay finds nothing pending.
-- With the subscriber alone, it boots and nothing new is recorded.
+Here is what you'll see:
 
-The remount case runs on the real containers: mount `bilibi-dom-supply-chain` and `bilibi-dom-finance`, send an order with Finance unmounted, remount, and Domain Events shows `finance/payables.purchase_orders` with a gap; replay it and a bill naming that order line is accepted and posts.
+- **Nothing mounted:** the publisher's command is unknown.
+- **Publisher alone:** an event is recorded, with no deliveries.
+- **Both mounted:** the subscriber is new, so the earlier event isn't delivered to it.
+- **An unknown supplier:** a receipt from a supplier the subscriber hasn't onboarded is refused and retried, and the return of that receipt waits behind it. Once the supplier exists, both are delivered in order.
+- **The same receipt twice:** one event is recorded.
+- **Replay:** a replay from the first event delivers the earlier receipt, and a second replay finds nothing pending.
+- **Subscriber alone:** it boots, and nothing new is recorded.
 
-Every composition also prints the boot refusals of a same-container
-subscriber and of a malformed event name.
+Every composition also shows boot refusing a subscriber in the same Domain as the publisher and a malformed event name.
+
+The remount case also runs on the real Domains:
+
+1. Mount `bilibi-dom-supply-chain` and `bilibi-dom-finance`.
+2. Send an order while Finance is unmounted.
+3. Remount Finance. The Events page shows `finance/payables.purchase_orders` with a gap.
+4. Replay it. A bill naming that order line is now accepted and posts.
+
+## Where to go next
+
+- **Asking another Domain for an answer now:** see ports in `apps/base/ports/README.md`.
+- **Writes, transactions and `Change`:** see `apps/base/database/README.md` and `apps/base/audit/README.md`.
+- **Jobs, leases and backoff:** see `apps/base/queue/README.md`.
+- **Page contracts and step-up:** see `docs/architecture/decisions/01-agent-first-operations.md`.

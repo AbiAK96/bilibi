@@ -21,7 +21,7 @@ and Factory sources at the HEADs in `provenance.json` (`domain_sources`), so
 mounting those Domains changes no CSS. Recapture it from clean pinned checkouts with
 `node apps/base/ui/assets/capture-domains.cjs supply_chain=<dir> finance=<dir> factory=<dir>`.
 Mounted Domain and Extension checkouts are gitignored, which Tailwind honours, so
-`build.cjs` adds an explicit `@source` for each mounted container (one holding
+`build.cjs` adds an explicit `@source` for each mounted Domain or Extension (a folder holding
 `bilibi.container.toml`); a class that only a mounted Domain uses then fails
 `--check` instead of rendering unstyled. `vendor/icon-candidates.txt` includes all four Heroicons sizes,
 because runtime menu/action contributions carry bare names.

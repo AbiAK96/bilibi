@@ -1,4 +1,4 @@
-//! Domain events: how a module reacts to a fact another container's module
+//! Events: how a module reacts to a fact another Domain or Extension's module
 //! recorded, with neither naming the other's crate. Supply Chain records
 //! `supply_chain/receiving.goods_received` in its own transaction; Finance
 //! Payables subscribes by that name and keeps its own copy of what it needs.
@@ -277,7 +277,7 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Events> 
 }
 bilibi_step_up::declare!(
     "base/events",
-    bilibi_step_up::Operation::new(STEP_UP_REPLAY, "Replay domain events to a subscriber")
+    bilibi_step_up::Operation::new(STEP_UP_REPLAY, "Replay events to a subscriber")
         .off_by_default()
 );
 inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route {
@@ -286,7 +286,7 @@ inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(
 }) }
 bilibi_menu::contribute!(
     "base/events",
-    bilibi_menu::MenuItem::page("admin.system.events", "Domain Events", web::PATH)
+    bilibi_menu::MenuItem::page("admin.system.events", "Events", web::PATH)
         .icon("arrow-path")
         .under("admin.system")
         .requires(bilibi_menu::Requirement::Capability(VIEW))

@@ -198,7 +198,7 @@ Width is a shared decision. Every page uses `PageVariant`.
 
 | Item | Status |
 | --- | --- |
-| Base domain events (`apps/base/events`) | In progress in a parallel change |
+| Base events (`apps/base/events`) | In progress in a parallel change |
 | Sign-in attempt throttle | Not built |
 | Distributed notification fan-out | Not built. Broadcasts are process-local |
 | TLS for PostgreSQL connections | Not built |

@@ -1,4 +1,4 @@
-//! Running specimen of domain events (`base/events`), separate from product
+//! Running specimen of events (`base/events`), separate from product
 //! code. The reference publisher (`fixtures/containers/event_publisher`) and
 //! subscriber (`fixtures/containers/event_subscriber`) are Domain containers
 //! that are never mounted in the Platform and never name each other. On a

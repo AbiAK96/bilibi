@@ -54,7 +54,7 @@ an additive bridge and Database ledger migration; `006-audit-evidence` is Audit'
 authorization and audit DDL is contributed by those owning modules through
 `Module::migrations`; Database only supplies orchestration. Use globally unique
 module-prefixed versions, such as `base/settings/001-values`; a Domain or
-Extension module must name them `<container>-<module>-NNN-<slug>` with
+Extension module must name them `<name>-<module>-NNN-<slug>` (`<name>` is the Domain or Extension) with
 underscores as hyphens (`supply-chain-purchasing-001-suppliers`), which the
 registry enforces. `migrate(db, &modules)` runs migrations in dependency order
 under a transaction advisory lock. A failed batch rolls back both DDL and

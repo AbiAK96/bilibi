@@ -12,7 +12,7 @@ Folder guides hold the mistakes that recur in that folder. Open the one you are 
 - `apps/base/ui/AGENTS.md`: shared components, forms, lists, shell, live pages
 - `apps/base/media/AGENTS.md`: uploads, private files, attachments
 - `apps/base/dashboard/AGENTS.md`: dashboard panels
-- `apps/domains/AGENTS.md`, `apps/extensions/AGENTS.md`: mounting containers
+- `apps/domains/AGENTS.md`, `apps/extensions/AGENTS.md`: mounting Domains and Extensions
 
 Authoritative contracts (point to them, do not copy them): `apps/base/module_registry/README.md` (descriptors, contributions, boot validation), `apps/web/README.md` (routes, downloads, access, agent edge), `apps/base/database/README.md` and `apps/base/audit/README.md` (writes and audit), `docs/live-pages.md` and `docs/inline-editing.md`, and the README of the module you edit.
 
@@ -26,8 +26,8 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 
 - **Register, do not list.** A module submits one `bilibi_module_registry::Module` descriptor and `Contribution::new` entries (routes, menu, settings, capabilities, agent operations, ports, …) with `inventory`. The host keeps no module, route or migration list.
 - Keep `Cargo.toml` edges and descriptor `dependencies` equal. Declare a dependency as `x.workspace = true` after adding it to `[workspace.dependencies]`. Never turn on a shared crate's features from one module: Cargo unifies them across the workspace.
-- Run `python3 scripts/discover-modules.py` after adding, removing or moving a module or container. Never edit its generated files, and never commit a mounted composition or its `Cargo.lock` entries to the Platform.
-- **No dependencies between Domains.** Cross-domain flows use Base domain events (`apps/base/events/README.md`). Within one Domain, edges are minimal, declared, acyclic, and only where Bilimbi has the same edge. Optional calls into an unmounted module go through `base/ports`.
+- Run `python3 scripts/discover-modules.py` after adding, removing or moving a module, Domain or Extension. Never edit its generated files, and never commit a mounted composition or its `Cargo.lock` entries to the Platform.
+- **No dependencies between Domains.** Cross-domain flows use Base events (`apps/base/events/README.md`). Within one Domain, edges are minimal, declared, acyclic, and only where Bilimbi has the same edge. Optional calls into an unmounted module go through `base/ports`.
 - Domain and Extension code uses meta-terms (material, resource, operation, role). Industry and product names are configuration data, never identifiers, including agent operation keys.
 
 ## Data, tenancy, audit, security
@@ -35,7 +35,7 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 - **Tenant scope.** Tenant-owned reads and writes take a sealed `bilibi_tenancy::Scope`, never a raw tenant, actor or party ID. Derive tenant and actor from the session. Every SQL statement binds its data and carries its tenant predicate.
 - **Writes go through `MutationBoundary`**, returning every affected record as a `Change`. Never insert audit rows, open an inner transaction or publish notifications by hand.
 - **Authorization.** Capabilities are declared in the module's vocabulary contribution; an unknown key fails closed; direct denies win. The owner rechecks inside its mutation transaction.
-- **Migrations** are embedded in the owning module, ID `<layer>-<module>-NNN-<slug>` (mounted: `<container>-<module>-NNN-<slug>`). Never edit an applied migration. Nothing migrates or seeds on boot.
+- **Migrations** are embedded in the owning module, ID `<layer>-<module>-NNN-<slug>` (mounted: `<name>-<module>-NNN-<slug>`, where `<name>` is the Domain or Extension). Never edit an applied migration. Nothing migrates or seeds on boot.
 - **Use the platform, do not hand-roll:** files `base/media`, documents `base/artifacts`, jobs `base/queue`, mail `base/mail`, outbound HTTP `base/integration`, time `bilibi_datetime` (store UTC).
 - **Agents.** Expose an operation with an `agent_api` contribution that calls your facade with the scope it receives. No endpoint per module.
 - Askama escapes by default: keep `|safe` inside the shared macros, never `Html::raw` on request data. Never build identifiers or SQL fragments from request input.

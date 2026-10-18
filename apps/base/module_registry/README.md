@@ -1,9 +1,9 @@
 # Registry contracts
 
 Module IDs are `base/<module>` and `core/<module>` for the Platform layers, and
-`<container>/<module>` (both snake_case, the container not `base`, `core`, `web`
+`<name>/<module>`, where `<name>` is the Domain or Extension (both snake_case, `<name>` not `base`, `core`, `web`
 or `src`) for Domains and Extensions, matching the mounted folders; a mounted
-module names its migrations `<container>-<module>-NNN-<slug>`. The product
+module names its migrations `<name>-<module>-NNN-<slug>`. The product
 binary calls `verify_composition` with the generated `bilibi_domains::MODULES`
 and `bilibi_extensions::MODULES` lists before any command, so a mounted crate
 whose descriptor is missing, extra or wrongly layered refuses to boot. Examples

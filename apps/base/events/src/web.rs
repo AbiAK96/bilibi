@@ -1,5 +1,5 @@
 //! `/system/events` (`base/events.pages`, operation `index`): the tenant's
-//! domain event subscribers, the last event each was handed and its gap, with
+//! event subscribers, the last event each was handed and its gap, with
 //! a replay that closes it. No Bilimbi counterpart (Bilimbi has no domain
 //! events); the list follows Bilimbi `Session.Web.IndexLive` as Sessions does.
 //!
@@ -292,14 +292,14 @@ impl Index {
             self.columns.load(&self.rows, |row| row.subscriber.clone());
         }
         let header = render(Header {
-            title: Html::text("Domain Events"),
+            title: Html::text("Events"),
             subtitle:
                 "Subscribers in this tenant, the last event each was handed and what it missed",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "events-pin",
                 nav_pin: "nav-admin-system-events",
-                ..IconButton::new("bilimbi-pin", "Pin Domain Events to sidebar")
+                ..IconButton::new("bilimbi-pin", "Pin Events to sidebar")
             })?,
             ..Header::default()
         })?;
@@ -400,7 +400,7 @@ impl Index {
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
-        table.caption = "Domain event subscribers";
+        table.caption = "Event subscribers";
         table.framed = false;
         table.actions = can_replay;
         if counts.total_entries == 0 {
@@ -501,7 +501,7 @@ impl LiveState<Scope, Error> for Index {
 
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
-        (operation == "index").then_some("Domain Events")
+        (operation == "index").then_some("Events")
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {

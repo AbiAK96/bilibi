@@ -118,7 +118,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 - **Channels.** A contract may name the doors it can serve (`Channels::Only` with a reason), for technical reasons only. Every current contract serves every door.
 - **Step-up.** A contract lists the step-up operations its commit may ask for (`step_up`), checked at boot and shown by `describe`. The owner's write calls `StepUp::require`. The database tables pages and secret reveal use Base Step-up; their password prompts are gone.
 - **Agent reach** is the person's live capabilities, administration included. Impersonation stays refused (`apps/base/agent_api/src/reach.rs`).
-- Contracts exist for `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants) and `base/events` (domain event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
+- Contracts exist for `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants) and `base/events` (event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
 
 ## Consequences
