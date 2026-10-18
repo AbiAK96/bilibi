@@ -65,6 +65,18 @@ Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (dev
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
+| `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
+
+`BILIBI_ENV` decides one thing today: whether Base Step-up is enforced.
+
+| `BILIBI_ENV` | Step-up operations (declared by each module, set per tenant) |
+|--------------|--------------------------------------------------------------|
+| `development` | Never ask for a code |
+| `staging`, `production`, unset | Ask as each tenant's policy says: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time |
+
+- Set `BILIBI_ENV=development` only on a developer machine. A missing value never weakens a guard.
+- Each account sets up its authenticator at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md).
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 
