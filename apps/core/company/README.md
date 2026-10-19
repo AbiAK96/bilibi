@@ -425,6 +425,8 @@ the archived company, the missing person and the other tenant. In the running
 app, Administration → System → Settings offers the company picker and
 Administration → Authorization → Roles → Create asks for the owning company.
 
+Company scalar facts share a record-field schema with Grid. Optional columns include Legal Entity Type, Parent Company, Website and the other visible scalar facts. Related columns project readable names; business activities and metadata remain nested or long content on the record. Default column order is unchanged.
+
 ## Companies in a newly created tenant
 
 `CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
