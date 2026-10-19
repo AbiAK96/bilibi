@@ -279,6 +279,8 @@ carry the version of the row read when the dialog opened, so a concurrent
 change is refused as stale rather than overwritten. Rows keep the K5 order
 (other party, then label); none of these tables sorts, as in Bilimbi.
 
+The relationship table and its record panels also offer **Effective From** and **Effective To** as separate columns. Their labels come from the date editor’s shared record fields. The default Effective Period column stays in place.
+
 ## Lifecycle and account freeze (K2)
 
 Use `CompanyService::{activate_company,reactivate_company,suspend_company,

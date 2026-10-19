@@ -89,6 +89,7 @@ The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.htm
 - The page follows `NOTIFY bilibi_software_jobs` through `follow.rs`; the card polls status every four seconds while a job is active. Closing either leaves the job running.
 - The card calls only the host’s read/plan/commit bridge, holds no credential and fetches no independent URL. It reports job outcomes to the model and can send the person’s question back to the chat.
 - Plugin packages obtain the card guidance from `CARD_SKILL` and identify the connected instance.
+- The History column picker also offers **Worker**, matching the job panel. Its optional columns use shared record fields; the default columns stay the same. Steps and long result messages stay on the panel.
 
 ## Jobs and upgrades
 
