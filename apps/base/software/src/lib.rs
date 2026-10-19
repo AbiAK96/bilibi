@@ -13,14 +13,19 @@
 mod agent;
 mod builder;
 mod catalogue;
+mod follow;
 mod jobs;
 mod review;
 mod toolchain;
+mod web;
 mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
-use bilibi_module_registry::{Composition, Contribution, Provenance};
+use bilibi_module_registry::{
+    contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
+    Composition, Contribution, Provenance,
+};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Validator, ValueType, DEFINITIONS,
@@ -141,8 +146,14 @@ impl Software {
         let undo = match jobs::last_done(&**client, tenant).await? {
             Some(done) if active.is_none() => match review::undo_facts(&done) {
                 Ok(facts) => {
+                    let backup_at = if facts.restores_backup {
+                        jobs::backup_time(&**client, tenant, &done).await?
+                    } else {
+                        None
+                    };
                     json!({"available": true, "job": done.id, "restores_backup": facts.restores_backup,
-                                    "release": facts.release, "previous_release": facts.previous_release})
+                                    "release": facts.release, "previous_release": facts.previous_release,
+                                    "backup_at": backup_at})
                 }
                 Err(reason) => json!({"available": false, "job": done.id, "reason": reason}),
             },
@@ -274,6 +285,31 @@ impl Software {
         }
     }
 
+    /// What restoring the backup of finished job `job` would lose: the time
+    /// of that backup and how many audited changes were entered since,
+    /// counted now. `count` is null when the job restores no backup or its
+    /// backup time is unknown. A separate read, because the count changes
+    /// with every write and is not part of what a confirmation is bound to.
+    pub async fn undo_loss(&self, scope: &Scope, job: i64) -> Result<Value> {
+        let client = self.db.get().await?;
+        authorize_operator(&**client, scope, VIEW).await?;
+        let tenant = scope.tenant();
+        let Some(job) = jobs::get(&**client, tenant, job).await? else {
+            return Ok(json!({"job": job, "backup_at": null, "count": null}));
+        };
+        let restores = review::undo_facts(&job).is_ok_and(|facts| facts.restores_backup);
+        let backup_at = if restores {
+            jobs::backup_time(&**client, tenant, &job).await?
+        } else {
+            None
+        };
+        let count = match &backup_at {
+            Some(at) => jobs::changes_since(&**client, at).await?["changes"].as_i64(),
+            None => None,
+        };
+        Ok(json!({"job": job.id, "backup_at": backup_at, "count": count}))
+    }
+
     /// The published catalogue, or why it could not be read.
     pub async fn catalogue(&self, scope: &Scope) -> Result<Value> {
         let client = self.db.get().await?;
@@ -360,10 +396,14 @@ impl Software {
         let review = self.undo_review(tx.sql(), scope, input).await?;
         self.step_up.require(scope, STEP_UP, &review.target).await?;
         let restores_backup = review.facts["restores_backup"].as_bool().unwrap_or(false);
+        let mut recorded = review.facts.clone();
+        if let Some(at) = review.facts["backup_at"].as_str() {
+            recorded["lost_at_commit"] = json!(jobs::changes_since(tx.sql(), at).await?);
+        }
         let new = jobs::NewJob {
             kind: "undo",
             request: review.request.clone(),
-            review: review.facts.clone(),
+            review: recorded,
             undo_of: review.facts["job"].as_i64(),
             switch: "auto".into(),
             steps: jobs::undo_steps(restores_backup),
@@ -399,6 +439,40 @@ impl Software {
                 scope,
                 &[scope.user()],
                 &Notice::new(title)
+                    .kind("software.job")
+                    .body(review.facts["summary"].as_str().unwrap_or_default()),
+            )
+            .await?;
+        let mut value = job.json();
+        value["review"] = review.facts;
+        Ok(value)
+    }
+
+    /// What giving a built change its go-ahead would do.
+    pub async fn review_go(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
+        let client = self.db.get().await?;
+        authorize_operator(&**client, scope, MANAGE).await?;
+        self.go_review(&**client, scope, input).await
+    }
+    /// Turns a parked job's `switch` to `auto` inside the caller's
+    /// transaction, after the owner's fresh 2FA check.
+    pub async fn go_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        input: &Value,
+    ) -> SoftwareResult<Value> {
+        authorize_operator(tx.sql(), scope, MANAGE).await?;
+        let review = self.go_review(tx.sql(), scope, input).await?;
+        self.step_up.require(scope, STEP_UP, &review.target).await?;
+        let id = review.facts["job"].as_i64().ok_or(Error::Internal)?;
+        let job = jobs::go(tx, scope.tenant(), id).await?;
+        self.notifications
+            .notify(
+                tx,
+                scope,
+                &[scope.user()],
+                &Notice::new(format!("Software job {}: go-ahead given", job.id))
                     .kind("software.job")
                     .body(review.facts["summary"].as_str().unwrap_or_default()),
             )
@@ -497,12 +571,10 @@ impl Software {
             Some(id) => jobs::get(client, tenant, id).await?,
             None => None,
         };
-        // What a restore would lose, counted now so the owner reads a number.
-        let lost = match last.as_ref().map(review::undo_facts) {
-            Some(Ok(facts)) if facts.restores_backup => match &facts.backup_at {
-                Some(since) => Some(jobs::changes_since(client, since).await?),
-                None => None,
-            },
+        let backup_at = match last.as_ref().map(|job| (job, review::undo_facts(job))) {
+            Some((job, Ok(facts))) if facts.restores_backup => {
+                jobs::backup_time(client, tenant, job).await?
+            }
             _ => None,
         };
         review::undo(
@@ -510,9 +582,28 @@ impl Software {
             active.as_ref(),
             last.as_ref(),
             named.as_ref(),
-            lost.as_ref(),
+            backup_at.as_deref(),
             input,
         )
+    }
+    async fn go_review(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        input: &Value,
+    ) -> SoftwareResult<Review> {
+        let tenant = scope.tenant();
+        let instance = Instance::resolve(&self.settings, client).await?;
+        let active = jobs::active(client, tenant).await?;
+        let named = match input["job"].as_i64() {
+            Some(id) => jobs::get(client, tenant, id).await?,
+            None => None,
+        };
+        let job = named.or(active).ok_or_else(|| {
+            SoftwareError::field("job", "No job is waiting or running on this instance.")
+        })?;
+        let built = jobs::parked_release(client, tenant, &job).await?;
+        review::go(&instance, &job, built)
     }
     async fn cancel_review(
         &self,
@@ -592,11 +683,36 @@ inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(
         help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+// The Software page: server owners' view of what runs and the way to change
+// it. Seeing it needs the platform `view` capability; the owner's facade
+// rechecks `manage` on every write.
+inventory::submit! { Contribution::new(ROUTES, "base/software.index", provenance!(), &Route {
+    method: Method::Get, path: web::PATH, service: web::PAGES, operation: "index",
+    access: Access::OperatorCapability(VIEW), framed: true,
+}) }
+// Bilimbi's menu has "admin.system.software" as an empty container; here it
+// is the page itself.
+bilibi_menu::contribute!(
+    "base/software",
+    bilibi_menu::MenuItem::page("admin.system.software", "Software", web::PATH)
+        .under("admin.system")
+        .icon("hero-cube")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(40)
+);
+// The page's writes are this module's own contracts (ADR 01): a reviewed
+// plan for a change, install, undo or go-ahead, and a plain submit for cancel.
+inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
+    service: web::PAGES,
+    contracts: &[("build", "base.software.change"), ("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel")],
+    pending: Pending::None,
+}) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu", "base/datetime", "base/locale"],
         migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
+        // Declaration order is build order: the page service reads this one.
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -611,6 +727,17 @@ inventory::submit! {
             });
             BOUND.set(software.clone()).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate software binding".into()))?;
             Ok(software)
+        } }, bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
+            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                follow: Arc::new(follow::Follow::new(db.clone())),
+                db,
+                settings: services.get("base/settings.store")?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
+                software: services.get(SERVICE)?,
+            }))))
         } }],
     }
 }
