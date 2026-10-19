@@ -34,6 +34,11 @@ override. Messages say what happened ("1 setting updated, 1 override
 cleared."). Restore confirms through the shared dialog and deletes only the
 overrides the dialog counted that are still overridden.
 
+A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; today the Software pairing key, `base.software.pairing_key.change`)
+asks for the holder's authenticator code every time before Save or Restore
+touches it. The host sends the browser to confirm and back, and the person
+saves again. Other fields ask for nothing.
+
 ## Stored-secret reveal
 
 "Show stored value" appears only for an actor holding

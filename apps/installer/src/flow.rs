@@ -51,6 +51,19 @@ struct Undone {
     migrated: bool,
     original: Option<PathBuf>,
     since: String,
+    /// The plug-ins that were switched on before it, when it recorded them.
+    plugins: Option<Vec<Value>>,
+}
+/// Where the release the owner asked for was found, and how to name it.
+struct Found {
+    from: PathBuf,
+    /// The source as the result names it: an instance, an address, a file.
+    name: String,
+    /// "dev release 3", "https://dev.example.com release 3", "the uploaded file upload-2 (…)".
+    text: String,
+    /// The folder under `incoming/` an uploaded file was unpacked into; it
+    /// stays for another try unless the file is spent or cannot be installed.
+    uploaded: Option<PathBuf>,
 }
 /// Where a failed install or undo goes back to, and what it says about it.
 struct Back {
@@ -160,9 +173,19 @@ impl<'a> Run<'a> {
         self.set(key, "failed", detail).await
     }
     async fn finish(&mut self, state: &str, result: Value) -> Db<()> {
+        self.finish_with_plugins(state, result, None).await
+    }
+    /// `finish`, with the plug-ins that are to be switched on after it put
+    /// in the same transaction as the outcome.
+    async fn finish_with_plugins(
+        &mut self,
+        state: &str,
+        result: Value,
+        plugins: Option<&[Value]>,
+    ) -> Db<()> {
         self.forget_history();
         jobs::skip_pending(&*self.client, &self.job).await?;
-        jobs::finish(&*self.client, &self.job, state, &result).await?;
+        jobs::finish_with_plugins(&mut *self.client, &self.job, state, &result, plugins).await?;
         self.log(&format!(
             "{state}: {}",
             result["message"].as_str().unwrap_or("")
@@ -267,6 +290,9 @@ impl<'a> Run<'a> {
                     let _ = fs::remove_dir_all(self.layout.release(stale));
                 }
             }
+            // A release downloaded for this job is downloaded again when the
+            // owner starts again; an uploaded file stays for it.
+            self.drop_download();
             self.interrupted(
                 "The installer was interrupted before the pause. Nothing changed. Start again.",
             )
@@ -348,7 +374,7 @@ impl<'a> Run<'a> {
         let fetched = if self.is_done("fetch") {
             self.detail("fetch")
         } else {
-            self.start("fetch", "Copying the release and checking it")
+            self.start("fetch", "Checking the release and copying it into place")
                 .await?;
             match self.fetch().await {
                 Ok(detail) => {
@@ -461,91 +487,192 @@ impl<'a> Run<'a> {
             " The database kept its shape."
         };
         let seconds = self.pause_seconds().await?;
+        let from = match fetched["source_text"].as_str() {
+            Some(text) => text.to_owned(),
+            None => format!(
+                "{} release {}",
+                fetched["source"].as_str().unwrap_or("the source"),
+                fetched["source_release"]
+            ),
+        };
+        let after = fetched["plugins"].as_array().cloned();
+        let before = match &after {
+            Some(_) => Some(jobs::enabled_plugins(&*self.client, &self.job).await?),
+            None => None,
+        };
         let message = format!(
-            "Release {release} is in service, installed from {} release {}.{database} {}",
-            fetched["source"].as_str().unwrap_or("the source"),
-            fetched["source_release"],
+            "Release {release} is in service, installed from {from}.{database} {}{}",
             composition::describe(&fetched["changes"]),
+            plugin_sentence(before.as_deref(), after.as_deref()),
         );
-        self.finish(
-            "done",
-            json!({
-                "release": release, "previous_release": previous, "migrated": migrated,
-                "backup": backup["backup"], "backup_at": backup["backup_at"],
-                "source": fetched["source"], "source_release": fetched["source_release"],
-                "sha256": fetched["sha256"], "program": fetched["program"],
-                "platform": fetched["platform"], "domains": fetched["domains"],
-                "extensions": fetched["extensions"], "changes": fetched["changes"],
-                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
-            }),
-        )
-        .await?;
+        let mut result = json!({
+            "release": release, "previous_release": previous, "migrated": migrated,
+            "backup": backup["backup"], "backup_at": backup["backup_at"],
+            "source": fetched["source"], "source_release": fetched["source_release"],
+            "sha256": fetched["sha256"], "program": fetched["program"],
+            "platform": fetched["platform"], "domains": fetched["domains"],
+            "extensions": fetched["extensions"], "changes": fetched["changes"],
+            "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
+        });
+        if let Some(before) = &before {
+            result["plugins"] = json!({"before": before, "after": after});
+        }
+        self.finish_with_plugins("done", result, after.as_deref())
+            .await?;
         self.prune(&[release, previous]);
         Ok(())
     }
 
-    /// The release the owner asked for, copied from the sibling instance's
-    /// folder into the next number here, checked and tried.
+    /// The release the owner asked for, copied into the next number here,
+    /// checked and tried. It comes from a sibling instance's folder, from
+    /// the folder the program downloaded it into (`incoming/job-<id>/`),
+    /// or from an uploaded file (`incoming/upload-<n>/`); the checks are
+    /// the same whichever way it came. A downloaded release is never reused
+    /// (a new try downloads again under a new job), so its folder goes
+    /// whatever the outcome.
     async fn fetch(&mut self) -> Result<Value, String> {
+        let fetched = self.fetch_release().await;
+        self.drop_download();
+        fetched
+    }
+    /// Removes the folder the program downloaded this job's release into.
+    fn drop_download(&self) {
+        if let Some(dir) = self.detail("download")["folder"]
+            .as_str()
+            .and_then(|folder| self.layout.incoming(folder))
+        {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    async fn fetch_release(&mut self) -> Result<Value, String> {
         if !self.layout.converted() {
             return Err(self.layout.conversion_advice());
         }
         let request = self.job.request.clone();
-        let wanted = request["release"]
-            .as_u64()
-            .ok_or("the request names no release")?;
-        let source_name = match request["source"]["kind"].as_str() {
-            Some("same_machine") => request["source"]["instance"]
-                .as_str()
-                .ok_or("the request names no source instance")?
-                .to_owned(),
+        let wanted = request["release"].as_u64();
+        let source = match request["source"]["kind"].as_str() {
+            Some("same_machine") => {
+                let name = request["source"]["instance"]
+                    .as_str()
+                    .ok_or("the request names no source instance")?
+                    .to_owned();
+                let wanted = wanted.ok_or("the request names no release")?;
+                let sibling = self.layout.sibling(&name).map_err(|reason| {
+                    format!("{name} is not an instance on this machine: {reason}")
+                })?;
+                let from = sibling.release(wanted);
+                if !from.join("bilibi-web").is_file() {
+                    let have = sibling.release_numbers();
+                    return Err(format!(
+                        "{name} has no release {wanted}. It has: {}.",
+                        if have.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            have.iter()
+                                .map(u64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ));
+                }
+                match sibling.current() {
+                    Some(n) if n == wanted => {}
+                    Some(n) => {
+                        return Err(format!(
+                            "{name} runs release {n} now, not {wanted}. Install the release it runs."
+                        ))
+                    }
+                    None => {
+                        return Err(format!(
+                            "{name} has no release in service, so it cannot vouch for release {wanted}."
+                        ))
+                    }
+                }
+                let source_service = Service::of(&sibling)?;
+                if !source_service.answers().await {
+                    return Err(format!(
+                        "{name} is not answering (its service is {}), so it cannot vouch for release {wanted}.",
+                        source_service.state()
+                    ));
+                }
+                Found {
+                    from,
+                    name: name.clone(),
+                    text: format!("{name} release {wanted}"),
+                    uploaded: None,
+                }
+            }
             Some("https") => {
-                return Err(format!(
-                    "Downloading a release from {} is not possible yet: a release reaches this machine only as a copy between instance folders. Set \"Install releases tested on\" to an instance on this machine, or copy the release folder here.",
-                    request["source"]["address"].as_str().unwrap_or("another machine")
-                ))
+                let address = request["source"]["address"]
+                    .as_str()
+                    .unwrap_or("the source")
+                    .to_owned();
+                let download = self.detail("download");
+                let folder = download["folder"]
+                    .as_str()
+                    .ok_or("the download step recorded no folder, so the downloaded release cannot be found")?;
+                let from = self
+                    .layout
+                    .incoming(folder)
+                    .filter(|dir| dir.join("bilibi-web").is_file())
+                    .ok_or_else(|| format!("the downloaded release is missing from incoming/{folder}; ask again so it is downloaded again"))?;
+                let wanted = wanted.ok_or("the request names no release")?;
+                Found {
+                    from: from.clone(),
+                    name: address.clone(),
+                    text: format!("{address} release {wanted}"),
+                    uploaded: None,
+                }
+            }
+            Some("upload") => {
+                let bundle = request["source"]["bundle"]
+                    .as_str()
+                    .ok_or("the request names no uploaded file")?
+                    .to_owned();
+                let from = self
+                    .layout
+                    .incoming(&bundle)
+                    .filter(|dir| dir.join("bilibi-web").is_file())
+                    .ok_or_else(|| {
+                        format!("The uploaded file {bundle} is no longer here. Upload it again.")
+                    })?;
+                let origin = request["source"]["from"]["label"]
+                    .as_str()
+                    .map_or(String::new(), |label| format!(" from {label}"));
+                let detail = match wanted {
+                    Some(n) => format!(" (release {n}{origin})"),
+                    None if origin.is_empty() => String::new(),
+                    None => format!(" ({})", origin.trim_start()),
+                };
+                Found {
+                    from: from.clone(),
+                    name: bundle.clone(),
+                    text: format!("the uploaded file {bundle}{detail}"),
+                    uploaded: Some(from),
+                }
             }
             _ => return Err("the request names no source".into()),
         };
-        let source = self.layout.sibling(&source_name).map_err(|reason| {
-            format!("{source_name} is not an instance on this machine: {reason}")
-        })?;
-        let from = source.release(wanted);
-        if !from.join("bilibi-web").is_file() {
-            let have = source.release_numbers();
-            return Err(format!(
-                "{source_name} has no release {wanted}. It has: {}.",
-                if have.is_empty() {
-                    "none".to_owned()
-                } else {
-                    have.iter()
-                        .map(u64::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
-            ));
-        }
-        let sha = layout::verify_checksum(&from)?;
-        match source.current() {
-            Some(n) if n == wanted => {}
-            Some(n) => {
-                return Err(format!(
-                    "{source_name} runs release {n} now, not {wanted}. Install the release it runs."
-                ))
-            }
-            None => {
-                return Err(format!(
-                "{source_name} has no release in service, so it cannot vouch for release {wanted}."
-            ))
+        let checked = self.copy_checked(&source, wanted).await;
+        if let Some(dir) = &source.uploaded {
+            // An uploaded file waits for another try, unless it is now copied
+            // into place or failed its checks.
+            if checked.is_ok()
+                || matches!(&checked, Err(reason) if reason.contains("checksum") || reason.contains("built for") || reason.contains("does not run"))
+            {
+                let _ = fs::remove_dir_all(dir);
             }
         }
-        let source_service = Service::of(&source)?;
-        if !source_service.answers().await {
-            return Err(format!(
-                "{source_name} is not answering (its service is {}), so it cannot vouch for release {wanted}.",
-                source_service.state()
-            ));
-        }
+        checked
+    }
+    /// The checks every way in shares, then the copy: the checksum, built
+    /// for this kind of server, not already in service, disk for the
+    /// program and a backup; then the copy into the next number, checked
+    /// again and run once to prove it starts here.
+    async fn copy_checked(&mut self, source: &Found, wanted: Option<u64>) -> Result<Value, String> {
+        let from = &source.from;
+        let sha = layout::verify_checksum(from)?;
+        layout::built_for_this_server(from)?;
         let current = self
             .layout
             .current()
@@ -556,7 +683,8 @@ impl<'a> Run<'a> {
             == Some(sha.as_str())
         {
             return Err(format!(
-                "This instance already runs the same program as {source_name} release {wanted} (release {current} here). There is nothing to install."
+                "This instance already runs the same program as {} (release {current} here). There is nothing to install.",
+                source.text
             ));
         }
         let program_bytes = fs::metadata(from.join("bilibi-web"))
@@ -586,7 +714,7 @@ impl<'a> Run<'a> {
         )
         .await
         .map_err(|error| jobs::short(&error))?;
-        let bytes = layout::copy_release(&from, &dst).map_err(|error| {
+        let bytes = layout::copy_release(from, &dst).map_err(|error| {
             let _ = fs::remove_dir_all(&dst);
             format!("could not copy into {}: {error}", dst.display())
         })?;
@@ -600,6 +728,9 @@ impl<'a> Run<'a> {
         let status = program_status(&dst).inspect_err(|_| {
             let _ = fs::remove_dir_all(&dst);
         })?;
+        let plugins = layout::read_plugins(&dst).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&dst);
+        })?;
         let program: String = status
             .lines()
             .next()
@@ -610,11 +741,11 @@ impl<'a> Run<'a> {
         let now = composition::parse(&status);
         let changes = composition::diff(&composition_of(&self.layout.release(current)), &now);
         Ok(json!({
-            "message": format!("Copied {source_name} release {wanted} as release {n} here: {program}"),
-            "release": n, "previous": current, "source_release": wanted, "source": source_name,
+            "message": format!("Copied {} as release {n} here: {program}", source.text),
+            "release": n, "previous": current, "source_release": wanted, "source": source.name, "source_text": source.text,
             "sha256": sha, "bytes": bytes, "program": program,
             "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
-            "changes": changes,
+            "changes": changes, "plugins": plugins,
         }))
     }
     /// With `switch: ask`, the instance keeps running until the owner says
@@ -985,22 +1116,28 @@ impl<'a> Run<'a> {
         let changes =
             composition::diff(&composition_of(&self.layout.release(undone.release)), &now);
         let seconds = self.pause_seconds().await?;
+        let before = match &undone.plugins {
+            Some(_) => Some(jobs::enabled_plugins(&*self.client, &self.job).await?),
+            None => None,
+        };
         let message = format!(
-            "Back on release {previous}. {data} {}",
-            composition::describe(&changes)
+            "Back on release {previous}. {data} {}{}",
+            composition::describe(&changes),
+            plugin_sentence(before.as_deref(), undone.plugins.as_deref()),
         );
-        self.finish(
-            "done",
-            json!({
-                "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
-                "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
-                "lost": self.detail("restore")["lost"],
-                "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
-                "changes": changes,
-                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
-            }),
-        )
-        .await?;
+        let mut result = json!({
+            "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
+            "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
+            "lost": self.detail("restore")["lost"],
+            "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
+            "changes": changes,
+            "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
+        });
+        if let Some(before) = &before {
+            result["plugins"] = json!({"before": before, "after": undone.plugins});
+        }
+        self.finish_with_plugins("done", result, undone.plugins.as_deref())
+            .await?;
         self.prune(&[previous, undone.release]);
         Ok(())
     }
@@ -1033,6 +1170,7 @@ impl<'a> Run<'a> {
             migrated: facts["migrated"].as_bool().unwrap_or(false),
             original: facts["backup"].as_str().map(PathBuf::from),
             since: facts["backup_at"].as_str().unwrap_or("").to_owned(),
+            plugins: facts["plugins"]["before"].as_array().cloned(),
         }))
     }
 
@@ -1094,6 +1232,45 @@ fn program_status(dir: &std::path::Path) -> Result<String, String> {
 /// run.
 fn composition_of(dir: &std::path::Path) -> Value {
     program_status(dir).map_or(Value::Null, |status| composition::parse(&status))
+}
+/// What changes in the plug-ins switched on, in words, or nothing when the
+/// release does not say or the list stays the same.
+fn plugin_sentence(before: Option<&[Value]>, after: Option<&[Value]>) -> String {
+    let (Some(before), Some(after)) = (before, after) else {
+        return String::new();
+    };
+    let ids = |list: &[Value]| -> Vec<String> {
+        list.iter()
+            .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (was, now) = (ids(before), ids(after));
+    let on: Vec<&String> = now.iter().filter(|id| !was.contains(id)).collect();
+    let off: Vec<&String> = was.iter().filter(|id| !now.contains(id)).collect();
+    let mut parts = Vec::new();
+    if !on.is_empty() {
+        parts.push(format!(
+            "switched on {}",
+            on.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !off.is_empty() {
+        parts.push(format!(
+            "switched off {}",
+            off.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" Plug-ins: {}.", parts.join("; "))
+    }
 }
 fn pause_sentence(seconds: i64) -> String {
     format!(
