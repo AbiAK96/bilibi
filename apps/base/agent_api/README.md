@@ -82,6 +82,19 @@ live grant/revocation, cross-tenant denial, deny precedence and decision logs.
 Temporary grants and sessions are removed on successful completion. This is a
 manual runtime specimen, with no unit tests or assertions.
 
+## MCP agent and client labels
+
+A model can report itself directly through any generic tool, with no local client configuration:
+
+```json
+{"name":"search","arguments":{"query":"companies","agent_self_report":"claude-code/sonnet-4.5-default"}}
+```
+
+The optional `agent_self_report` argument is available on `search`, `describe`, `guide`, `read`, `plan` and `commit`. MCP connect instructions and tool descriptions ask agents to include it on every call, ask their user for unknown harness/model/version/effort parts, never guess, and omit parts nobody can give. The example is a shape example, not a value to copy.
+
+- The host consumes the argument before operation dispatch; it is never business input or part of plan identity, input or preview comparisons.
+- The argument is the highest-precedence source of the report. Precedence, the shape check, what is recorded and the separate **Client identity** transport evidence are owned by the [host contract](../../web/README.md).
+
 ## Reviewed safe writes
 
 Use `base/agent_api.plans` ([src/plans.rs](src/plans.rs)) for `preview` and
