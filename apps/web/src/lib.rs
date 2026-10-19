@@ -19,7 +19,7 @@ mod transport;
 mod webhooks;
 use askama::Template;
 use axum::{
-    extract::{DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Form, Query, State, WebSocketUpgrade},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -316,88 +316,58 @@ pub fn router(app: App) -> Router {
         .route(media::STREAM, get(media::stream))
         .route(media::ATTACHMENT, get(media::attachment))
         .route(pdf::RENDER, get(pdf::render))
-        .route("/fonts/{name}", get(font_asset))
-        .route(
-            "/assets/ui-specimen.html",
-            get(|| async { asset_response("ui-specimen.html") }),
-        )
+        .route("/fonts/{name}", get(embedded_asset))
+        .route("/assets/{name}", get(embedded_asset))
         .route("/assets/ui-components.html", get(components_specimen))
-        .route(
-            "/assets/logo.svg",
-            get(|| async { asset_response("logo.svg") }),
-        )
         .route("/assets/ui-feedback.html", get(feedback_specimen))
-        .route(
-            "/assets/ui-feedback-driver.js",
-            get(|| async { asset_response("ui-feedback-driver.js") }),
-        )
-        .route(
-            "/assets/ui.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::UI_JS,
-                )
-            }),
-        )
-        .route(
-            "/favicon.svg",
-            get(|| async { asset_response("favicon.svg") }),
-        )
-        .route(
-            "/favicon.ico",
-            get(|| async { asset_response("favicon.ico") }),
-        )
-        .route(
-            "/assets/app.css",
-            get(|| async { ([(header::CONTENT_TYPE, "text/css")], bilibi_ui::CSS) }),
-        )
-        .route(
-            "/assets/shell.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::SHELL_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/hooks.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::HOOKS_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/topbar.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::TOPBAR_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/live.js",
-            get(|| async {
-                let script = bilibi_ui::JS.replace(
-                    "__BILIBI_DEV_RELOAD__",
-                    if cfg!(debug_assertions) {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                );
-                ([(header::CONTENT_TYPE, "text/javascript")], script)
-            }),
-        )
+        .route("/favicon.svg", get(embedded_asset))
+        .route("/favicon.ico", get(embedded_asset))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))
+        .layer(
+            tower_http::compression::CompressionLayer::new()
+                .quality(tower_http::CompressionLevel::Precise(4))
+                .compress_when(tower_http::compression::predicate::Predicate::and(
+                    tower_http::compression::DefaultPredicate::new(),
+                    is_textual,
+                )),
+        )
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
+}
+
+/// Only text pages and assets compress; any response with a
+/// `Content-Disposition` (attachments, inline media, release bundles) and any
+/// non-text body keeps its bytes and `Content-Length`.
+fn is_textual(
+    _status: StatusCode,
+    _version: axum::http::Version,
+    headers: &HeaderMap,
+    _extensions: &axum::http::Extensions,
+) -> bool {
+    if headers.contains_key(header::CONTENT_DISPOSITION) {
+        return false;
+    }
+    let Some(value) = headers.get(header::CONTENT_TYPE) else {
+        return false;
+    };
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    let essence = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    essence.starts_with("text/")
+        || matches!(
+            essence.as_str(),
+            "application/json" | "application/javascript" | "application/xml"
+        )
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
 }
 
 /// The shared component specimen: the screenshot baseline for the primitives
@@ -413,15 +383,31 @@ async fn feedback_specimen() -> std::result::Result<Html<String>, HttpError> {
     Ok(Html(render(bilibi_ui::FeedbackSpecimen::new())?))
 }
 
-fn asset_response(name: &str) -> Response {
-    match bilibi_ui::static_asset(name) {
-        Some(asset) => ([(header::CONTENT_TYPE, asset.content_type)], asset.bytes).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+/// Only an allowlisted embedded asset with its current content hash earns a
+/// public immutable policy. Pages (including specimens) keep the host default.
+async fn embedded_asset(
+    uri: axum::http::Uri,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(asset) = bilibi_ui::Assets::get(uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let version = query.get("v");
+    if version.is_some_and(|value| value != asset.version()) {
+        return StatusCode::NOT_FOUND.into_response();
     }
-}
-
-async fn font_asset(Path(name): Path<String>) -> Response {
-    asset_response(&name)
+    let mut response = (
+        [(header::CONTENT_TYPE, asset.content_type)],
+        asset.bytes.as_ref(),
+    )
+        .into_response();
+    if version.is_some() && !asset.content_type.starts_with("text/html") {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    response
 }
 
 /// Defaults only: a handler that sets its own policy, as signed media streams
