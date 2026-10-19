@@ -110,7 +110,7 @@ enum Chosen {
 
 /// What this server already has that an install is checked against: the
 /// release files uploaded here, the checksum of the program in service and
-/// the plug-ins switched on.
+/// the add-ons switched on.
 pub struct Held<'a> {
     pub uploads: &'a [(String, Value)],
     pub running_sha256: Option<&'a str>,
@@ -156,7 +156,7 @@ pub fn install(
         }
         (None, Some(release)) if release >= 1 => {
             let Some(installs_from) = &instance.installs_from else {
-                return Err(SoftwareError::field("instance", &format!("{} has no source to install from. A server owner sets \"Install releases tested on\" under Instance in the settings first, or uploads a release file here.", instance.label)));
+                return Err(SoftwareError::field("instance", &format!("{} has no update server chosen. A server owner sets \"Install releases tested on\" under Instance in the settings first, or uploads a release file here.", instance.label)));
             };
             let listing = match source.map(|facts| &facts.listing) {
                 Some(Ok(listing)) => listing,
@@ -169,7 +169,7 @@ pub fn install(
                 None => {
                     return Err(SoftwareError::field(
                         "release",
-                        "The source was not asked about its releases, so the request cannot be checked.",
+                        "Bilibi has not contacted the update server, so it cannot check this request.",
                     ))
                 }
             };
@@ -219,7 +219,7 @@ pub fn install(
         _ => {
             return Err(SoftwareError::field(
                 "release",
-                "Give the release number the source reports as tested, like 42, or the name of a release file uploaded here, like upload-3 (base.software.releases lists both).",
+                "Give the release number currently running on the update server, like 42, or the name of a release file uploaded here, like upload-3 (base.software.releases lists both).",
             ))
         }
     };
@@ -288,7 +288,7 @@ pub fn install(
             ));
         }
     }
-    // The plug-ins the release switches on travel with it; a release that
+    // The add-ons the release switches on travel with it; a release that
     // does not say leaves the server's own list as it is.
     let plugins = facts["plugins"].as_array().map(|list| {
         let wanted = plugin_ids(list);
@@ -321,22 +321,22 @@ pub fn install(
     };
     let rest = if downloads {
         vec![
-            "The source still runs and reports this release healthy",
-            "The download's checksum matches",
+            "The update server still runs this release and reports that it works",
+            "The downloaded file matches its check code (checksum)",
             "The release was built for this kind of server",
             "Enough disk for the program and a backup",
         ]
     } else if matches!(chosen, Chosen::Uploaded { .. }) {
         vec![
-            "The checksum matches",
+            "The file matches its check code (checksum)",
             "The release was built for this kind of server",
             "Enough disk for the program and a backup",
         ]
     } else {
         vec![
-            "The checksum matches",
+            "The file matches its check code (checksum)",
             "The release was built for this kind of server",
-            "The source still reports it healthy",
+            "The update server still reports that it works",
             "Enough disk for the program and a backup",
         ]
     };
@@ -370,7 +370,7 @@ pub fn install(
         switch,
     })
 }
-/// The ids in a list of `{id, ...}` plug-in entries.
+/// The ids in a list of `{id, ...}` add-on entries.
 fn plugin_ids(list: &[Value]) -> Vec<String> {
     list.iter()
         .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
@@ -383,7 +383,7 @@ fn strings(list: &Value) -> Vec<String> {
         .filter_map(|id| id.as_str().map(str::to_owned))
         .collect()
 }
-/// Going from the plug-ins switched on `now` to `wanted`: (to switch on, to switch off).
+/// Going from the add-ons switched on `now` to `wanted`: (to switch on, to switch off).
 fn plugin_moves(now: &[String], wanted: &[String]) -> (Vec<String>, Vec<String>) {
     (
         wanted
@@ -401,10 +401,10 @@ fn plugin_moves(now: &[String], wanted: &[String]) -> (Vec<String>, Vec<String>)
 fn plugin_words(on: &[String], off: &[String]) -> Option<String> {
     let mut parts = Vec::new();
     if !on.is_empty() {
-        parts.push(format!("switch on plug-in {}", on.join(", ")));
+        parts.push(format!("enable add-on {}", on.join(", ")));
     }
     if !off.is_empty() {
-        parts.push(format!("switch off plug-in {}", off.join(", ")));
+        parts.push(format!("disable add-on {}", off.join(", ")));
     }
     (!parts.is_empty()).then(|| parts.join("; "))
 }
@@ -505,7 +505,7 @@ pub fn describe_changes(changes: &Value) -> Option<String> {
         });
     }
     Some(if parts.is_empty() {
-        "No Domain changes; the same versions as now.".to_owned()
+        "The business modules and their versions stay the same.".to_owned()
     } else {
         parts.join("; ")
     })
@@ -546,7 +546,7 @@ pub struct UndoFacts {
     pub previous_release: i64,
     pub restores_backup: bool,
     pub backup: Option<String>,
-    /// The plug-ins switched on after it and before it, when it recorded them.
+    /// The add-ons switched on after it and before it, when it recorded them.
     pub plugins: Option<(Vec<String>, Vec<String>)>,
 }
 /// Undo needs the facts the worker wrote at the end: which release it put
@@ -662,7 +662,7 @@ pub fn undo(
             plugin_words(&on, &off)
         })
         .map_or(String::new(), |words| {
-            format!(" The plug-ins go back too: {words}.")
+            format!(" The enabled add-ons go back too: {words}.")
         });
     let summary = format!(
         "{}: undo job {} (back to release {} from {})",

@@ -1,6 +1,6 @@
 # Base Software
 
-`base/software` discovers official Domains and Extensions, shows what each server runs, and queues safe install and undo jobs for tested releases. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
+`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
 
 ## Add a Domain
 
@@ -12,7 +12,7 @@ read base.software.open {"propose":{"domains":["finance"]}}
 
 The answer includes Finance’s description, official repository, a release that accepts this server’s Bilibi version, whether the exact commits were recorded as tested together, and `local_steps`. A proposal highlights entries; it creates no job.
 
-**Add it in your local Bilibi copy and build it there; then install the tested release here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
+**Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
 
 ```sh
 git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
@@ -29,23 +29,23 @@ If it is already cloned, fetch and check out the chosen commit there instead. Ex
 
 ## Compatibility
 
-**Accepts this version** means the release’s Platform requirement accepts the running Bilibi version; **recorded as tested together** means CI recorded the exact running Platform commit and the selected Domain commit.
+**Compatibility** states whether a module version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
 
 - Prefer the newest release recorded as tested with this running commit, then the newest release whose requirements accept this version.
 - Each entry includes `recommended_version`, a plain `compatibility` sentence, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.
 - No compatible release, no published release, or no exact tested pair is stated plainly. A development build or an unreleased commit does not inherit a released commit’s evidence.
 - Domains were tested individually; separate pairs do not prove a combined composition. Check your composition locally.
 - The published catalogue is read over HTTPS through `base/integration` as the requesting person and cached for five minutes. **Software › Catalogue address** can point to an operator’s catalogue. An unavailable catalogue returns `available: false` and a reason; installed status and installation remain available.
-- `domains` and optional `extensions` hold repository and release information; extensions without CI evidence are labelled as not recorded as tested. `plugins` retains the existing release plug-in information.
+- `domains` and optional `extensions` hold repository and release information; extensions without CI evidence are labelled as not recorded as tested. `plugins` retains the existing release add-on information.
 
-## Sources of facts
+## Data sources
 
 | Fact | Source |
 | --- | --- |
 | Instance role, label, colour and installation source | `bilibi_system::Instance::resolve` |
 | Installed Platform, Domains and Extensions | Host-supplied `bilibi_module_registry::Composition`, compiled into the program |
 | Available software and CI evidence | Published `catalogue.json` ([versions contract](../../../docs/versions.md)) |
-| Jobs, steps and enabled plug-ins | `base_software_jobs`, `base_software_steps`, `base_software_plugins` |
+| Jobs, steps and enabled add-ons | `base_software_jobs`, `base_software_steps`, `base_software_plugins` |
 | What a backup restore loses | Server-wide `base_audit_mutations` since the backup |
 
 ## Access
@@ -65,11 +65,11 @@ Reads and reviewed writes use the shared Agent API; the page uses the same contr
 
 | Contract | Input | Answer or review |
 | --- | --- | --- |
-| `base.software.status` | none | Instance, installed composition, plug-ins, uploads, current or last job with steps and cancel state, Undo and recent history |
+| `base.software.status` | none | Instance, installed composition, add-ons, uploads, current or last job with steps and cancel state, Undo and recent history |
 | `base.software.catalogue` | none | Discovery, compatibility and local build instructions on every instance |
 | `base.software.open` | optional `propose.domains`, `propose.extensions` | Status plus catalogue, matching and unknown proposals, local next step and `card.resource` |
 | `base.software.releases` | none | Source listing, uploads, pairing state and releases kept here |
-| `base.software.install` | `release` or uploaded `bundle`; optional `switch` | Source, composition changes, plug-in changes, checks, pause and installer steps |
+| `base.software.install` | `release` or uploaded `bundle`; optional `switch` | Source, composition changes, add-on changes, checks, pause and installer steps |
 | `base.software.undo` | optional `job` | Previous release, backup restore and backup time; only the newest completed job can be undone |
 | `base.software.go` | optional `job` | Go-ahead for a running install copied and waiting with `switch: ask`, before any later step starts |
 | `base.software.cancel` | optional `job` | Remove a queued job, or request stop before the pause; refused after the pause starts |
@@ -81,7 +81,7 @@ Install requires the source to answer and the selected release to be the one it 
 
 ## Page and ChatGPT card
 
-The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) show discovery and local build steps on every instance, alongside installed status, installation and job history.
+The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) use the title **Manage domains and extensions**, with **Installed version**, **Available domains**, **Available extensions**, **Compatibility** and **Backups**. Developer commands, installation reviews and job history remain available on every instance.
 
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
@@ -97,7 +97,16 @@ The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.htm
 
 Install steps are *fetch, backup, migrate, switch, verify*, with *download* first for a remote source. Undo uses *backup, restore* (when needed), *switch, verify*. The first `backup` pauses the instance; cancellation is refused after it starts. The installer backs up before updating, checks the new program, and automatically switches back on a failed check. Undo restores the earlier backup when migrations changed the database; its review names the backup time and the page separately refreshes the count of later audited changes. The committed review records `lost_at_commit`.
 
-Migration `base-software-003-local-builds` cancels legacy queued or running `change` jobs, skips unfinished steps, records the reason, gives never-claimed jobs the worker name `software-migration` and clears their settlement mark so the server audits and notifies the outcome. It preserves completed history and prior Undo information. A constraint prevents new active change jobs. The only builder setting, `software.build_jobs`, is removed. All existing tables and columns remain needed for install, undo, release plug-ins or historical evidence; no applied migration is edited.
+Migration `base-software-003-local-builds` cancels legacy queued or running `change` jobs, skips unfinished steps, records the reason, gives never-claimed jobs the worker name `software-migration` and clears their settlement mark so the server audits and notifies the outcome. It preserves completed history and prior Undo information. A constraint prevents new active change jobs. The only builder setting, `software.build_jobs`, is removed. All existing tables and columns remain needed for install, undo, release add-ons or historical evidence; no applied migration is edited.
+
+## Database backups
+
+**Software shows each backup's time and size for installs and undos among the ten most recent jobs; only accounts that can manage software see the file.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A view-only account gets no file path from the page, `base.software.status` or `base.software.open`: the `backup` fields are dropped and job messages that name a file say "a backup file on this server" instead. A recorded file path does not prove that the file is still kept.
+
+- The installer writes a PostgreSQL dump under the instance folder at `backups/job-<n>/<database>.dump` before changing anything.
+- After a successful install or undo, it keeps the newest `KEEP_BACKUPS` backup folders (`apps/installer/src/flow.rs`, `prune`) and removes older ones. There is no fixed age in days. The backup step records the number as `keep_backups`; `status` carries the sentence once as `backup_rule`, and only the Backups card states it.
+- Undo restores the pre-install backup only when the install changed the database structure. It then loses data entered since that backup. Otherwise, Undo switches the program back and leaves data alone. Undo takes a new safety backup first.
+- If restoration fails, the service stays stopped and the job message names the file to restore by hand.
 
 ## How a worker plugs in
 
@@ -107,7 +116,7 @@ The separate installer (`apps/installer`) reads and writes the durable job table
 2. Mark each step running, then done, failed or skipped, with timestamps and a plain `detail.message`. Send `NOTIFY` after changes. A switch-back step may be appended after failure.
 3. Lock the job before starting the pausing step. Honour `cancel_requested_at` there, or start the pause under the same lock, so cancel cannot cross it.
 4. Finish with state, time and result. Result keys include `release`, `previous_release`, `migrated`, `backup`, `backup_at`, composition and `changes`, `pause_seconds`, and a plain `message`. An undo with a restore records `lost: {since, changes, by_kind}`; status adds its loss sentence.
-5. Apply `plugins/enabled.json` from the release in the transaction that finishes the job and record `plugins: {before, after}`. Undo restores `before`. An absent file preserves existing plug-ins.
+5. Apply `plugins/enabled.json` from the release in the transaction that finishes the job and record `plugins: {before, after}`. Undo restores `before`. An absent file preserves existing add-ons.
 6. The server settles finished outcomes every 15 seconds and at startup through `MutationBoundary` as a `base/software.job` change under `software.finished`, attributed to the recorded worker. After commit it re-proves the requester’s live account through `Authentication` and sends a `software.job` notice. Missing accounts get no notice; notification failure never prevents settlement. Notice bodies are bounded to 900 characters.
 
 Before a database update committed, a restarted install ends interrupted and restores the previous running release. After the update committed, or during restore/switch-back, the installer resumes. It carries existing software and step-up evidence unchanged across a restore; every other write since the backup is lost. See [`apps/installer/README.md`](../../installer/README.md).
@@ -128,7 +137,7 @@ Servers install releases built in the operator’s local Bilibi copy and checked
 
 ### The release file
 
-One release travels as one file, `bilibi-release-<n>.tar.gz`: the program (`bilibi-web`), its checksum list (`SHA256SUMS`), its pinned recipe (`manifest.txt`, `Cargo.lock`, `release.json`), the plug-ins that travel with it (`plugins/`, with `enabled.json`, the plug-ins switched on; any other file in the folder travels as it is), and `bundle.json`, which names the instance it came from (label, environment, address). The file is made on demand from the release folder (`transport.rs`), so there is nothing to keep in step.
+One release travels as one file, `bilibi-release-<n>.tar.gz`: the program (`bilibi-web`), its checksum list (`SHA256SUMS`), its pinned recipe (`manifest.txt`, `Cargo.lock`, `release.json`), the add-ons that travel with it (`plugins/`, with `enabled.json`, the add-ons switched on; any other file in the folder travels as it is), and `bundle.json`, which names the instance it came from (label, environment, address). The file is made on demand from the release folder (`transport.rs`), so there is nothing to keep in step.
 
 ### Pairing
 
@@ -155,7 +164,7 @@ Each failed check is a plain sentence that says what to do next: "This release w
 
 ### The Release files page
 
-`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Ask the source again** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
+`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Refresh releases** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
 
 ## Caveats
 
