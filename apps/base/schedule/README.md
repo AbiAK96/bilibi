@@ -129,6 +129,8 @@ and every function takes the instant as an argument:
   wall-clock search skips to the following day while the first pass of a fold is
   running, so `next` here also considers the repeat that is still ahead.
 
+The board's Schedule column reads each cron in plain words in the viewer's top-bar zone, converted at the zone's offset now ("Every day at 11:17 PM EDT"). The words name that zone, because a daylight-saving change moves a fixed clock time. A cadence with no clock time ("Every 5 minutes") has no zone to name. When no single clock time reads right in the viewer's zone, the words stay in the saved zone and say so ("Every day at 3:17 AM (UTC; shown in saved time zone)"). The exact saved cron and zone are the tooltip. This is display only: the contributed expression and zone still decide when the task runs, and Next run is the real next instant in the viewer's zone.
+
 Replay any moment with `cargo run -p bilibi-schedule --example schedule-walkthrough -- dst [key instant]`
 (no database). The other modes use a disposable database
 (`BILIBI_DISPOSABLE_SCHEDULE_DEMO=yes`, `DATABASE_URL`, after `bilibi-web migrate`;

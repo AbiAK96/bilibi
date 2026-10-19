@@ -6,6 +6,7 @@ pub mod board;
 pub mod cron;
 pub mod definition;
 pub mod occurrence;
+mod phrase;
 pub mod recurrence;
 mod retention;
 pub mod scheduler;

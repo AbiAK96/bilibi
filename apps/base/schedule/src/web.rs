@@ -16,7 +16,7 @@
 //! in: the company, browser-local or UTC zone, named under the controls.
 use crate::{
     board::{self, Availability, Diagnostics, DueWork, RunQuery, RunSort, TaskSort},
-    Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
+    phrase, Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
 };
 use askama::Template;
 use bilibi_authz::{authorize_operator, effective_capabilities};
@@ -137,7 +137,7 @@ fn task_builtins() -> Vec<BuiltinColumn> {
     vec![
         sortable("name", "Name", ColumnType::String),
         builtin("source", "Source", ColumnType::String, None),
-        builtin("cron", "Cron schedule", ColumnType::String, None),
+        builtin("cron", "Schedule", ColumnType::String, None),
         sortable("next_due", "Next run", ColumnType::Datetime),
         builtin("status", "Status", ColumnType::String, None),
         sortable("last_run", "Last run", ColumnType::Datetime),
@@ -536,6 +536,7 @@ impl Board {
             "tasks" => body.push(&self.tasks_panel(
                 all_tasks.as_deref(),
                 &display,
+                (&zone_name, now),
                 can_execute,
                 can_manage,
             )?),
@@ -618,6 +619,7 @@ impl Board {
         &mut self,
         tasks: Option<&[Task]>,
         display: &DisplayContext,
+        (viewer_zone, now): (&str, Timestamp),
         can_execute: bool,
         can_manage: bool,
     ) -> Result<Html> {
@@ -687,6 +689,7 @@ impl Board {
                 task.misfire.as_str()
             );
             let duration = duration(task.last_runtime_ms);
+            let schedule = phrase::show(task.expression, task.timezone, viewer_zone, now);
             let cells = [
                 (
                     "name",
@@ -704,9 +707,9 @@ impl Board {
                 ),
                 (
                     "cron",
-                    Cell::Cron {
-                        expression: task.expression,
-                        zone: task.timezone,
+                    Cell::Schedule {
+                        words: &schedule.words,
+                        tooltip: &schedule.tooltip,
                     },
                 ),
                 ("next_due", Cell::Instant(&next)),
@@ -770,6 +773,11 @@ impl Board {
             ..Card::default()
         })?;
         render(TasksPanel {
+            timezone_request: if self.browser_zone.is_none() {
+                self.timezone_request.clone()
+            } else {
+                String::new()
+            },
             search,
             status: select,
             unavailable,
@@ -1224,9 +1232,9 @@ pub(crate) enum Cell<'a> {
         owner: &'a str,
         route: Option<&'a str>,
     },
-    Cron {
-        expression: &'a str,
-        zone: &'a str,
+    Schedule {
+        words: &'a str,
+        tooltip: &'a str,
     },
     Instant(&'a Instant),
     Status {
@@ -1274,6 +1282,7 @@ struct Actions {
 #[derive(Template)]
 #[template(path = "schedule_tasks.html")]
 struct TasksPanel {
+    timezone_request: String,
     search: Field,
     status: Field,
     unavailable: Html,
