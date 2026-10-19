@@ -32,9 +32,10 @@ country must be imported before its postcodes; its rows are replaced wholesale
 is skipped, and the operator's corrections (below) are materialized again
 before the transaction commits. `ReferenceImport` (registry service
 `core/geonames.import`) is the API: `run` for the operator command, `run_as`
-for a screen, which checks `admin.geonames.update` on the sealed scope first.
-A run reports one `DatasetReport` per `Target` (a dataset or one country's
-postcodes), in that order.
+for a screen, which checks `admin.geonames.update` on the sealed scope first;
+`import_as` does the same for one `Target`, so a screen can report each
+country as it runs. A run reports one `DatasetReport` per `Target` (a dataset
+or one country's postcodes), in that order.
 
 - **Streaming, atomic per dataset.** Files are read line by line and written in
   500-row `unnest` upserts inside one transaction. A database failure in any
@@ -143,7 +144,7 @@ flash, never a page-clearing error.
 
 - **Countries**: ISO, name (inline edit → `update_country_name`), capital,
   phone, currency, population and updated date. Update (operators) runs
-  `ReferenceImport::run_as` for the countries dataset in the background and
+  `ReferenceImport::import_as` for the countries dataset in the background and
   reports what it did: a fresh or confirmed-current download counts as an
   update, a fallback to the cached file is a warning that says how old that
   data is, and a failed download or import says the data was not changed.
@@ -159,7 +160,18 @@ flash, never a page-clearing error.
   as values change (`check_postcode`), lists the chosen country's divisions
   as `Name (CC.code)`, and saves through `create_postcode`/`update_postcode`:
   refusals land beside their fields, a stale revision or vanished row closes
-  the dialog with a flash and reloads the list.
+  the dialog with a flash and reloads the list. Import and Update
+  (operators; Belimbing `Postcodes\Index::{import, update}`, absent from
+  Bilimbi): Import opens the country picker (search, a checkbox grid with
+  ISO codes, already-imported countries marked), and pressed again runs the
+  ticked countries' postcodes through `ReferenceImport::import_as`, one
+  country at a time in the background (`src/web/update.rs` `Run`), so the
+  page shows which country is running and the rows so far; Update runs
+  every imported country again. The finished run is one flash that names
+  what was imported, what was imported from the local download because the
+  download failed (Import) or kept its existing data (Update), and what was
+  not imported and why. A result lands on the page
+  that started the run; leaving it loses the message, not the import.
 
 Name updates write the reference tables outside mutation capture, like the
 import, as Bilimbi excludes these schemas from audit; postcode corrections
