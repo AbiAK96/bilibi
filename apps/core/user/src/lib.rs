@@ -13,6 +13,7 @@ mod inbox;
 pub mod notifications;
 mod panels;
 pub mod password;
+mod pending_login;
 mod preferences;
 mod query_ui;
 mod reset;
@@ -33,17 +34,24 @@ pub use bootstrap::{
 pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
+pub use pending_login::{LoginMethod, LoginOutcome, PendingLoginError, PendingLoginState};
 pub use preferences::{
     list_pins, normalize_label, normalize_url, presentation, Pin, PreferenceError, Presentation,
     MAX_PINS, THEMES, THEME_KEY,
 };
 pub use two_factor::{
-    safe_return, Enrollment, TwoFactorEmailError, TwoFactorEmailReset, TwoFactorError,
-    TwoFactorStatus, CONFIRM_PATH, SETTINGS_PATH as TWO_FACTOR_PATH,
+    safe_return, Enrollment, SmsChallengeSent, SmsFactorStatus, TwoFactorEmailError,
+    TwoFactorEmailReset, TwoFactorError, TwoFactorStatus, CONFIRM_PATH,
+    SETTINGS_PATH as TWO_FACTOR_PATH, SMS_ENABLED_KEY,
 };
 pub use verification::{Signer, Verification};
 
 pub const MIGRATION: (&str, &str) = ("002-user", include_str!("../migrations/002.sql"));
+pub const LOGIN_STEP_UP: &str = "core.user.login";
+bilibi_step_up::declare!(
+    "core/user",
+    bilibi_step_up::Operation::new(LOGIN_STEP_UP, "Sign in").off_by_default()
+);
 pub const CREDENTIALS_MIGRATION: (&str, &str) = (
     "core-user-003-credentials",
     include_str!("../migrations/003-credentials.sql"),
@@ -83,6 +91,10 @@ pub const TWO_FACTOR_MIGRATION: (&str, &str) = (
 pub const TWO_FACTOR_RECOVERY_DROP: (&str, &str) = (
     "core-user-013-drop-two-factor-recovery",
     include_str!("../migrations/013-drop-two-factor-recovery.sql"),
+);
+pub const SMS_TWO_FACTOR_MIGRATION: (&str, &str) = (
+    "core-user-014-sms-two-factor",
+    include_str!("../migrations/014-sms-two-factor.sql"),
 );
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
@@ -170,11 +182,12 @@ pub struct UserService {
     /// Public origin that emailed links point at (`APP_ORIGIN`).
     origin: String,
     pub(crate) step_up: std::sync::Arc<bilibi_step_up::StepUp>,
+    pub(crate) sms: std::sync::Arc<bilibi_sms::Sms>,
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP],
+        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/sms","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,SMS_TWO_FACTOR_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -187,13 +200,12 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
+            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?,sms:services.get(bilibi_sms::SERVICE)?});
             services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
-            two_factor::bind(users.clone())?;
             Ok(users)
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
-            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?,contracts:services.get(bilibi_agent_api::page::SERVICE)?}))))
+            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?}))))
         }}],
     }
 }
@@ -232,13 +244,12 @@ impl UserService {
     }
 }
 
-// Resetting another person's 2FA is a contract. The other account,
-// password, two-factor setup and notification events still write through
-// the facade (`base/agent_api` page).
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user.pages", bilibi_module_registry::Provenance { module: "core/user", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/user.pages",
-    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY)],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Resetting another person's 2FA is core.user.two_factor.reset." },
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor and notifications write through the User facade; no contract yet." },
 }) }
 
 // ADR 01 gap, listed so it stays visible: these pages still write through
@@ -248,14 +259,3 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
     contracts: &[],
     pending: bilibi_module_registry::contributions::Pending::Every { reason: "Saved database queries write through the User facade; no contract yet." },
 }) }
-
-// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
-bilibi_ui::record_fields! { pub(crate) mod record_fields {
-    NAME: bilibi_ui::RecordField::new("name", "Name"),
-    EMAIL: bilibi_ui::RecordField::new("email", "Email"),
-    PERSON_ID: bilibi_ui::RecordField::new("person_id", "Person").path("person.name"),
-    COMPANY_ID: bilibi_ui::RecordField::new("company_id", "Company").path("company.name").slot("company_name"),
-    EMAIL_VERIFIED_AT: bilibi_ui::RecordField::new("email_verified_at", "Email Verified"),
-    CREATED_AT: bilibi_ui::RecordField::new("created_at", "Created"),
-    UPDATED_AT: bilibi_ui::RecordField::new("updated_at", "Updated"),
-} }

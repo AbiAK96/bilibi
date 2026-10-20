@@ -283,6 +283,8 @@ Keys in `env` (the service's environment; `README.md` explains each):
 | `BILIBI_MAIL_DIR` | `data/mailbox`, until an SMTP relay is set |
 | `BILIBI_INSTANCE_DIR` | The instance folder: the program lists and serves releases, and receives bundles under `incoming/` for the installer |
 
+Staging and production send SMS through Twilio. After first sign-in, configure `sms.twilio.account_sid`, `sms.twilio.auth_token` and `sms.twilio.from_number` in operator Settings; all three are encrypted and never shown back. Development uses the local simulator and exposes `/dev/sms-inbox` only when `BILIBI_ENV=development`.
+
 Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-installer@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
 
 ## Where to go next

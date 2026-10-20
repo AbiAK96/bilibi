@@ -69,21 +69,24 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
-| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings, Twilio credentials and authenticator keys. Two-factor setup and secret settings refuse without it. Unset: `start-app.sh` supplies one |
 | `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
+| `BILIBI_SMS_DIR` | Development simulator inbox, default `.local/sms-inbox`. Ignored outside development |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
 
 The stored server role also decides whether ordinary Base Step-up checks apply. Click the status-bar role to open Instance settings. A Core Administrator can change it with a fresh 2FA code; changing to or from Production carries a warning and every change is audited.
 
-| Server role | Step-up operations (declared by each module, set per tenant) |
+| Server role | Step-up operations (declared by each module, set per company) |
 |--------------|--------------------------------------------------------------|
 | Dev | Skip ordinary checks; role and software changes still need a fresh code |
-| Staging, Production | Ask as each tenant's policy says: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time |
+| Staging, Production | Ask as each company's policy says: a check within a sliding 30-minute window, capped at 6 hours (company settings), or every time |
 
 - Choose Dev only for a development copy. A missing install value defaults to Production.
-- Each account sets up its authenticator at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md).
+- Each account sets up its authenticator and verifies its phone at `/settings/two-factor`. Companies choose protected operations and SMS at `/authz/step-up`. Operators configure encrypted Twilio account SID, token and sender settings under SMS. See [Base Step-up](apps/base/step_up/README.md).
+
+`BILIBI_ENV` selects the SMS driver: development uses a bounded simulator and exposes `/dev/sms-inbox`; staging and production use Twilio. Twilio credentials are encrypted operator settings and are never shown back.
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 

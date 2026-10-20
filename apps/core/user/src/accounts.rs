@@ -89,6 +89,7 @@ pub struct AccountInput {
     pub name: String,
     pub email: String,
     pub password: String,
+    pub phone_number: String,
     pub person: Option<PersonId>,
     pub affiliation: Option<AffiliationId>,
 }
@@ -98,18 +99,21 @@ pub struct AccountInput {
 pub enum AccountField {
     Name,
     Email,
+    Phone,
 }
 impl AccountField {
     pub fn key(self) -> &'static str {
         match self {
             Self::Name => "name",
             Self::Email => "email",
+            Self::Phone => "phone_number",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {
         match key {
             "name" => Some(Self::Name),
             "email" => Some(Self::Email),
+            "phone_number" => Some(Self::Phone),
             _ => None,
         }
     }
@@ -153,6 +157,20 @@ pub(crate) fn validate_password(password: &str) -> Option<FieldError> {
     }
 }
 
+pub(crate) fn validate_phone(value: &str) -> std::result::Result<Option<String>, FieldError> {
+    let value = value.trim();
+    if value.is_empty() {
+        Ok(None)
+    } else if bilibi_sms::valid_e164(value) {
+        Ok(Some(value.to_owned()))
+    } else {
+        Err(field_error(
+            "phone_number",
+            "must be an E.164 number such as +94771234567",
+        ))
+    }
+}
+
 /// The create form's live validation: the same rules `create_account` applies,
 /// without touching the database.
 pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
@@ -160,6 +178,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
     errors.extend(validate_name(&input.name));
     errors.extend(validate_email(&input.email).err());
     errors.extend(validate_password(&input.password));
+    errors.extend(validate_phone(&input.phone_number).err());
     errors
 }
 
@@ -213,6 +232,13 @@ impl UserService {
             }
         };
         errors.extend(validate_password(&input.password));
+        let phone = match validate_phone(&input.phone_number) {
+            Ok(phone) => phone,
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        };
         if !errors.is_empty() {
             return Err(AccountError::Validation(errors));
         }
@@ -242,7 +268,7 @@ impl UserService {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,phone_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
                             &[
                                 &tenant,
                                 &insert_name,
@@ -251,6 +277,7 @@ impl UserService {
                                 &links.person.map(PersonId::get),
                                 &links.affiliation.map(AffiliationId::get),
                                 &links.organisation.map(OrganisationId::get),
+                                &phone,
                             ],
                         )
                         .await?;
@@ -268,6 +295,7 @@ impl UserService {
                                 "person_id": links.person.map(PersonId::get),
                                 "affiliation_id": links.affiliation.map(AffiliationId::get),
                                 "organisation_id": links.organisation.map(OrganisationId::get),
+                                "phone_number": phone,
                             }),
                         }],
                     ))
@@ -382,6 +410,9 @@ impl UserService {
             AccountField::Email => {
                 validate_email(value).map_err(|error| AccountError::Validation(vec![error]))?
             }
+            AccountField::Phone => validate_phone(value)
+                .map_err(|error| AccountError::Validation(vec![error]))?
+                .unwrap_or_default(),
         };
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -395,6 +426,7 @@ impl UserService {
         let current = match field {
             AccountField::Name => account.name.clone(),
             AccountField::Email => account.email.clone(),
+            AccountField::Phone => account.phone_number.clone().unwrap_or_default(),
         };
         if current == value {
             tx.rollback().await?;
@@ -413,16 +445,33 @@ impl UserService {
                 let statement = match field {
                     AccountField::Name => "UPDATE users SET name=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                     AccountField::Email => "UPDATE users SET email=$3,email_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                    AccountField::Phone => "UPDATE users SET phone_number=NULLIF($3,''),phone_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                 };
                 sql.execute(statement, &[&tenant, &user, &new_value]).await?;
+                if field == AccountField::Phone {
+                    sql.execute(
+                        "UPDATE user_sms_challenges SET status='invalid' WHERE tenant_id=$1 AND user_id=$2 AND status IN ('pending','sent')",
+                        &[&tenant, &user],
+                    )
+                    .await?;
+                }
+                let mut changes = vec![Change {
+                    kind: "user".into(),
+                    id: user,
+                    old: json!({ field.key(): old_value }),
+                    new: json!({ field.key(): new_value }),
+                }];
+                if field == AccountField::Phone {
+                    changes.push(Change {
+                        kind: "user_sms_challenge".into(),
+                        id: user,
+                        old: json!({"status":"active"}),
+                        new: json!({"status":"invalid","reason":"phone_changed"}),
+                    });
+                }
                 Ok((
                     (),
-                    vec![Change {
-                        kind: "user".into(),
-                        id: user,
-                        old: json!({ field.key(): old_value }),
-                        new: json!({ field.key(): new_value }),
-                    }],
+                    changes,
                 ))
             })
         })

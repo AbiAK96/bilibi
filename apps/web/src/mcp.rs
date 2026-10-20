@@ -170,6 +170,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
                 client: &client,
                 scope: &scope,
                 authority: &authority,
+                step_up: &app.step_up,
             };
             protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await
         }

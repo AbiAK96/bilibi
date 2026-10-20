@@ -1,6 +1,16 @@
 # Runtime smoke and parity evidence
 
-Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](../fixtures/parity/companies-v1.json) for the current runnable slice and this checklist to record real app evidence. The fixture installs `fixtures/walkthrough` into the disposable database. Future fixtures should be versioned when their records or expected behavior change; do not turn these cases into unit tests.
+## 2026-10-20 SMS two-factor runtime smoke (pre-rebase)
+
+- Branch: `sms-2fa`; worktree based on Bilibi commit `e0f9b47060be38798800ba621d6e6b60eae8fdc6` before rebasing onto current `main`; Bilimbi comparison: not run. This evidence does not verify the rebased implementation.
+- Runtime: Ubuntu 26.04 under WSL, Rust 1.99.1, exact `APP_ORIGIN` `http://127.0.0.1:4300`, development environment.
+- Database: fresh disposable `bilibi_sms_runtime_20261020` on the local PostgreSQL 18 instance; all 62 migrations applied, including the then-numbered `core-user-013-sms-two-factor`; walkthrough fixture installed. `/login`, `/dev/sms-inbox` and anonymous `/login/challenge` were checked against this instance; the database was dropped after the run. The standalone two-factor walkthrough also passed against a separate fresh `bilibi_sms_example_20261020` database, which was dropped afterward.
+- Server startup reported the development SMS simulator. HTTP smoke: `/login` returned 200 HTML; `/dev/sms-inbox` returned 200 HTML; anonymous `/login/challenge` returned 303.
+- The executable walkthrough completed authenticator enrollment, wrong and correct phone verification, browser SMS step-up, login policy off/on, pending-login promotion, wrong/reused proof refusal, company isolation, non-admin refusal, and phone-change invalidation. It used a one-off settings key generated in the process and emitted no codes or secrets.
+- Browser-rendered interactions, screenshots, live-host login step-up, resend/countdown and inbox delivery were not verified: Windows Computer Use was denied access to the existing Chrome window and the in-app browser reported no available browser. Development normally disables enforcement; the standalone walkthrough explicitly enabled it to exercise the backend login challenge path. This is an outstanding browser-parity gap, not a pass.
+- The walkthrough's simulator messages remain in `.local/sms-walkthrough-20261020`; cleanup was blocked by the local filesystem policy. They are disposable verification messages and can be removed after inspecting the exact directory.
+
+Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](../fixtures/parity/companies-v1.json) for the current runnable slice and this checklist to record real app evidence. Walkthrough examples install `fixtures/walkthrough` into a fresh disposable database; the development seed is not a product-data or fixture path. Future fixtures should be versioned when their records or expected behavior change; do not turn these cases into unit tests.
 
 ## Isolated setup
 
@@ -9,7 +19,7 @@ Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](
 3. For Bilibi, run `python3 scripts/discover-modules.py`, `cargo run -p bilibi-web -- migrate`, `cargo run -p bilibi-walkthrough-fixture`, then launch with the manifest's isolated database URL and a free local origin/port. Serve Bilibi on `127.0.0.1` and Bilimbi on `localhost`: cookies ignore ports, so distinct ports on the same host do not isolate their sessions.
 4. Confirm both apps are reachable and log in using only the manifest accounts. If the Bilimbi data differs, create equivalent records in its isolated database and note every mapping; do not silently compare unlike data.
 
-The walkthrough fixture (`fixtures/walkthrough`) creates tenants 1 and 2, five permission roles, seven accounts (three linked to Persons, two of them affiliated with a company), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone; re-installing the fixture is idempotent. It is not product data: a real install creates its first operator with `create-owner`. The manifest's password is the fixture credential and must only be used against disposable local databases.
+The walkthrough fixture (`fixtures/walkthrough`) creates tenants 1 and 2, five permission roles, seven accounts (three linked to Persons, two of them affiliated with a company), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone; re-installing the fixture is idempotent. It is not product data: a real install's `seed` creates only the platform operator. The manifest's password is the fixture credential and must only be used against disposable local databases.
 
 ## Smoke and visual comparison
 
@@ -63,5 +73,3 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 Then run the affected route or interaction in the app and attach the relevant evidence record. `cargo check`/Clippy and screenshots complement each other; neither replaces the live behavior check. Do not run `cargo test` or add Rust, browser-hook, or Python unit tests.
 
 For two-session or stateful behavior, record both actors and sequence: conflicting saves, permission/session revocation, archived writes, cross-tenant reads, audit rollback, job retry/restart, duplicate schedule claim, workflow replay, and token replay. Capture only bounded, redacted database evidence that demonstrates the claimed result.
-
-Page routing, access, framing and download cases are in the [module registry's runtime checks](../apps/base/module_registry/README.md#runtime-checks).

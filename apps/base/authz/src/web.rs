@@ -112,6 +112,7 @@ pub struct Pages {
     /// Names and proves the companies custom roles belong to.
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
     pub step_up: Arc<bilibi_step_up::StepUp>,
+    pub settings: Arc<bilibi_settings::Settings>,
     pub mutations: Arc<bilibi_database::MutationBoundary>,
 }
 impl Pages {

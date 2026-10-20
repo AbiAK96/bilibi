@@ -77,6 +77,23 @@ pub async fn install(db: &Db) -> Result<()> {
         )
         .await?;
     }
+    // Disposable SMS walkthrough identities: manager verifies through the UI;
+    // the two administrators are already verified for login/company-isolation flows.
+    tx.execute(
+        "UPDATE users SET phone_number='+15555550101' WHERE tenant_id=1 AND id=1 AND phone_number IS NULL",
+        &[],
+    )
+    .await?;
+    tx.execute(
+        "UPDATE users SET phone_number='+15555550104',phone_verified_at=COALESCE(phone_verified_at,now()) WHERE tenant_id=1 AND id=4 AND phone_number IS NULL",
+        &[],
+    )
+    .await?;
+    tx.execute(
+        "UPDATE users SET phone_number='+15555550205',phone_verified_at=COALESCE(phone_verified_at,now()) WHERE tenant_id=2 AND id=5 AND phone_number IS NULL",
+        &[],
+    )
+    .await?;
     tx.batch_execute(include_str!("operator.sql")).await?;
     tx.commit().await?;
     Ok(())

@@ -11,7 +11,9 @@ use axum::{
 };
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
-    contributions::{Access, Download, Method, Moved, Route, DOWNLOADS, MOVED, ROUTES},
+    contributions::{
+        Access, Download, Method, Moved, Route, DEVELOPMENT_ROUTES, DOWNLOADS, MOVED, ROUTES,
+    },
     RegistryError, Services,
 };
 use bilibi_ui::{download::DownloadRequest, page::PageRequest, StatusKind};
@@ -56,12 +58,17 @@ const HOST_PATHS: [&str; 17] = [
 
 /// Router-owned paths cannot be shadowed, even by another method. Literal
 /// siblings beat parameters; crossed patterns and parameter renames fail boot.
-pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
+pub fn bind(services: &Services, development: bool) -> Result<Vec<BoundRoute>> {
     let mut bound: Vec<BoundRoute> = Vec::new();
-    for entry in services.catalog()?.entries::<Route>(ROUTES)? {
+    let catalog = services.catalog()?;
+    let mut entries = catalog.entries::<Route>(ROUTES)?.to_vec();
+    if development {
+        entries.extend_from_slice(catalog.entries::<Route>(DEVELOPMENT_ROUTES)?);
+    }
+    for entry in entries {
         let route = entry.get::<Route>()?;
-        validate_host_free(entry, route.path)?;
-        validate_access(services, entry, route.access)?;
+        validate_host_free(&entry, route.path)?;
+        validate_access(services, &entry, route.access)?;
         for previous in &bound {
             validate_pair(
                 (previous.route.method, previous.route.path),

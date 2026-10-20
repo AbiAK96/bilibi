@@ -1,5 +1,5 @@
 //! Where step-up applies is policy, kept in Settings so every change is
-//! validated and audited like any setting: the tenant's choice per declared
+//! validated and audited like any setting: the company's choice per declared
 //! operation and its window, the installation floor and its window limits.
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
@@ -24,7 +24,7 @@ pub const CAP_RANGE: (i64, i64) = (1, 24);
 /// How recent a check must be to cover one "ask every time" action.
 pub const FRESH_SECONDS: i64 = 300;
 
-/// What a tenant chose for one operation, or what its declaration defaults to.
+/// What a company chose for one operation, or what its declaration defaults to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
     Off,
@@ -84,7 +84,7 @@ setting!(
     POLICY_KEY,
     Definition {
         value_type: ValueType::Mixed,
-        scopes: &[ScopeKind::Tenant],
+        scopes: &[ScopeKind::Company, ScopeKind::Tenant],
         default: || json!({}),
         nullable: false,
         encrypted: false,
@@ -132,7 +132,25 @@ macro_rules! bounded {
         );
     };
 }
-bounded!(WINDOW_KEY, ScopeKind::Tenant, 30, WINDOW_RANGE);
-bounded!(CAP_KEY, ScopeKind::Tenant, 6, CAP_RANGE);
+macro_rules! company_bounded {
+    ($key:expr, $default:expr, $range:expr) => {
+        setting!(
+            $key,
+            Definition {
+                value_type: ValueType::Integer,
+                scopes: &[ScopeKind::Company, ScopeKind::Tenant],
+                default: || json!($default),
+                nullable: false,
+                encrypted: false,
+                minimum: Some($range.0 as f64),
+                maximum: Some($range.1 as f64),
+                validator: None,
+                editor: None,
+            }
+        );
+    };
+}
+company_bounded!(WINDOW_KEY, 30, WINDOW_RANGE);
+company_bounded!(CAP_KEY, 6, CAP_RANGE);
 bounded!(WINDOW_LIMIT_KEY, ScopeKind::Global, 720, WINDOW_RANGE);
 bounded!(CAP_LIMIT_KEY, ScopeKind::Global, 24, CAP_RANGE);

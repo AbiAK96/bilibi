@@ -5,7 +5,7 @@
 //! that produced them and are dropped with it, so a reload never shows them
 //! again. Typed values are never echoed back.
 use crate::{
-    two_factor::{Enrollment, TwoFactorError, TwoFactorStatus},
+    two_factor::{Enrollment, SmsFactorStatus, TwoFactorError, TwoFactorStatus},
     UserService,
 };
 use askama::Template;
@@ -13,7 +13,7 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, CodeInput, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
+    Attrs, Button, CodeInput, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -36,6 +36,20 @@ fn code_field(id: &str, errors: &[String]) -> Result<Html, Error> {
     fragment(Html::render(
         &CodeInput::new(id, "two_factor[code]", "Authentication code", 6)
             .numeric()
+            .errors(errors.to_vec()),
+    ))
+}
+
+fn sms_code_field(id: &str, errors: &[String]) -> Result<Html, Error> {
+    fragment(Html::render(
+        &Field::in_form("sms", "code")
+            .id(id)
+            .label("SMS code")
+            .hint("6 digits from the text message")
+            .autocomplete("one-time-code")
+            .attr("inputmode", "numeric")
+            .attr("pattern", "[0-9]{6}")
+            .attr("maxlength", "6")
             .errors(errors.to_vec()),
     ))
 }
@@ -71,11 +85,15 @@ enum Stage {
 pub struct TwoFactorPage {
     users: Arc<UserService>,
     status: TwoFactorStatus,
+    sms: SmsFactorStatus,
     stage: Stage,
     return_to: Option<String>,
     errors: Vec<String>,
     notice: String,
     success: &'static str,
+    sms_sent: bool,
+    sms_errors: Vec<String>,
+    sms_success: &'static str,
 }
 
 #[derive(serde::Deserialize)]
@@ -93,6 +111,11 @@ enum TwoFactorEvent {
     /// A current code from the old phone, to get a QR code for the new one.
     Move {
         #[serde(rename = "two_factor[code]", default)]
+        code: String,
+    },
+    SendSms {},
+    VerifySms {
+        #[serde(rename = "sms[code]", default)]
         code: String,
     },
     /// The flash's Dismiss; the message is gone after any intent anyway.
@@ -119,6 +142,14 @@ struct TwoFactorView<'a> {
     account: &'a str,
     code: Html,
     move_code: Html,
+    sms_available: bool,
+    sms_phone_present: bool,
+    sms_phone_verified: bool,
+    sms_masked_phone: &'a str,
+    sms_sent: bool,
+    sms_code: Html,
+    sms_success: &'a str,
+    sms_notice: &'a str,
 }
 
 impl TwoFactorPage {
@@ -128,8 +159,10 @@ impl TwoFactorPage {
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
         let status = users.two_factor_status(scope).await?;
+        let sms = users.sms_factor_status(scope).await?;
         Ok(Self {
             users,
+            sms,
             stage: if status.enabled {
                 Stage::On
             } else {
@@ -144,11 +177,15 @@ impl TwoFactorPage {
                 String::new()
             },
             success: "",
+            sms_sent: false,
+            sms_errors: Vec::new(),
+            sms_success: "",
         })
     }
 
     async fn reload(&mut self, scope: &Scope) -> Result<(), Error> {
         self.status = self.users.two_factor_status(scope).await?;
+        self.sms = self.users.sms_factor_status(scope).await?;
         self.stage = if self.status.enabled {
             Stage::On
         } else {
@@ -166,6 +203,8 @@ impl TwoFactorPage {
     ) -> Result<Option<String>, Error> {
         self.errors.clear();
         self.success = "";
+        self.sms_errors.clear();
+        self.sms_success = "";
         match event {
             TwoFactorEvent::Start { password } => {
                 if password.is_empty() {
@@ -231,6 +270,28 @@ impl TwoFactorPage {
                 match self.users.begin_move(scope, &code).await {
                     Ok(enrollment) => self.stage = Stage::Move(enrollment),
                     Err(error) => self.errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::SendSms {} => {
+                match self.users.request_phone_verification(scope).await {
+                    Ok(_) => {
+                        self.sms_sent = true;
+                        self.sms_success = "Verification code sent.";
+                    }
+                    Err(error) => self.sms_errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::VerifySms { code } if code.trim().is_empty() => {
+                self.sms_errors.push(BLANK.into());
+            }
+            TwoFactorEvent::VerifySms { code } => {
+                match self.users.confirm_phone(scope, &code).await {
+                    Ok(()) => {
+                        self.reload(scope).await?;
+                        self.sms_sent = false;
+                        self.sms_success = "Phone number verified.";
+                    }
+                    Err(error) => self.sms_errors.push(field_error(error)?),
                 }
             }
             TwoFactorEvent::ClearFlash { .. } => {}
@@ -312,6 +373,14 @@ impl TwoFactorPage {
                     Vec::new()
                 },
             )?,
+            sms_available: self.sms.company_enabled,
+            sms_phone_present: self.sms.phone_number.is_some(),
+            sms_phone_verified: self.sms.phone_verified,
+            sms_masked_phone: self.sms.masked_phone.as_deref().unwrap_or(""),
+            sms_sent: self.sms_sent,
+            sms_code: sms_code_field("sms_verification_code", &self.sms_errors)?,
+            sms_success: self.sms_success,
+            sms_notice: self.sms_errors.first().map(String::as_str).unwrap_or(""),
         };
         view.render().map_err(|_| Error::Internal)
     }
@@ -362,6 +431,8 @@ impl LiveState<Scope, Error> for TwoFactorPage {
 pub struct ConfirmPage {
     users: Arc<UserService>,
     enabled: bool,
+    sms: SmsFactorStatus,
+    sms_sent: bool,
     minutes: i64,
     hours: i64,
     return_to: Option<String>,
@@ -372,8 +443,13 @@ pub struct ConfirmPage {
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum ConfirmEvent {
-    Verify {
+    VerifyAuthenticator {
         #[serde(rename = "two_factor[code]", default)]
+        code: String,
+    },
+    SendSms {},
+    VerifySms {
+        #[serde(rename = "sms[code]", default)]
         code: String,
     },
 }
@@ -383,10 +459,16 @@ enum ConfirmEvent {
 struct ConfirmView<'a> {
     header: Html,
     notice: &'a str,
-    enabled: bool,
+    authenticator_enabled: bool,
+    sms_available: bool,
+    sms_masked_phone: &'a str,
+    sms_sent: bool,
     minutes: i64,
     hours: i64,
-    step_up: Html,
+    code: Html,
+    sms_code: Html,
+    setup_href: &'a str,
+    sms_notice: &'a str,
 }
 
 impl ConfirmPage {
@@ -396,10 +478,13 @@ impl ConfirmPage {
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
         let enabled = users.two_factor_status(scope).await?.enabled;
+        let sms = users.sms_factor_status(scope).await?;
         let window = users.step_up.window(scope).await?;
         Ok(Self {
             users,
             enabled,
+            sms,
+            sms_sent: false,
             minutes: window.window_minutes,
             hours: window.cap_hours,
             return_to: return_to(query),
@@ -413,10 +498,10 @@ impl ConfirmPage {
     }
 
     fn render(&self) -> Result<String, Error> {
-        let mut step =
+        let mut _step =
             bilibi_ui::StepUp::new(self.enabled, self.return_to.as_deref().unwrap_or_default());
-        step.code = code_field("two_factor_code", &self.errors)?;
-        step.actions = fragment(Html::render(&Button {
+        _step.code = code_field("two_factor_code", &self.errors)?;
+        _step.actions = fragment(Html::render(&Button {
             id: "confirm-access-verify",
             button_type: "submit",
             variant: bilibi_ui::ButtonVariant::Primary,
@@ -424,11 +509,19 @@ impl ConfirmPage {
             body: Html::text("Verify"),
             ..Button::default()
         }))?;
+        let setup_href = match &self.return_to {
+            Some(path) => format!(
+                "{}?return={}",
+                crate::TWO_FACTOR_PATH,
+                percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC)
+            ),
+            None => crate::TWO_FACTOR_PATH.to_owned(),
+        };
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
-                subtitle: if self.enabled {
-                    "Enter your 2FA code to continue."
+                subtitle: if self.enabled || self.sms.company_enabled {
+                    "Confirm your identity to continue."
                 } else {
                     ""
                 },
@@ -436,10 +529,18 @@ impl ConfirmPage {
                 actions: Html::EMPTY,
             }))?,
             notice: &self.notice,
-            enabled: self.enabled,
+            authenticator_enabled: self.enabled,
+            sms_available: self.sms.company_enabled
+                && self.sms.phone_verified
+                && self.sms.phone_number.is_some(),
+            sms_masked_phone: self.sms.masked_phone.as_deref().unwrap_or(""),
+            sms_sent: self.sms_sent,
             minutes: self.minutes,
             hours: self.hours,
-            step_up: fragment(Html::render(&step))?,
+            code: code_field("two_factor_code", &self.errors)?,
+            sms_code: sms_code_field("confirm_access_sms_code", &self.errors)?,
+            setup_href: &setup_href,
+            sms_notice: self.errors.first().map(String::as_str).unwrap_or(""),
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -457,7 +558,13 @@ impl LiveState<Scope, Error> for ConfirmPage {
                         .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
                     match event {
-                        ConfirmEvent::Verify { code } => {
+                        ConfirmEvent::SendSms {} => {
+                            match self.users.request_browser_step_up_sms(request.scope).await {
+                                Ok(_) => self.sms_sent = true,
+                                Err(error) => self.errors.push(field_error(error)?),
+                            }
+                        }
+                        ConfirmEvent::VerifyAuthenticator { code } => {
                             if code.trim().is_empty() {
                                 self.errors.push(BLANK.into());
                             } else {
@@ -479,6 +586,31 @@ impl LiveState<Scope, Error> for ConfirmPage {
                                         });
                                     }
                                     Err(TwoFactorError::NotEnabled) => self.enabled = false,
+                                    Err(error) => self.errors.push(field_error(error)?),
+                                }
+                            }
+                        }
+                        ConfirmEvent::VerifySms { code } => {
+                            if code.trim().is_empty() {
+                                self.errors.push(BLANK.into());
+                            } else {
+                                match self.users.step_up_with_sms(request.scope, &code).await {
+                                    Ok(()) => {
+                                        return Ok(LiveBody {
+                                            html: self.render()?,
+                                            rows: 1,
+                                            redirect: Some(
+                                                self.return_to
+                                                    .clone()
+                                                    .unwrap_or_else(|| "/".into()),
+                                            ),
+                                            flash: Some((
+                                                StatusKind::Success,
+                                                "Access confirmed.".into(),
+                                            )),
+                                            ..LiveBody::default()
+                                        })
+                                    }
                                     Err(error) => self.errors.push(field_error(error)?),
                                 }
                             }

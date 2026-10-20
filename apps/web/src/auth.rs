@@ -15,11 +15,15 @@ use axum::{
 };
 use bilibi_database::Error;
 use bilibi_ui::{
-    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginChallengeForm,
+    LoginChallengePage, LoginForm, LoginPage, LoginWorkspace, ResetForm, ResetPasswordPage,
+    COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{
+    password::check_policy, CredentialError, Login, LoginMethod, LoginOutcome, PendingLoginError,
+    PendingLoginState,
+};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -29,6 +33,7 @@ const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
 /// Where a signed-in visitor to a credential page is sent: the dashboard, as
 /// Bilimbi's `UserAuth` signs every account in.
 const WORKSPACE: &str = "/dashboard";
+const LOGIN_CHALLENGE_COOKIE: &str = "bilibi_login_challenge";
 
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
 /// the key to its copy and clears the cookie. Free text never travels in it.
@@ -385,38 +390,22 @@ pub async fn login(
         )
         .await;
     }
-    match app.user.login(&form.email, &submission.password).await {
-        Ok(session) => {
-            let client = app.db.get().await.map_err(Error::from)?;
-            app.security
-                .sessions
-                .describe(
-                    &**client,
-                    &session.token,
-                    api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
-                        .map(|ip| ip.to_string())
-                        .as_deref(),
-                    headers
-                        .get(header::USER_AGENT)
-                        .and_then(|value| value.to_str().ok()),
-                )
-                .await?;
-            let cookie = format!(
-                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
-                session.token,
-                secure(&app)
-            );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
-            let mut response = Redirect::to(&destination).into_response();
-            response.headers_mut().insert(
+    match app
+        .user
+        .begin_login(&form.email, &submission.password)
+        .await
+    {
+        Ok(LoginOutcome::Ready(session)) => finish_login(&app, session, peer, &headers).await,
+        Ok(LoginOutcome::StepUp(pending)) => {
+            let handle = pending.handle.clone();
+            let mut response = Redirect::to("/login/challenge").into_response();
+            response.headers_mut().append(
                 header::SET_COOKIE,
-                HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+                HeaderValue::from_str(&format!(
+                    "{LOGIN_CHALLENGE_COOKIE}={handle}; HttpOnly; SameSite=Lax; Path=/login; Max-Age=300{}",
+                    secure(&app)
+                ))
+                .map_err(|_| Error::Internal)?,
             );
             Ok(response)
         }
@@ -440,6 +429,244 @@ pub async fn login(
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
     }
+}
+
+async fn finish_login(
+    app: &App,
+    session: Login,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    headers: &HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let client = app.db.get().await.map_err(Error::from)?;
+    app.security
+        .sessions
+        .describe(
+            &**client,
+            &session.token,
+            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
+                .map(|ip| ip.to_string())
+                .as_deref(),
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+        )
+        .await?;
+    let destination = app
+        .user
+        .landing_route(&session.token)
+        .await?
+        .unwrap_or_else(|| WORKSPACE.to_owned());
+    let mut response = Redirect::to(&destination).into_response();
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!(
+            "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
+            session.token,
+            secure(app)
+        ))
+        .map_err(|_| Error::Internal)?,
+    );
+    clear_login_challenge(&mut response, app)?;
+    Ok(response)
+}
+
+fn clear_login_challenge(response: &mut Response, app: &App) -> Result<(), Error> {
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!(
+            "{LOGIN_CHALLENGE_COOKIE}=; HttpOnly; SameSite=Lax; Path=/login; Max-Age=0{}",
+            secure(app)
+        ))
+        .map_err(|_| Error::Internal)?,
+    );
+    Ok(())
+}
+
+async fn challenge_card(
+    app: &App,
+    pending: PendingLoginState,
+    sms_sent: bool,
+    form_error: &str,
+    code_errors: Vec<String>,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    card(
+        app,
+        "Confirm sign in",
+        LoginChallengePage::new(&LoginChallengeForm {
+            authenticator_available: pending.authenticator_available,
+            sms_available: pending.sms_available,
+            masked_destination: pending.masked_destination.unwrap_or_default(),
+            sms_sent: sms_sent || pending.sms_sent,
+            form_error: form_error.into(),
+            code_errors,
+        })
+        .map_err(|_| Error::Internal)?,
+        FlashMap::default(),
+        status,
+    )
+    .await
+}
+
+fn pending_handle(headers: &HeaderMap) -> std::result::Result<&str, PendingLoginError> {
+    cookie(headers, LOGIN_CHALLENGE_COOKIE).ok_or(PendingLoginError::Invalid)
+}
+
+async fn invalid_challenge(app: &App) -> std::result::Result<Response, HttpError> {
+    let mut response = Redirect::to("/login").into_response();
+    clear_login_challenge(&mut response, app)?;
+    Ok(response)
+}
+
+pub async fn login_challenge(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let handle = match pending_handle(&headers) {
+        Ok(handle) => handle,
+        Err(_) => return invalid_challenge(&app).await,
+    };
+    match app.user.pending_login(handle).await {
+        Ok(pending) => challenge_card(&app, pending, false, "", Vec::new(), StatusCode::OK).await,
+        Err(PendingLoginError::Invalid) => invalid_challenge(&app).await,
+        Err(error) => Err(match error {
+            PendingLoginError::Other(error) => error,
+            _ => Error::Internal,
+        }
+        .into()),
+    }
+}
+
+pub async fn send_login_sms(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let handle = match pending_handle(&headers) {
+        Ok(handle) => handle,
+        Err(_) => return invalid_challenge(&app).await,
+    };
+    match app.user.send_pending_login_sms(handle).await {
+        Ok(_) => {
+            let pending = app
+                .user
+                .pending_login(handle)
+                .await
+                .map_err(|error| match error {
+                    PendingLoginError::Other(error) => error,
+                    _ => Error::Unauthorized,
+                })?;
+            challenge_card(&app, pending, true, "", Vec::new(), StatusCode::OK).await
+        }
+        Err(PendingLoginError::Invalid) => invalid_challenge(&app).await,
+        Err(PendingLoginError::Proof(error)) => {
+            let pending = app
+                .user
+                .pending_login(handle)
+                .await
+                .map_err(|_| Error::Unauthorized)?;
+            challenge_card(
+                &app,
+                pending,
+                false,
+                &error.to_string(),
+                Vec::new(),
+                StatusCode::TOO_MANY_REQUESTS,
+            )
+            .await
+        }
+        Err(PendingLoginError::Other(error)) => Err(error.into()),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ChallengeSubmission {
+    #[serde(rename = "challenge[code]", default)]
+    code: String,
+}
+
+async fn verify_login_challenge(
+    app: App,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    submission: ChallengeSubmission,
+    method: LoginMethod,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let handle = match pending_handle(&headers) {
+        Ok(handle) => handle,
+        Err(_) => return invalid_challenge(&app).await,
+    };
+    if submission.code.trim().is_empty() {
+        let pending = app
+            .user
+            .pending_login(handle)
+            .await
+            .map_err(|_| Error::Unauthorized)?;
+        return challenge_card(
+            &app,
+            pending,
+            method == LoginMethod::Sms,
+            "",
+            vec![BLANK.into()],
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    match app
+        .user
+        .complete_pending_login(handle, method, &submission.code)
+        .await
+    {
+        Ok(session) => finish_login(&app, session, peer, &headers).await,
+        Err(PendingLoginError::Invalid) => invalid_challenge(&app).await,
+        Err(PendingLoginError::Proof(error)) => {
+            let pending = app
+                .user
+                .pending_login(handle)
+                .await
+                .map_err(|_| Error::Unauthorized)?;
+            challenge_card(
+                &app,
+                pending,
+                method == LoginMethod::Sms,
+                "",
+                vec![error.to_string()],
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
+        Err(PendingLoginError::Other(error)) => Err(error.into()),
+    }
+}
+
+pub async fn verify_login_authenticator(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<ChallengeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    verify_login_challenge(app, headers, peer, submission, LoginMethod::Authenticator).await
+}
+
+pub async fn verify_login_sms(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<ChallengeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    verify_login_challenge(app, headers, peer, submission, LoginMethod::Sms).await
+}
+
+pub async fn cancel_login_challenge(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    if let Ok(handle) = pending_handle(&headers) {
+        app.user.cancel_pending_login(handle).await?;
+    }
+    invalid_challenge(&app).await
 }
 
 // ---- forgotten password ---------------------------------------------------------

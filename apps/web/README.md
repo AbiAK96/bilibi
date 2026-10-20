@@ -4,8 +4,7 @@ Register HTTP pages with `Contribution::new(ROUTES, ...)` from
 `bilibi_module_registry::contributions`. The named service must resolve to
 `bilibi_ui::page::PageService<bilibi_tenancy::Scope, bilibi_database::Error>`,
 wrapping an owner implementation of `Page<Scope, Error>`. The generic UI contract
-imports no identity/database crate. Pages that call operation contracts live above
-Agent API, as Core Tenant Administration does for `/tenancy/tenants`.
+imports no identity/database crate, so Tenancy can compose pages without a cycle.
 Company's adapter in `apps/core/company/src/web.rs` is the current example.
 Do not add module page paths or business dispatch switches to the host router.
 
@@ -35,8 +34,12 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 - `StepUp { operation, inner }` checks `inner`, then `StepUp::require` for the declared `operation`. A GET that owes a check is redirected to the provider's prompt with `return=<address>`; any other method, an embed or a panel is refused with 403. Boot refuses a step-up of `Public`, of another step-up, or of an undeclared operation. Menus and tile pickers check only `inner`.
 - A live socket on such a page rereads the window on each event and 15 s refresh without extending it. Once the window has run out, the socket reloads its address so the HTTP guard asks again.
 - When an owner's facade answers `Error::StepUpRequired` during a GET render or a live event, the browser goes to the prompt and comes back to the page; nothing acted.
-- `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
-- Base System supplies the live enforcement policy from the saved `instance.role`: Dev skips ordinary checks; role changes and other `.always()` operations always require a fresh code.
+- `/api/v1` commit and the MCP `commit` tool take optional `step_up_code` and `step_up_method`. `step_up_method: "sms"` without a code requests a challenge bound to the unchanged plan; the refusal includes methods, masked destination and resend timing. Existing authenticator callers use `step_up_code` unchanged.
+- `BILIBI_ENV=development` turns enforcement off at boot (`StepUp::set_enforced`).
+
+Login uses the same `core.user.login` operation. When enabled, password verification creates a five-minute opaque pending-login cookie while the real session token remains server-side. `/login/challenge` promotes it only after authenticator or SMS proof; cancellation removes the pending handle and unused session.
+
+`DEVELOPMENT_ROUTES` is a separate discovered catalog. Web binds it only when `BILIBI_ENV=development`; `/dev/sms-inbox` therefore has no route outside development.
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
@@ -120,11 +123,29 @@ resource, so an MCP-bound token is refused here, and an API token is refused
 at `/mcp`. `/mcp` uses the same `authenticate` and `Grant`; there is no second
 credential check anywhere in the host.
 
-The `record` middleware writes one incoming Integration exchange per request, refusals included. It records method, path, the operation key (or `agent_api.plan`/`agent_api.commit`), status, duration, connection id, the self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's self-report and a separately labelled client identity; bodies, queries, other headers and tokens are never recorded.
+The `record` middleware writes one incoming Integration exchange per request,
+refusals included. It records method, path, the operation key (or
+`agent_api.plan`/`agent_api.commit`), status, duration, connection id, the
+self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's
+self-report; bodies, queries, headers and tokens are never recorded.
 
-The agent's self-report (ADR 01, "Agent identity at runtime") is `X-Bilibi-Agent-Self-Report: harness/model-version-effort`, for example `amp/gpt-6-astra-high`; at `/mcp` it may instead come in `params._meta` under `bilibi/agent-self-report`, which replaces the header's value. A model can send the optional `agent_self_report` argument on `search`, `describe`, `guide`, `read`, `plan` or `commit`; it takes precedence over both. The host consumes it before dispatch, so it never enters business inputs or a plan's comparison. MCP connect instructions and tool descriptions tell agents to report on every call, ask their user for unknown parts, never guess, and omit parts nobody can give. `bilibi_tenancy::SelfReport::parse` checks the shape only: one `/`, either side may be empty but not both, ASCII letters, digits, `.`, `_`, `-`, at most 120 characters. A missing or malformed value never refuses a request: a malformed one is dropped and the exchange records that it was malformed. A valid one rides on the sealed scope's agent facet (and on the `Grant`'s reproved scope), so it lands on the exchange row, on every audit mutation and action of a write it commits (`agent_self_report`), and in the connection's bounded list of distinct reports (`AgentAccess::observe`). It is labelled "Model (as reported)" wherever it is shown and is never used for authorization. Sealed requests record a tenant row; everything else records a system row. The trace in the `x-bilibi-trace-id` response header is the exchange's correlation ID and the audit trace of any mutation that request committed.
-
-**Client identity** is transport evidence, separate from the agent's self-report. The edge records a bounded, printable User-Agent as `User-Agent: …` on the exchange, the sealed scope and write audit, and in the connection's newest 20 observed clients. MCP requests without usable User-Agent record `MCP: client identity not supplied`. Initialize records bounded `clientInfo` name/version as `MCP clientInfo: name/version` on that exchange; public initialize metadata is never matched to later requests on this stateless transport. OAuth code redemption also records User-Agent when supplied. Audit Actions, Data Mutations, record history, Exchanges and Your connections show client identity separately. It grants no authority and never supplies unknown model details. Earlier immutable audit rows stay as originally recorded.
+The agent's self-report (ADR 01, "Agent identity at runtime") is
+`X-Bilibi-Agent-Self-Report: harness/model-version-effort`, for example
+`amp/gpt-6-astra-high`; at `/mcp` it may instead come in `params._meta`
+under `bilibi/agent-self-report`, which then replaces the header's value.
+`bilibi_tenancy::SelfReport::parse` checks the shape only: one `/`, either
+side may be empty but not both, ASCII letters, digits, `.`, `_`, `-`, at most
+120 characters. A missing or malformed value never refuses a request: a
+malformed one is dropped and the exchange records that it was malformed. A
+valid one rides on the sealed scope's agent facet (and on the `Grant`'s
+reproved scope), so it lands on the exchange row, on every audit mutation and
+action of a write it commits (`agent_self_report`), and in the connection's
+bounded list of distinct reports (`AgentAccess::observe`). It is labelled
+"Self-reported agent" wherever it is shown and is never used for
+authorization. Sealed requests record a tenant row;
+everything else records a system row. The trace in the `x-bilibi-trace-id`
+response header is the exchange's correlation ID and the audit trace of any
+mutation that request committed.
 
 # MCP (`src/mcp.rs`)
 
@@ -167,7 +188,12 @@ The status bar shows the same facts through `bilibi_ui::version_badges`. The sch
 
 # Agent plugins
 
-AI connections (`/settings/ai-connections`) is a `core/agent_access` page, not a host route. `/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` redirect there. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT plugin download stays a `core/agent_plugins` contribution. The package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
+The downloadable plugin package for an agent harness (Plugin for ChatGPT at
+`/settings/chatgpt-plugin`) is a `core/agent_plugins` page and `Download`,
+not a host route. It points the harness at this `/mcp` edge from
+`APP_ORIGIN`, and it is named after the instance (`bilibi-staging`, "Bilibi
+Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a
+Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
 bilibi-web plugin-export --harness chatgpt --output <new-directory>
@@ -204,6 +230,10 @@ registered identifier (or `unknown`) and a host reason (`accepted`,
 the window closes. No body, header, signature, callback error or verified
 context is ever recorded, and webhooks do not enter the exchange log. A
 delivery whose audit row cannot be written is refused.
+
+# Release transport (`src/transport.rs`)
+
+`GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
 
 # Response compression and caching
 

@@ -18,11 +18,13 @@
 mod agent;
 mod provider;
 mod qr;
+mod sms;
 mod totp;
 
 pub(crate) use agent::bind;
 pub use agent::{TwoFactorEmailError, TwoFactorEmailReset};
 pub use provider::Authenticator;
+pub use sms::{SmsChallengeSent, SmsFactorStatus, ENABLED_KEY as SMS_ENABLED_KEY};
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -72,6 +74,22 @@ pub enum TwoFactorError {
     Impersonating,
     #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
     Unavailable,
+    #[error("SMS 2FA is disabled for this company.")]
+    SmsDisabled,
+    #[error("Add a phone number before using SMS 2FA.")]
+    PhoneMissing,
+    #[error("Verify the phone number before using SMS 2FA.")]
+    PhoneUnverified,
+    #[error("Wait {seconds} seconds before sending another code.")]
+    ResendThrottled { seconds: i64 },
+    #[error("Too many codes were sent. Try again in an hour.")]
+    HourlyLimit,
+    #[error("This SMS code has had too many failed attempts. Send a new code.")]
+    SmsLocked,
+    #[error(
+        "SMS delivery is unavailable. Try another verification method or contact an administrator."
+    )]
+    SmsUnavailable,
     #[error(transparent)]
     Other(#[from] Error),
 }
@@ -195,7 +213,8 @@ impl UserService {
     /// the prompt, or enrollment for an account with no authenticator yet.
     /// Either brings it back to `return_to` afterwards.
     pub async fn step_up_destination(&self, scope: &Scope, return_to: &str) -> Result<String> {
-        let enabled = self.two_factor_status(scope).await?.enabled;
+        let enabled =
+            self.two_factor_status(scope).await?.enabled || self.sms_enrolled(scope).await?;
         let base = if enabled { CONFIRM_PATH } else { SETTINGS_PATH };
         Ok(with_return(base, Some(return_to)))
     }

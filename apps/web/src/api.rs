@@ -941,10 +941,20 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             return Err(invalid_request());
         };
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        let step_up_method = match fields.remove("step_up_method") {
+            None => None,
+            Some(Value::String(method)) if method == "sms" => Some(method),
+            Some(_) => return Err(invalid_request()),
+        };
         // The account holder's step-up code, sent after a `step_up_required`.
+        let has_step_up_code = fields.contains_key("step_up_code");
         let scope = match fields.remove("step_up_code") {
             None => agent.scope.clone(),
-            Some(Value::String(step_up)) => agent.scope.clone().presenting_step_up(&step_up),
+            Some(Value::String(step_up)) => agent.scope.clone().presenting_step_up_for(
+                &step_up,
+                step_up_method.as_deref(),
+                &code,
+            ),
             Some(_) => return Err(invalid_request()),
         };
         let authority = Grant {
@@ -952,11 +962,50 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             claims: &agent.claims,
             trace: &agent.trace,
         };
-        app.api
+        let outcome = app
+            .api
             .plans
             .commit(&scope, &authority, &code, &operations)
-            .await
-            .map_err(api_error)
+            .await;
+        if let Err(bilibi_base::agent_api::Error::Backend(Error::StepUpRequired {
+            operation,
+            reason,
+        })) = &outcome
+        {
+            if step_up_method.as_deref() == Some("sms") && !has_step_up_code {
+                let requested = app
+                    .step_up
+                    .request_sms(&agent.scope, operation, &code)
+                    .await
+                    .map_err(|error| api_error(error.into()))?;
+                let methods = app
+                    .step_up
+                    .methods(&agent.scope)
+                    .await
+                    .map_err(|error| api_error(error.into()))?;
+                let mut available = Vec::new();
+                if methods.authenticator {
+                    available.push("authenticator");
+                }
+                if methods.sms {
+                    available.push("sms");
+                }
+                return Err(refusal(
+                    StatusCode::FORBIDDEN,
+                    json!({
+                        "error":"step_up_required",
+                        "operation":operation,
+                        "reason":requested.reason,
+                        "challenge_sent":requested.sent,
+                        "available_methods":available,
+                        "masked_destination":requested.masked_destination,
+                        "retry_after_seconds":requested.retry_after_seconds
+                    }),
+                ));
+            }
+            let _ = reason;
+        }
+        outcome.map_err(api_error)
     }
     .await;
     agent.answer(Some("agent_api.commit".into()), result)

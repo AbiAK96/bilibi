@@ -47,3 +47,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [02 Build in development and keep everything in step](./02-build-in-development-keep-everything-in-step.md) | Accepted |
+
+### Authentication
+
+| Record | Status |
+| --- | --- |
+| [03 Pluggable second factors and SMS](./03-pluggable-second-factors.md) | Accepted |

@@ -567,6 +567,17 @@ impl Detail {
             })?,
             None => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
         };
+        let phone_verified = match account.phone_verified_at {
+            Some(at) => render(&Badge {
+                kind: BadgeKind::Success,
+                body: datetime(&display, "user-phone-verified-at", at)?,
+                ..Badge::default()
+            })?,
+            None if account.phone_number.is_some() => {
+                render(&Badge::status(BadgeKind::Warning, "unverified"))?
+            }
+            None => render(&Muted { text: "No phone" })?,
+        };
         let items = vec![
             Fact {
                 title: crate::record_fields::get("name").label,
@@ -581,6 +592,25 @@ impl Detail {
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
                 })?,
+            },
+            Fact {
+                title: "Phone",
+                id: "user-view-phone",
+                value: render(&InlineEdit {
+                    field: self
+                        .inline(
+                            loaded,
+                            "phone_number",
+                            "Phone",
+                            account.phone_number.as_deref().unwrap_or_default(),
+                        )
+                        .allow_empty(),
+                })?,
+            },
+            Fact {
+                title: "Phone Verified",
+                id: "user-view-phone-verified",
+                value: phone_verified,
             },
             Fact {
                 title: crate::record_fields::PERSON_ID.label,

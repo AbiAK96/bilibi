@@ -22,6 +22,7 @@ struct Form {
     affiliation: Html,
     name: Html,
     email: Html,
+    phone: Html,
     password: Html,
     submit: Html,
     cancel: Html,
@@ -158,6 +159,14 @@ impl Create {
                 .placeholder("Enter email address")
                 .required(),
         )?;
+        let phone = render(
+            &field("phone_number", "Phone")
+                .kind(InputKind::Tel)
+                .value(&self.input.phone_number)
+                .autocomplete("tel")
+                .placeholder("+94771234567")
+                .hint("Use E.164 format. The user verifies ownership in My settings."),
+        )?;
         let mut password = SecretInput::in_form("user", "password", "password")
             .id("user-password")
             .label("Password")
@@ -188,6 +197,7 @@ impl Create {
             affiliation,
             name,
             email,
+            phone,
             password,
             submit: render(&Button {
                 id: "user-save",
@@ -263,6 +273,7 @@ impl LiveState<Scope, Error> for Create {
                     name: fields.get("name").cloned().unwrap_or_default(),
                     email: fields.get("email").cloned().unwrap_or_default(),
                     password: fields.get("password").cloned().unwrap_or_default(),
+                    phone_number: fields.get("phone_number").cloned().unwrap_or_default(),
                     person,
                     affiliation,
                 };

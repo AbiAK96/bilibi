@@ -111,7 +111,10 @@ impl App {
         for dropped in menu.dropped() {
             eprintln!("warning: {dropped}");
         }
-        let routes = Arc::new(routes::bind(&services)?);
+        let routes = Arc::new(routes::bind(
+            &services,
+            environment == Environment::Development,
+        )?);
         let downloads = Arc::new(routes::bind_downloads(&services, &routes)?);
         let moved = Arc::new(routes::bind_moved(&services, &routes, &downloads)?);
         let api = Arc::new(api::Edge::new(&services)?);
@@ -309,6 +312,17 @@ pub fn router(app: App) -> Router {
         .merge(webhooks::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
+        .route("/login/challenge", get(auth::login_challenge))
+        .route(
+            "/login/challenge/authenticator",
+            post(auth::verify_login_authenticator),
+        )
+        .route("/login/challenge/sms/send", post(auth::send_login_sms))
+        .route("/login/challenge/sms", post(auth::verify_login_sms))
+        .route(
+            "/login/challenge/cancel",
+            post(auth::cancel_login_challenge),
+        )
         .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),

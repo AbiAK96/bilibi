@@ -69,6 +69,8 @@ pub struct Account {
     pub status: String,
     pub email_verified: bool,
     pub email_verified_at: Option<std::time::SystemTime>,
+    pub phone_number: Option<String>,
+    pub phone_verified_at: Option<std::time::SystemTime>,
     pub links: AccountLinks,
     pub version: i64,
     pub created_at: std::time::SystemTime,
@@ -261,7 +263,7 @@ pub(crate) async fn read_account(
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        "SELECT id,name,email,status,email_verified_at,phone_number,phone_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
@@ -276,10 +278,12 @@ pub(crate) async fn read_account(
                 status: row.get(3),
                 email_verified: email_verified_at.is_some(),
                 email_verified_at,
-                links: AccountLinks::from_row(&row, 5)?,
-                version: row.get(8),
-                created_at: row.get(9),
-                updated_at: row.get(10),
+                phone_number: row.get(5),
+                phone_verified_at: row.get(6),
+                links: AccountLinks::from_row(&row, 7)?,
+                version: row.get(10),
+                created_at: row.get(11),
+                updated_at: row.get(12),
             })
         })
         .transpose()

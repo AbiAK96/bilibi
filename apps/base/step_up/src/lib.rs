@@ -1,6 +1,6 @@
 //! Step-up ("sudo mode") as an operation-level, channel-agnostic contract.
 //! An owner declares the operations step-up may guard (`declare!`) and calls
-//! [`StepUp::require`] from its own facade; tenant policy decides whether the
+//! [`StepUp::require`] from its own facade; company policy decides whether the
 //! check applies, the channel decides which proof counts (a web session's
 //! recent check, a code the agent's human gave for this one action), and a
 //! bound [`Provider`] checks the person. This crate names no consumer and no
@@ -11,8 +11,8 @@ mod policy;
 
 pub use declaration::{Operation, OPERATIONS};
 pub use gate::{
-    end_agent_windows, Declared, Enforcement, Provider, Purpose, Rule, SessionProof, Spent, StepUp,
-    Window, WindowState,
+    end_agent_windows, AvailableMethods, Declared, Provider, Purpose, Rule, SessionProof,
+    SmsRequest, Spent, StepUp, Window, WindowState,
 };
 pub use policy::{Mode, CAP_RANGE, WINDOW_RANGE};
 #[doc(hidden)]
@@ -22,6 +22,7 @@ pub use {
 };
 
 pub const SERVICE: &str = "base/step_up.gate";
+pub const SMS_ENABLED_KEY: &str = "two_factor.sms_enabled";
 
 /// The machine answer every agent channel gives for `Error::StepUpRequired`,
 /// so an agent can ask its human for a code and repeat the call with it.
@@ -45,8 +46,29 @@ pub const POLICY_UPDATE: &str = "base.step_up.policy.update";
 
 declare!(
     "base/step_up",
-    Operation::new(POLICY_UPDATE, "Change 2FA requirements").floor()
+    Operation::new(POLICY_UPDATE, "Change 2FA requirements")
+        .floor()
+        .guards_setting(SMS_ENABLED_KEY)
 );
+
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(
+        bilibi_settings::DEFINITIONS,
+        SMS_ENABLED_KEY,
+        bilibi_module_registry::Provenance { module: "base/step_up", source: file!(), line: line!() },
+        &bilibi_settings::Setting::Definition(bilibi_settings::Definition {
+            value_type: bilibi_settings::ValueType::Boolean,
+            scopes: &[bilibi_settings::ScopeKind::Company],
+            default: || serde_json::json!(false),
+            nullable: false,
+            encrypted: false,
+            minimum: None,
+            maximum: None,
+            validator: None,
+            editor: None,
+        }),
+    )
+}
 
 inventory::submit! {
     bilibi_module_registry::Module {

@@ -28,6 +28,21 @@ pub struct Purpose<'a> {
     pub channel: Channel,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct AvailableMethods {
+    pub authenticator: bool,
+    pub sms: bool,
+    pub masked_destination: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SmsRequest {
+    pub sent: bool,
+    pub reason: &'static str,
+    pub masked_destination: Option<String>,
+    pub retry_after_seconds: i64,
+}
+
 /// What a provider says about a presented code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Spent {
@@ -84,6 +99,12 @@ impl WindowState {
 /// behind an impersonated session, never an agent.
 pub trait Provider: Send + Sync {
     fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool>;
+    fn methods<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, AvailableMethods>;
+    fn request_sms<'a>(
+        &'a self,
+        scope: &'a Scope,
+        purpose: Purpose<'a>,
+    ) -> ProofFuture<'a, SmsRequest>;
     fn session<'a>(&'a self, scope: &'a Scope, proof: SessionProof)
         -> ProofFuture<'a, WindowState>;
     /// Verifies and uses a code in one step: a code is spent once, on this
@@ -107,7 +128,7 @@ pub struct Declared {
 /// One operation as the policy page shows it.
 pub struct Rule<'a> {
     pub declared: &'a Declared,
-    /// What the tenant chose, if anything.
+    /// What the company chose, if anything.
     pub choice: Option<Mode>,
     /// Installation floor: the tenant cannot turn it off.
     pub floor: bool,
@@ -121,7 +142,7 @@ pub struct Window {
     pub cap_hours: i64,
     pub window_limit_minutes: i64,
     pub cap_limit_hours: i64,
-    /// What the tenant stored (before the installation limits apply).
+    /// What the company stored (before the installation limits apply).
     pub tenant_window_minutes: i64,
     pub tenant_cap_hours: i64,
 }
@@ -236,7 +257,7 @@ impl StepUp {
     }
 
     /// The step-up check of one operation on one target. `Ok` when the
-    /// tenant's policy leaves it off, enforcement is off (development), or a
+    /// company's policy leaves it off, enforcement is off (development), or a
     /// proof for this channel holds; otherwise `Error::StepUpRequired`. An
     /// operation declared `always` skips the first two: it needs a fresh
     /// check on every action, on every deployment. Every
@@ -246,7 +267,7 @@ impl StepUp {
         let declared = self.declared(key).ok_or(Error::Internal)?;
         let mode = if declared.operation.always {
             // Declared `always`: a fresh code on every action, even where
-            // enforcement is off (development) and whatever the tenant chose.
+            // enforcement is off (development) and whatever the company chose.
             Mode::EveryTime
         } else {
             if !self.enforced().await? {
@@ -327,6 +348,34 @@ impl StepUp {
     pub async fn prompt(&self, scope: &Scope, back: &str) -> Result<String> {
         let provider = self.provider.get().ok_or(Error::NotFound)?;
         provider.prompt(scope, back).await
+    }
+
+    pub async fn methods(&self, scope: &Scope) -> Result<AvailableMethods> {
+        let provider = self.provider.get().ok_or(Error::NotFound)?;
+        provider.methods(scope).await
+    }
+
+    pub async fn request_sms(
+        &self,
+        scope: &Scope,
+        operation: &str,
+        target: &str,
+    ) -> Result<SmsRequest> {
+        let declared = self.declared(operation).ok_or(Error::Invalid)?;
+        if target.is_empty() || target.len() > 512 {
+            return Err(Error::Invalid);
+        }
+        let provider = self.provider.get().ok_or(Error::NotFound)?;
+        provider
+            .request_sms(
+                scope,
+                Purpose {
+                    operation: declared.operation.key,
+                    target,
+                    channel: scope.channel(),
+                },
+            )
+            .await
     }
 
     async fn check(
@@ -530,9 +579,14 @@ impl StepUp {
 
     async fn stored(&self, scope: &Scope) -> Result<(Map<String, Value>, Map<String, Value>)> {
         let client = self.db.get().await?;
+        let target = scope
+            .actor()
+            .organisation()
+            .map(Target::Company)
+            .unwrap_or(Target::Tenant);
         let choices = self
             .settings
-            .get(&**client, scope, Target::Tenant, policy::POLICY_KEY)
+            .get(&**client, scope, target, policy::POLICY_KEY)
             .await?
             .value;
         let floors = self
@@ -546,7 +600,7 @@ impl StepUp {
         Ok((object(choices), object(floors)))
     }
 
-    /// Every declared operation under this tenant's policy.
+    /// Every declared operation under this company's policy.
     pub async fn rules(&self, scope: &Scope) -> Result<Vec<Rule<'_>>> {
         let (choices, floors) = self.stored(scope).await?;
         Ok(self
@@ -567,18 +621,23 @@ impl StepUp {
             .collect())
     }
 
-    /// The tenant's web window after the installation limits.
+    /// The company's web window after the installation limits.
     pub async fn window(&self, scope: &Scope) -> Result<Window> {
         let client = self.db.get().await?;
+        let target = scope
+            .actor()
+            .organisation()
+            .map(Target::Company)
+            .unwrap_or(Target::Tenant);
         let int = |value: Value| value.as_i64().ok_or(Error::Internal);
         let tenant_window = int(self
             .settings
-            .get(&**client, scope, Target::Tenant, policy::WINDOW_KEY)
+            .get(&**client, scope, target, policy::WINDOW_KEY)
             .await?
             .value)?;
         let tenant_cap = int(self
             .settings
-            .get(&**client, scope, Target::Tenant, policy::CAP_KEY)
+            .get(&**client, scope, target, policy::CAP_KEY)
             .await?
             .value)?;
         let window_limit = int(self
@@ -600,7 +659,7 @@ impl StepUp {
         })
     }
 
-    /// Stores the tenant's choice for one operation (`None` follows the
+    /// Stores the company's choice for one operation (`None` follows the
     /// declared default) inside the caller's audited transaction. A floor
     /// operation cannot be turned off. The caller authorizes and steps up.
     pub async fn set_mode(
@@ -624,7 +683,11 @@ impl StepUp {
             .put(
                 tx,
                 scope,
-                Target::Tenant,
+                scope
+                    .actor()
+                    .organisation()
+                    .map(Target::Company)
+                    .unwrap_or(Target::Tenant),
                 policy::POLICY_KEY,
                 Value::Object(choices),
             )
@@ -660,7 +723,7 @@ impl StepUp {
             .await
     }
 
-    /// The tenant's window and cap: within the bounds, the cap at least the
+    /// The company's window and cap: within the bounds, the cap at least the
     /// window, both within the installation limits (`Error::Invalid`).
     pub async fn set_window(
         &self,
@@ -682,13 +745,27 @@ impl StepUp {
             .put(
                 tx,
                 scope,
-                Target::Tenant,
+                scope
+                    .actor()
+                    .organisation()
+                    .map(Target::Company)
+                    .unwrap_or(Target::Tenant),
                 policy::WINDOW_KEY,
                 json!(window_minutes),
             )
             .await?;
         self.settings
-            .put(tx, scope, Target::Tenant, policy::CAP_KEY, json!(cap_hours))
+            .put(
+                tx,
+                scope,
+                scope
+                    .actor()
+                    .organisation()
+                    .map(Target::Company)
+                    .unwrap_or(Target::Tenant),
+                policy::CAP_KEY,
+                json!(cap_hours),
+            )
             .await
     }
 

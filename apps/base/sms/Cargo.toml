@@ -1,0 +1,23 @@
+[package]
+name = "bilibi-sms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.23.1"
+bilibi-database.workspace = true
+bilibi-integration.workspace = true
+bilibi-ui.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-settings.workspace = true
+bilibi-tenancy.workspace = true
+inventory.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+askama.workspace = true
+serde_urlencoded = "0.7.1"
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true

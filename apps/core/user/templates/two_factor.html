@@ -24,6 +24,22 @@
 <div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div></div>
 <form id="two-factor-move-form" data-event="move" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Move to a new phone</h3><p class="text-sm text-muted">Enter the code from your current phone. Then you scan a new QR code with your new phone, and the old phone stops working.</p>{{ move_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-move", button_type="submit", working="Checking…") %}Move to a new phone{% endcall %}</div></form>
 {%- endif %}
+<section id="sms-two-factor" class="space-y-4 rounded-xl border border-line bg-surface p-6" aria-labelledby="sms-two-factor-heading">
+<h3 id="sms-two-factor-heading" class="text-sm font-semibold text-ink">SMS</h3>
+{%- if !sms_notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="sms-two-factor-error") %}{{ sms_notice }}{% endcall %}{% endif -%}
+{%- if !sms_available %}
+<p class="text-sm text-muted">SMS verification is not enabled for this company.</p>
+{%- elif !sms_phone_present %}
+<p class="text-sm text-muted">Ask an administrator to add your phone number to the account before using SMS.</p>
+{%- elif sms_phone_verified %}
+<div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">{{ sms_masked_phone }}</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}Verified{% endcall %}</div>
+{%- else %}
+<p class="text-sm text-muted">Send a code to {{ sms_masked_phone }} and enter it here to verify this phone.</p>
+{%- if !sms_success.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="sms-two-factor-success") %}{{ sms_success }}{% endcall %}{% endif -%}
+<div class="flex justify-end">{% call ui::button(id="sms-send", button_type="button", event="send-sms", working="Sending...") %}{% if sms_sent %}Send again{% else %}Send SMS{% endif %}{% endcall %}</div>
+{%- if sms_sent %}<form id="sms-verify-form" data-event="verify-sms" class="space-y-4">{{ sms_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="sms-verify", button_type="submit", working="Verifying...") %}Verify phone{% endcall %}</div></form>{% endif -%}
+{%- endif %}
+</section>
 </div>
 {% endcall %}
 {% endcall %}

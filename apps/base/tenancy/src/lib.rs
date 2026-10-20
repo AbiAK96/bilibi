@@ -140,11 +140,19 @@ impl Channel {
 #[derive(Clone)]
 pub struct PresentedCode {
     value: String,
+    method: Option<String>,
+    target: Option<String>,
     accepted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl PresentedCode {
     pub fn expose(&self) -> &str {
         &self.value
+    }
+    pub fn method(&self) -> Option<&str> {
+        self.method.as_deref()
+    }
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
     }
     /// Whether the provider already accepted this code for this request.
     pub fn accepted(&self) -> bool {
@@ -347,9 +355,32 @@ impl Scope {
         self.step_up = (!code.is_empty() && code.len() <= 64).then(|| {
             Box::new(PresentedCode {
                 value: code.to_owned(),
+                method: None,
+                target: None,
                 accepted: std::sync::Arc::default(),
             })
         });
+        self
+    }
+    /// Attaches an agent proof to the immutable plan it is intended to commit.
+    pub fn presenting_step_up_for(
+        mut self,
+        code: &str,
+        method: Option<&str>,
+        target: &str,
+    ) -> Self {
+        let code = code.trim();
+        let target = target.trim();
+        self.step_up =
+            (!code.is_empty() && code.len() <= 64 && !target.is_empty() && target.len() <= 512)
+                .then(|| {
+                    Box::new(PresentedCode {
+                        value: code.to_owned(),
+                        method: method.map(str::to_owned),
+                        target: Some(target.to_owned()),
+                        accepted: std::sync::Arc::default(),
+                    })
+                });
         self
     }
     /// The code this request presented for step-up.

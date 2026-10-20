@@ -53,6 +53,66 @@ pub struct LoginForm {
     pub workspace: LoginWorkspace,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct LoginChallengeForm {
+    pub authenticator_available: bool,
+    pub sms_available: bool,
+    pub masked_destination: String,
+    pub sms_sent: bool,
+    pub form_error: String,
+    pub code_errors: Vec<String>,
+}
+
+#[derive(Template)]
+#[template(path = "login_challenge.html")]
+pub struct LoginChallengePage {
+    pub authenticator_available: bool,
+    pub sms_available: bool,
+    pub masked_destination: String,
+    pub sms_sent: bool,
+    pub form_error: String,
+    pub authenticator_code: Html,
+    pub sms_code: Html,
+}
+
+impl LoginChallengePage {
+    pub fn new(form: &LoginChallengeForm) -> askama::Result<Self> {
+        let code = |id: &str| {
+            Html::render(
+                &Field::in_form("challenge", "code")
+                    .id(id)
+                    .label("Verification code")
+                    .autocomplete("one-time-code")
+                    .attr("spellcheck", "false")
+                    .attr("autocapitalize", "off")
+                    .errors(form.code_errors.clone()),
+            )
+        };
+        Ok(Self {
+            authenticator_available: form.authenticator_available,
+            sms_available: form.sms_available,
+            masked_destination: form.masked_destination.clone(),
+            sms_sent: form.sms_sent,
+            form_error: form.form_error.clone(),
+            authenticator_code: code("login-challenge-authenticator-code")?,
+            sms_code: code("login-challenge-sms-code")?,
+        })
+    }
+}
+
+pub struct SmsInboxRow {
+    pub id: String,
+    pub to: String,
+    pub body: String,
+    pub sent_at_unix: u64,
+}
+
+#[derive(Template)]
+#[template(path = "sms_inbox.html")]
+pub struct SmsInboxPage {
+    pub messages: Vec<SmsInboxRow>,
+}
+
 /// The workspace strip under the sign-in card (Bilimbi `assign_workspace`):
 /// the platform operator's company once provisioned, else why not. Every
 /// state but `Ready` reads "Platform workspace not provisioned"; `data-state`

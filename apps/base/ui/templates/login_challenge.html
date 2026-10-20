@@ -1,0 +1,12 @@
+{#- The anonymous second-factor step between a password and session-cookie issuance.
+    There is no Bilimbi counterpart. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold text-ink-strong">Confirm sign in</h1><p class="mt-1 text-sm text-muted">Use one of the verification methods set up for this account.</p></div>
+{% if !form_error.is_empty() %}<div id="login-challenge-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error) %}{{ form_error }}{% endcall %}</div>{% endif %}
+{% if authenticator_available %}<form id="login-challenge-authenticator" method="post" action="/login/challenge/authenticator" class="flex flex-col gap-4"><h2 class="text-sm font-semibold text-ink">Authenticator code</h2>{{ authenticator_code }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-challenge-authenticator-submit", class="w-full", button_type="submit", working="Verifying...") %}Verify{% endcall %}</form>{% endif %}
+{% if sms_available %}<section class="flex flex-col gap-4 border-t border-low-contrast-line pt-4"><h2 class="text-sm font-semibold text-ink">SMS</h2><p class="text-sm text-muted">Send a six-digit code to {{ masked_destination }}.</p><form method="post" action="/login/challenge/sms/send">{% call ui::button(id="login-challenge-sms-send", class="w-full", button_type="submit", working="Sending...") %}{% if sms_sent %}Send again{% else %}Send SMS{% endif %}{% endcall %}</form>{% if sms_sent %}<form id="login-challenge-sms" method="post" action="/login/challenge/sms" class="flex flex-col gap-4">{{ sms_code }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-challenge-sms-submit", class="w-full", button_type="submit", working="Verifying...") %}Verify{% endcall %}</form>{% endif %}</section>{% endif %}
+{% if !authenticator_available && !sms_available %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Warning) %}No usable verification method is set up. Contact an administrator.{% endcall %}{% endif %}
+<form method="post" action="/login/challenge/cancel" class="border-t border-low-contrast-line pt-4">{% call ui::button(id="login-challenge-cancel", class="w-full", button_type="submit") %}Back to login{% endcall %}</form>
+</div>

@@ -514,6 +514,7 @@ dependencies = [
  "bilibi-session",
  "bilibi-settings",
  "bilibi-settings-editor",
+ "bilibi-sms",
  "bilibi-software",
  "bilibi-step-up",
  "bilibi-system",
@@ -1087,6 +1088,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-sms"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "base64 0.23.1",
+ "bilibi-database",
+ "bilibi-integration",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "bilibi-software"
 version = "0.1.1"
 dependencies = [
@@ -1249,6 +1271,7 @@ dependencies = [
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
+ "bilibi-sms",
  "bilibi-step-up",
  "bilibi-system",
  "bilibi-tenancy",

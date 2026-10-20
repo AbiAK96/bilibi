@@ -9,7 +9,7 @@ pub const OPERATIONS: &str = "base/step_up.operations";
 
 /// One operation an owner lets step-up guard. The owner chooses the stable
 /// key (prefixed by its module id, `/` as `.`), the label administrators
-/// read, and the default; the tenant's policy decides whether it applies.
+/// read, and the default; the company's policy decides whether it applies.
 #[derive(Debug)]
 pub struct Operation {
     pub key: &'static str,

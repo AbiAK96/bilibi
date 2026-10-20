@@ -1,10 +1,10 @@
-//! `/authz/step-up` (`base/authz.pages`, operation `step-up`): the tenant's
+//! `/authz/step-up` (`base/authz.pages`, operation `step-up`): the company's
 //! two-factor requirements, in two tabs (`tab`, so a refresh keeps it). Settings
-//! holds the tenant's window and cap as inline facts that save on commit, and
+//! holds the company's window and cap as inline facts that save on commit, and
 //! for the installation owner the installation-wide maxima. Actions holds one
 //! FlexTable row per step-up operation the mounted modules declared
 //! (`bilibi_step_up::declare!`), sorted by module, with its default, this
-//! tenant's choice and the installation floor. No Bilimbi counterpart.
+//! company's choice and the installation floor. No Bilimbi counterpart.
 //!
 //! Every change rechecks `admin.authz.step-up.manage` inside its audited
 //! transaction and first passes step-up itself (`base.step_up.policy.update`,
@@ -14,6 +14,7 @@
 use crate::web::{render, Pages, TextCell};
 use askama::Template;
 use bilibi_database::{Error, Result};
+use bilibi_settings::Target;
 use bilibi_step_up::{Mode, Rule, Window, CAP_RANGE, POLICY_UPDATE, WINDOW_RANGE};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
@@ -51,7 +52,7 @@ pub(crate) fn columns() -> ListColumns {
             column("module", "Module", true),
             column("operation", "Operation", true),
             column("default", "Default", false),
-            column("tenant", "This tenant", false),
+            column("tenant", "This company", false),
             column("floor", "Installation floor", false),
         ],
     )
@@ -83,7 +84,7 @@ fn tab(values: &HashMap<String, String>) -> &'static str {
         .map_or(TABS[0].0, |(id, _)| *id)
 }
 
-/// One number on the Settings tab: the tenant's pair, then the installation's.
+/// One number on the Settings tab: the company's pair, then the installation's.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Setting {
     Minutes,
@@ -197,6 +198,7 @@ impl Setting {
 enum Pending {
     Mode { key: String, mode: Option<Mode> },
     Floor { key: String, floor: Option<bool> },
+    Sms { enabled: bool },
 }
 
 pub(crate) struct StepUpPolicy {
@@ -267,9 +269,10 @@ impl StepUpPolicy {
     async fn apply(&mut self, scope: &Scope, pending: Pending) -> Result<()> {
         let target = match &pending {
             Pending::Mode { key, mode } => {
-                format!("{key} tenant:{}", mode.map_or("default", Mode::as_str))
+                format!("{key} company:{}", mode.map_or("default", Mode::as_str))
             }
             Pending::Floor { key, floor } => format!("{key} floor:{floor:?}"),
+            Pending::Sms { enabled } => format!("sms company:{enabled}"),
         };
         if matches!(pending, Pending::Floor { .. }) && !self.owner(scope).await? {
             return Err(Error::Forbidden);
@@ -286,6 +289,19 @@ impl StepUpPolicy {
         let written = match &pending {
             Pending::Mode { key, mode } => step_up.set_mode(&mut tx, scope, key, *mode).await,
             Pending::Floor { key, floor } => step_up.set_floor(&mut tx, scope, key, *floor).await,
+            Pending::Sms { enabled } => {
+                let company = scope.actor().organisation().ok_or(Error::Forbidden)?;
+                self.pages
+                    .settings
+                    .put(
+                        &mut tx,
+                        scope,
+                        Target::Company(company),
+                        bilibi_step_up::SMS_ENABLED_KEY,
+                        serde_json::json!(enabled),
+                    )
+                    .await
+            }
         };
         match written {
             Ok(()) => {
@@ -369,7 +385,7 @@ impl StepUpPolicy {
             if setting.limit() {
                 "installation"
             } else {
-                "tenant"
+                "company"
             }
         );
         step_up.require(scope, POLICY_UPDATE, &target).await?;
@@ -550,7 +566,51 @@ impl StepUpPolicy {
 
     async fn settings(&self, scope: &Scope, owner: bool) -> Result<Html> {
         let window = self.pages.step_up.window(scope).await?;
+        let company = scope.actor().organisation().ok_or(Error::Forbidden)?;
+        let client = self.pages.db.get().await?;
+        let sms_enabled = self
+            .pages
+            .settings
+            .get(
+                &**client,
+                scope,
+                Target::Company(company),
+                bilibi_step_up::SMS_ENABLED_KEY,
+            )
+            .await?
+            .value
+            .as_bool()
+            .unwrap_or(false);
+        let mut sms_body = badge(
+            if sms_enabled {
+                BadgeKind::Success
+            } else {
+                BadgeKind::Neutral
+            },
+            if sms_enabled { "Enabled" } else { "Disabled" },
+        )?;
+        sms_body.push(&render(Button {
+            id: "step-up-sms-toggle",
+            button_type: "button",
+            event: if sms_enabled {
+                "request_sms_disable"
+            } else {
+                "request_sms_enable"
+            },
+            body: Html::text(if sms_enabled {
+                "Disable SMS"
+            } else {
+                "Enable SMS"
+            }),
+            ..Button::default()
+        })?);
         let mut html = self.section(
+            "step-up-sms",
+            "SMS for this company",
+            "Lets people with a verified phone request SMS as an alternative proof method.",
+            sms_body,
+        )?;
+        html.push(&self.section(
             "step-up-window",
             "After someone enters a 2FA code",
             "We do not ask them again until one of these runs out.",
@@ -559,7 +619,7 @@ impl StepUpPolicy {
                 &[Setting::Minutes, Setting::Hours],
                 &window,
             )?,
-        )?;
+        )?);
         if owner {
             html.push(&self.section(
                 "step-up-limits",
@@ -729,6 +789,13 @@ impl StepUpPolicy {
                     ),
                     "Save floor",
                 ),
+                Pending::Sms { enabled } => (
+                    format!(
+                        "SMS verification will be {} for this company.",
+                        if *enabled { "enabled" } else { "disabled" }
+                    ),
+                    "Save SMS setting",
+                ),
             };
             html.push(&render(ConfirmDialog {
                 id: "step-up-confirm",
@@ -764,6 +831,17 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
                         Some(event) if event.starts_with("request_") => {
+                            if event == "request_sms_enable" || event == "request_sms_disable" {
+                                self.flash = None;
+                                self.pending = Some(Pending::Sms {
+                                    enabled: event == "request_sms_enable",
+                                });
+                                return Ok(LiveBody {
+                                    html: self.body(scope).await?,
+                                    query: self.query(),
+                                    ..LiveBody::default()
+                                });
+                            }
                             let name = get("key").ok_or(Error::Invalid)?;
                             self.pages.step_up.declared(name).ok_or(Error::Invalid)?;
                             let key = name.to_owned();

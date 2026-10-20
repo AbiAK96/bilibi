@@ -202,6 +202,9 @@ impl Catalog {
         for entry in self.entries.get(ROUTES).into_iter().flatten() {
             check(entry, entry.get::<Route>()?.service)?;
         }
+        for entry in self.entries.get(DEVELOPMENT_ROUTES).into_iter().flatten() {
+            check(entry, entry.get::<Route>()?.service)?;
+        }
         for entry in self.entries.get(EMBEDS).into_iter().flatten() {
             check(entry, entry.get::<Embed>()?.service)?;
         }
@@ -238,6 +241,7 @@ fn invalid(message: String) -> RegistryError {
 }
 
 pub const ROUTES: &str = "base/module_registry.routes";
+pub const DEVELOPMENT_ROUTES: &str = "base/module_registry.development_routes";
 pub const EMBEDS: &str = "base/module_registry.embeds";
 pub const DOWNLOADS: &str = "base/module_registry.downloads";
 pub const SEEDS: &str = "base/module_registry.seeds";
@@ -430,6 +434,7 @@ fn validate_embeds(entries: &[Entry]) -> Result<()> {
     Ok(())
 }
 inventory::submit! { Consumer::new::<Route>(ROUTES, "base/module_registry", validate_routes) }
+inventory::submit! { Consumer::new::<Route>(DEVELOPMENT_ROUTES, "base/module_registry", validate_routes) }
 inventory::submit! { Consumer::new::<Embed>(EMBEDS, "base/module_registry", validate_embeds) }
 inventory::submit! { Consumer::new::<Download>(DOWNLOADS, "base/module_registry", validate_downloads) }
 fn validate_moved(entries: &[Entry]) -> Result<()> {

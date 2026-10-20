@@ -397,6 +397,7 @@ inventory::submit! { bilibi_module_registry::Module {
         restrictions: services.get("base/authz.field_restrictions")?,
         parties: services.get("base/tenancy.parties")?,
         step_up: services.get(bilibi_step_up::SERVICE)?,
+        settings: services.get("base/settings.store")?,
         mutations: services.get("base/database.mutations")?,
     })))) }],
 } }
