@@ -14,6 +14,8 @@ mod assets;
 pub use assets::{Assets, StaticAsset};
 
 mod auth;
+mod colour;
+pub use colour::{ColourChoice, ColourInput, ColourRole};
 mod components;
 mod error_page;
 mod feedback;

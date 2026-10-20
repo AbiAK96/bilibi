@@ -84,6 +84,24 @@ pub enum Colour {
     Warning,
     Danger,
 }
+
+pub(super) fn colour_input(field: bilibi_ui::Field, role: &str) -> bilibi_ui::ColourInput {
+    use bilibi_ui::{ColourChoice, ColourInput, ColourRole};
+    let swatch = |colour| match colour {
+        Colour::Info => ColourRole::Info,
+        Colour::Success => ColourRole::Success,
+        Colour::Warning => ColourRole::Warning,
+        Colour::Danger => ColourRole::Danger,
+    };
+    let inherited = swatch(Role::parse(role).unwrap_or(Role::Production).colour());
+    let mut options = vec![ColourChoice::new("Use role colour", "", inherited)];
+    options.extend(Colour::ALL.map(|colour| {
+        let role = swatch(colour);
+        ColourChoice::new(role.label(), colour.as_str(), role)
+    }));
+    ColourInput::new(field, options)
+}
+
 impl Colour {
     pub const ALL: [Colour; 4] = [Self::Info, Self::Success, Self::Warning, Self::Danger];
     pub fn as_str(self) -> &'static str {
