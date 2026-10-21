@@ -3,6 +3,7 @@
 //! action. This API supplies storage/type/target proofs, never UI permission.
 //! Reads intentionally bypass a value cache: transactions and other processes
 //! see committed state immediately. Notifications publish only after commit.
+//! Mirrors Bilimbi `apps/base/settings`.
 mod definition;
 mod encryption;
 pub use definition::{
@@ -317,6 +318,45 @@ impl Settings {
         if row.get::<_, bool>("is_encrypted") || definition.validate(&value).is_err() {
             return Err(Error::Invalid);
         }
+        Ok(value)
+    }
+    /// Read one encrypted global setting for its declaring module. This is
+    /// for owner services (for example, an outbound integration) that have no
+    /// human session; the owner check prevents one module from reading another
+    /// module's credentials. Human-facing reveal still requires an authorized
+    /// session through Settings Editor.
+    pub async fn get_own_global_secret(
+        &self,
+        client: &dyn ReadClient,
+        owner: &str,
+        key: &str,
+    ) -> Result<Value> {
+        let owned = self.definitions.lookup(key)?;
+        if owned.owner != owner {
+            return Err(Error::Unauthorized);
+        }
+        let definition = match owned.setting {
+            Setting::Definition(d) if d.encrypted && d.scopes.contains(&ScopeKind::Global) => d,
+            _ => return Err(Error::Invalid),
+        };
+        let row = client.query_opt(
+            "SELECT value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=0 AND scope_type='global' AND scope_id=0",
+            &[&key],
+        ).await?;
+        let Some(row) = row else {
+            return Ok((definition.default)());
+        };
+        let value = self.decode(
+            key,
+            StorageScope {
+                kind: ScopeKind::Global,
+                tenant: 0,
+                id: 0,
+            },
+            &row,
+            true,
+        )?;
+        definition.validate(&value).map_err(|_| Error::Invalid)?;
         Ok(value)
     }
     /// The caller owns the surrounding transaction. Missing/invalid encryption

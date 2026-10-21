@@ -37,6 +37,11 @@ for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
 
+An owner service without a human session may use `Settings::get_own_global_secret`
+for an encrypted global key declared by that same module. This is for machine
+credentials used by the setting's owner; it does not replace the authorized,
+session-bound reveal flow for people.
+
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. Each company read,
 write, and delete calls `base/tenancy.parties` on the same DB connection. A missing
