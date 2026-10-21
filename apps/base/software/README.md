@@ -56,7 +56,7 @@ Only a server owner with the appropriate platform capability can manage software
 | `admin.system.software.view` | Status, catalogue, release listings, Software page and card |
 | `admin.system.software.manage` | Install, undo, go-ahead, cancel, release upload and GitHub settings |
 
-Install, undo, go-ahead and GitHub settings require the owner’s own fresh authenticator code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
+Install, undo, go-ahead and GitHub settings require the owner’s own fresh 2FA code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
 
 ## Agent contracts
 
@@ -88,7 +88,7 @@ The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its 
 
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
-- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. The install headline uses the operation's summary to name an uploaded file or GitHub asset. A wrong code stays in the review.
+- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s chosen 2FA method and code through `ProofInput`. The install headline uses the operation's summary to name an uploaded file or GitHub asset. A wrong code stays in the review.
 - The page follows `NOTIFY bilibi_software_jobs` through `follow.rs`; the card polls status every four seconds while a job is active. Closing either leaves the job running.
 - The card calls only the host’s read/plan/commit bridge, holds no credential and fetches no independent URL. It reports job outcomes to the model and can send the person’s question back to the chat.
 - Plugin packages obtain the card guidance from `CARD_SKILL` and identify the connected instance.
@@ -132,9 +132,9 @@ A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifes
 
 ### Install from GitHub
 
-Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your authenticator code, including in the settings editor.
+Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
 
-The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your authenticator code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
+The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your 2FA code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
 
 The list shows setup files for this server: names that start with `bilibi-setup-` and end with this computer's target, such as `-x86_64-unknown-linux-gnu.tar.gz`. Drafts stay hidden. Pre-releases stay hidden until you choose **Show pre-releases**. The list is kept on this server and refreshed at most as often as **Check GitHub every this many minutes** (15 by default), and again when you choose **Refresh**. The list is saved in the instance's `data/` folder. If GitHub is limiting this server, or cannot be reached, the saved list stays on the page, and a failed look is not repeated before the interval has passed; **Refresh** asks again. The running program, Undo and a file already downloaded do not call GitHub.
 
@@ -215,4 +215,4 @@ Finish or cancel all active installs using instance sources before applying `bas
 - [Installer checks and recovery](../../installer/README.md).
 - [Step-up](../step_up/README.md) and [Agent API plans](../agent_api/README.md).
 
-Software reviews and GitHub settings use the shared `bilibi_ui::StepUp` form: an account without 2FA sees a setup link instead of the code and confirmation. Setup returns to Software; the person reviews again before confirming. Agent previews include `two_factor_enabled` and an absolute `two_factor_setup_url`; the ChatGPT card uses these to show the same setup-first flow through the host’s `ui/open-link` request. Cancellation needs no 2FA.
+Software reviews and GitHub settings use the shared `bilibi_ui::StepUp` form: an account without 2FA sees a setup link instead of the code and confirmation. Setup returns to Software; the person reviews again before confirming. Agent previews include `two_factor_enabled`, `two_factor_methods` (id, label, code length and numeric flag of each enrolled method; the card sends `method_id:code`) and an absolute `two_factor_setup_url`; the ChatGPT card uses these to show the same setup-first flow through the host’s `ui/open-link` request. Cancellation needs no 2FA.

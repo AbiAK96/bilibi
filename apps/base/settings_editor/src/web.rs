@@ -652,7 +652,15 @@ impl Editor {
         let can_reveal = reveal::available(&**client, &plan, &self.core.settings, scope).await?;
         let keyed = self.core.settings.encryption_available();
         let company = self.company.is_some();
-        let enrolled = self.core.step_up.enrolled(scope).await?;
+        let methods = self
+            .core
+            .step_up
+            .enrolled_methods(scope)
+            .await?
+            .into_iter()
+            .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
+            .collect::<Vec<_>>();
+        let enrolled = !methods.is_empty();
         let mut protected_override = false;
         let mut rows = Vec::new();
         let wanted = self.list.search.trim().to_lowercase();
@@ -739,15 +747,11 @@ impl Editor {
             let (body, actions) = if protected {
                 let mut step = bilibi_ui::StepUp::new(enrolled, "/system/settings");
                 step.body = control;
-                step.code = render(
-                    bilibi_ui::CodeInput::new(
-                        format!("code-{}", field.dom()),
-                        "code",
-                        "6-digit code from your authenticator app",
-                        6,
-                    )
-                    .numeric(),
-                )?;
+                step.code = render(bilibi_ui::ProofInput::new(
+                    format!("code-{}", field.dom()),
+                    "code",
+                    methods.clone(),
+                ))?;
                 step.actions = save;
                 step.secondary_actions = cancel;
                 (render(step)?, Html::EMPTY)
