@@ -111,10 +111,9 @@ impl App {
         for dropped in menu.dropped() {
             eprintln!("warning: {dropped}");
         }
-        let routes = Arc::new(routes::bind(
-            &services,
-            environment == Environment::Development,
-        )?);
+        let development_routes =
+            std::env::var("BILIBI_ENV").is_ok_and(|environment| environment == "development");
+        let routes = Arc::new(routes::bind(&services, development_routes)?);
         let downloads = Arc::new(routes::bind_downloads(&services, &routes)?);
         let moved = Arc::new(routes::bind_moved(&services, &routes, &downloads)?);
         let api = Arc::new(api::Edge::new(&services)?);

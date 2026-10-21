@@ -27,6 +27,19 @@ pub use accounts::{
 };
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_security::{guard, Sessions};
+
+// Bilimbi `Core.User` account facts, shared with the Users grid vocabulary.
+bilibi_ui::record_fields! { pub(crate) mod record_fields {
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    EMAIL: bilibi_ui::RecordField::new("email", "Email"),
+    PHONE_NUMBER: bilibi_ui::RecordField::new("phone_number", "Phone"),
+    PHONE_VERIFIED_AT: bilibi_ui::RecordField::new("phone_verified_at", "Phone verified"),
+    PERSON_ID: bilibi_ui::RecordField::new("person_id", "Person"),
+    COMPANY_ID: bilibi_ui::RecordField::new("company_id", "Company"),
+    EMAIL_VERIFIED_AT: bilibi_ui::RecordField::new("email_verified_at", "Email verified"),
+    CREATED_AT: bilibi_ui::RecordField::new("created_at", "Created"),
+    UPDATED_AT: bilibi_ui::RecordField::new("updated_at", "Updated"),
+} }
 pub use bootstrap::{
     validate_first_administrator, BootstrapAffiliation, FirstAdministrator,
     FirstAdministratorCreated, FirstAdministratorError, OperatorAccounts, OperatorCompany,
@@ -202,10 +215,11 @@ inventory::submit! {
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
             let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?,sms:services.get(bilibi_sms::SERVICE)?});
             services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
+            two_factor::bind(users.clone())?;
             Ok(users)
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
-            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?}))))
+            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?,contracts:services.get(bilibi_agent_api::page::SERVICE)?}))))
         }}],
     }
 }
