@@ -32,6 +32,12 @@ pub(crate) fn random_token() -> Result<String, Error> {
 fn digest(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
+async fn finish_reset_request() -> Result<(), CredentialError> {
+    // Every normal outcome pays for this same expensive check so the public
+    // response reveals less about whether the address has an active account.
+    password::verify("", None).await?;
+    Ok(())
+}
 fn encode_component(value: &str) -> String {
     value
         .bytes()
@@ -120,8 +126,9 @@ impl UserService {
     }
 
     /// Always answers `Ok` for an unknown, frozen or throttled account so the
-    /// public form gives one response. The mail is sent after this returns, so
-    /// response time does not depend on whether an address exists.
+    /// public form gives one response. Every normal outcome performs the same
+    /// dummy password verification to reduce account-dependent timing clues.
+    /// Mail delivery is asynchronous and is never awaited here.
     pub async fn request_password_reset(&self, email: &str) -> Result<(), CredentialError> {
         let email = normalize_email(email)?;
         let client = self.db.get().await.map_err(Error::from)?;
@@ -135,8 +142,7 @@ impl UserService {
         // Ambiguity is treated as unknown rather than guessed; a frozen account
         // (archived company, retired identity) is unknown here too.
         let [account] = &candidates[..] else {
-            password::verify("", None).await?;
-            return Ok(());
+            return finish_reset_request().await;
         };
         let (user, tenant, name, address): (i64, i64, String, String) = (
             account.get(0),
@@ -148,8 +154,7 @@ impl UserService {
             crate::identity::standing(&**client, tenant, user).await?,
             crate::identity::Standing::Live(_)
         ) {
-            password::verify("", None).await?;
-            return Ok(());
+            return finish_reset_request().await;
         }
         let token = random_token()?;
         let claimed = client
@@ -160,7 +165,7 @@ impl UserService {
             .await
             .map_err(Error::from)?;
         if claimed.is_none() {
-            return Ok(());
+            return finish_reset_request().await;
         }
         // Housekeeping keeps storage bounded without a scheduler.
         client
@@ -193,7 +198,7 @@ impl UserService {
                 }
             }
         });
-        Ok(())
+        finish_reset_request().await
     }
 
     /// Where the emailed link points; the reset page reads both values.
