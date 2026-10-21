@@ -1,4 +1,5 @@
 {% import "components.html" as ui %}
+{# Mirrors Bilimbi UI.Components navigation tree and branch controls. #}
 {% macro link(node, dom_id, tileable, pinnable, branch=false) %}
 {% if let Some(route) = node.route %}
 <a href="{{ route }}" id="nav-{{ dom_id }}" data-nav-item="nav-{{ dom_id }}" data-nav-label="{{ node.label }}"{% if node.active %} aria-current="page"{% endif %} title="{{ node.label }}" class="{% if branch %}app-nav-parent-link relative flex min-w-0 flex-1 items-center rounded-none px-1 py-0 transition{% else %}app-nav-item relative flex min-w-0 flex-1 items-center rounded-none px-1 py-0 text-sm font-normal transition{% endif %} {% if node.active %}bg-surface text-brand-strong{% else %}text-link hover:bg-surface-muted hover:text-ink{% endif %}">{% if !branch %}<span class="app-nav-indent text-[11px] shrink-0 w-3 text-center mr-0.5 select-none" aria-hidden="true">&#8199;</span>{% endif %}{% call ui::icon(name=node.icon, class="app-nav-icon size-[1.125rem] shrink-0") %}{% endcall %}<span class="app-nav-label min-w-0 truncate">{{ node.label }}</span></a>
