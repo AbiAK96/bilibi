@@ -66,3 +66,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [06 Record search at query time, in the owner's source](./06-query-time-record-search.md) | Proposed |
+
+### Data and extensibility
+
+| Record | Status |
+| --- | --- |
+| [07 Tenant-defined fields stay with their owning records](./07-tenant-defined-custom-fields.md) | Accepted; implementation in progress |

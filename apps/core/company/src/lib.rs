@@ -90,6 +90,10 @@ pub const MIGRATION_SEARCH: (&str, &str) = (
     "core-company-007-search",
     include_str!("../migrations/007-search.sql"),
 );
+pub const MIGRATION_CUSTOM_FIELDS: (&str, &str) = (
+    "core-company-008-custom-fields",
+    include_str!("../migrations/008-custom-fields.sql"),
+);
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
 pub const SERVICE: &str = "core/company.companies";
@@ -97,13 +101,13 @@ pub const SERVICE: &str = "core/company.companies";
 /// One refusal of a submitted value, in the words a form shows beside the field.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FieldError {
-    pub field: &'static str,
+    pub field: String,
     pub message: String,
 }
 impl FieldError {
-    pub fn new(field: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(field: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            field,
+            field: field.into(),
             message: message.into(),
         }
     }
@@ -183,6 +187,7 @@ pub struct Company {
     pub website: Option<String>,
     pub revenue: String,
     pub version: i64,
+    pub custom: serde_json::Value,
 }
 impl Company {
     /// Organisation identity of this company, preserving existing record IDs.
@@ -212,6 +217,12 @@ impl Company {
                 row.get(field)
             }
         };
+        let mut custom: serde_json::Value = row.try_get("custom").unwrap_or_else(|_| json!({}));
+        if let Some(object) = custom.as_object_mut() {
+            for field in masked.iter().filter_map(|field| field.strip_prefix("cf_")) {
+                object.remove(field);
+            }
+        }
         Self {
             id: row.get("id"),
             tenant_id: row.get("tenant_id"),
@@ -229,6 +240,7 @@ impl Company {
             website: read_opt("website"),
             revenue: read("revenue"),
             version: row.get("version"),
+            custom,
         }
     }
 }
@@ -317,6 +329,19 @@ pub struct Edit {
 }
 impl Edit {
     pub fn validate(&self) -> Result<()> {
+        if let Some(key) = self.field.strip_prefix("cf_") {
+            let key_valid = !key.is_empty()
+                && key.len() <= 63
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+            let valid_json = serde_json::from_str::<serde_json::Value>(&self.value).is_ok();
+            return if key_valid && valid_json && self.id > 0 && self.version > 0 {
+                Ok(())
+            } else {
+                Err(Error::Invalid)
+            };
+        }
         let value = self.value.trim();
         let valid = match self.field.as_str() {
             "name" => !value.is_empty() && value.chars().count() <= 160,
@@ -348,6 +373,7 @@ pub async fn save(
     notifications: &NotificationBoundary,
     mutations: &MutationBoundary,
     sessions: &Sessions,
+    custom_fields: &bilibi_custom_fields::CustomFields,
 ) -> Result<()> {
     edit.validate()?;
     let mut client = db.get().await?;
@@ -391,6 +417,48 @@ pub async fn save(
         "name" | "legal_name" | "registration_number" | "website" => edit.value.trim().to_owned(),
         _ => edit.value.clone(),
     };
+    if let Some(key) = field.strip_prefix("cf_").map(str::to_owned) {
+        let row = tx.sql().query_opt(
+            "SELECT custom,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
+            &[&tenant, &id],
+        ).await?.ok_or(Error::NotFound)?;
+        if row.get::<_, i64>(1) != version {
+            return Err(Error::Conflict);
+        }
+        if row.get::<_, String>(2) == "archived" {
+            return Err(Error::Forbidden);
+        }
+        let old_custom: serde_json::Value = row.get(0);
+        let old_value = old_custom
+            .get(&key)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let submitted: serde_json::Value =
+            serde_json::from_str(&edit.value).map_err(|_| Error::Invalid)?;
+        let patch = serde_json::json!({ (key.clone()): submitted });
+        let merged = match custom_fields
+            .validate(tx.sql(), &scope, "core.company", &patch, &old_custom, false)
+            .await?
+        {
+            Ok(value) => value,
+            Err(_) => return Err(Error::Invalid),
+        };
+        let new_value = merged.get(&key).cloned().unwrap_or(serde_json::Value::Null);
+        tx.mutate(move |sql| Box::pin(async move {
+            sql.execute(
+                "UPDATE companies SET custom=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3",
+                &[&merged, &tenant, &id],
+            ).await?;
+            Ok(((), vec![Change { kind: "company".into(), id,
+                old: json!({"custom": {key.clone(): old_value}}),
+                new: json!({"custom": {key: new_value}}),
+            }]))
+        })).await?;
+        notifications
+            .record(&mut tx, &scope, "Company updated")
+            .await?;
+        return tx.commit().await;
+    }
     tx.mutate(move |sql| Box::pin(async move {
         let row = sql.query_opt(&format!("SELECT {}::text,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",field), &[&tenant,&id]).await?.ok_or(Error::NotFound)?;
         if row.get::<_, i64>(1) != version { return Err(Error::Conflict); }
@@ -425,6 +493,7 @@ pub struct CompanyService {
     mutations: Arc<MutationBoundary>,
     proofs: Arc<bilibi_tenancy::PartyProofs>,
     directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
+    custom_fields: Arc<bilibi_custom_fields::CustomFields>,
 }
 impl CompanyService {
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
@@ -435,6 +504,7 @@ impl CompanyService {
             &self.notifications,
             &self.mutations,
             &self.sessions,
+            &self.custom_fields,
         )
         .await
     }
@@ -445,7 +515,7 @@ impl CompanyService {
             .mutations
             .begin(&mut client, scope.mutation_context("company.create"))
             .await?;
-        let outcome = organisation::create(&mut tx, scope, new).await?;
+        let outcome = organisation::create(&mut tx, scope, new, &self.custom_fields).await?;
         match &outcome {
             CreateOutcome::Created(_) => tx.commit().await?,
             CreateOutcome::Refused(_) => tx.rollback().await?,
@@ -715,8 +785,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/custom_fields","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, MIGRATION_CUSTOM_FIELDS],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
@@ -726,11 +796,14 @@ inventory::submit! {
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
+                let custom_fields = services.get::<bilibi_custom_fields::CustomFields>(bilibi_custom_fields::SERVICE)?;
                 agent_operations::bind(db.clone())?;
+                agent_operations::bind_custom_fields(custom_fields.clone())?;
                 relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;
                 Ok(Arc::new(CompanyService {
                     sessions: services.get("base/session.sessions")?, mutations: services.get("base/database.mutations")?,
                     db, notifications: services.get("base/notifications.sink")?, proofs, directory,
+                    custom_fields,
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {

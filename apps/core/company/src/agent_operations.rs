@@ -26,10 +26,29 @@ use std::{collections::BTreeMap, sync::OnceLock};
 /// Handlers are static; the pool they read through is bound once by the
 /// `core/company.companies` service factory. An unbound handler refuses.
 static DB: OnceLock<Db> = OnceLock::new();
+static CUSTOM_FIELDS: OnceLock<std::sync::Arc<bilibi_custom_fields::CustomFields>> =
+    OnceLock::new();
 pub fn bind(db: Db) -> bilibi_module_registry::Result<()> {
     DB.set(db).map_err(|_| {
         bilibi_module_registry::RegistryError::Service("duplicate company agent binding".into())
     })
+}
+pub fn bind_custom_fields(
+    service: std::sync::Arc<bilibi_custom_fields::CustomFields>,
+) -> bilibi_module_registry::Result<()> {
+    CUSTOM_FIELDS.set(service).map_err(|_| {
+        bilibi_module_registry::RegistryError::Service(
+            "duplicate custom fields agent binding".into(),
+        )
+    })
+}
+fn custom_fields() -> bilibi_agent_api::Result<&'static bilibi_custom_fields::CustomFields> {
+    CUSTOM_FIELDS
+        .get()
+        .map(AsRef::as_ref)
+        .ok_or(bilibi_agent_api::Error::Backend(
+            bilibi_database::Error::Internal,
+        ))
 }
 fn db() -> bilibi_agent_api::Result<&'static Db> {
     DB.get().ok_or(bilibi_agent_api::Error::Backend(
@@ -144,7 +163,7 @@ impl WriteHandler for Create {
         Box::pin(async move {
             let new = parse(input)?;
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
-            let company = organisation::preview(&**client, scope, &new)
+            let company = organisation::preview(&**client, scope, &new, custom_fields()?)
                 .await?
                 .map_err(invalid)?;
             let fields = [
@@ -177,7 +196,7 @@ impl WriteHandler for Create {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let new = parse(input)?;
-            match organisation::create(tx, scope, &new).await? {
+            match organisation::create(tx, scope, &new, custom_fields()?).await? {
                 organisation::CreateOutcome::Created(company) => {
                     let masked = company.masked_fields();
                     let mut data = BTreeMap::new();
@@ -223,6 +242,7 @@ fn create_schema() -> Value {
         "status":{"type":"string","enum":INITIAL_STATUSES},
         "parent_id":{"type":"integer","minimum":1},
         "legal_entity_type_id":{"type":"integer","minimum":1}
+        ,"custom":{"type":"object","description":"Tenant-defined company fields keyed by their field key."}
     }})
 }
 fn list_output() -> Value {
