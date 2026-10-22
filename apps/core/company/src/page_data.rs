@@ -28,7 +28,7 @@ impl CompanyService {
                 .await
                 .map_err(write_error)?;
         }
-        let result = organisation::create(&mut tx, scope, new).await?;
+        let result = organisation::create(&mut tx, scope, new, &self.custom_fields).await?;
         if let CreateOutcome::Created(company) = &result {
             let id = company.id;
             let tenant = scope.tenant();
