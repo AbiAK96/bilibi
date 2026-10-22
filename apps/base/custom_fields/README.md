@@ -4,8 +4,8 @@
 
 The public facade is `base/custom_fields.fields`. It lists definitions and supports define, update, archive, restore and owner-side validation. Definition writes use `MutationBoundary`, require `admin.custom.fields.manage` and the opted-in record type's capability, and enforce immutable keys and types.
 
-Choice values are stable codes; an option with `active: false` is retired and remains valid only when preserving an existing value. Reference fields name a Grid table. Reference readability validation is not complete yet; callers must not treat a syntactically valid reference as authorized until the Grid runtime lookup contract lands.
+Choice values are stable codes; an option with `active: false` is retired and remains valid only when preserving an existing value. Grid and Authz now consume typed runtime-provider contributions from this module. They load active definitions per scope on each request, expose them as `cf_<key>` fields, and bind JSON keys as values in Grid SQL. Reference fields name a Grid table; reference target links and readability validation are still pending.
 
 The owner opt-in and Grid/Authz runtime provider contracts are described in [ADR 05](../../../docs/architecture/decisions/05-tenant-defined-custom-fields.md). Core Company is the first adopter. Reporting and shared exports are out of scope.
 
-Limits currently enforced in the facade are implementation defaults. Operator settings, the administration page, Grid runtime projection/filter/sort, Authz's dynamic restriction catalog, and agent definition operations remain to be completed before this module is production-ready.
+Grid supports runtime projection, text search and bound root-field expressions for owner sorting and filtering. Authz uses tenant definitions in field restriction management and audit history masking. Operator settings, the administration page, Company record controls, reference target links/readability checks and agent definition operations remain before the full #131 feature is production-ready.

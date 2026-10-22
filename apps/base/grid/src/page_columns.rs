@@ -239,7 +239,7 @@ impl PageColumns {
     ) -> Result<()> {
         let catalog = {
             let client = self.views.db().get().await?;
-            Catalog::for_scope(&**client, scope).await?
+            Catalog::for_scope_with_runtime(&**client, scope, Some((&**client).into())).await?
         };
         if let Some(root) = catalog.table(&self.table) {
             self.record_fields = root.record_fields.clone();

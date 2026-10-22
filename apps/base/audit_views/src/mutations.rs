@@ -123,7 +123,7 @@ fn render(fragment: impl Template) -> Result<Html> {
 /// their values out of each entry, the one place a stored mutation becomes a
 /// read model for a screen.
 pub(crate) async fn withhold(
-    client: &impl tokio_postgres::GenericClient,
+    client: bilibi_ports::PortClient<'_>,
     scope: &Scope,
     entries: &mut [MutationEntry],
 ) -> Result<()> {
@@ -133,7 +133,8 @@ pub(crate) async fn withhold(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let withheld = bilibi_authz::fields::withheld_by_record_type(client, scope, &kinds).await?;
+    let withheld =
+        bilibi_authz::fields::withheld_by_record_type_runtime(client, scope, &kinds).await?;
     if withheld.is_empty() {
         return Ok(());
     }
@@ -195,7 +196,7 @@ impl Mutations {
         {
             page = bilibi_audit::list_mutations(&**client, scope, &self.query()).await?;
         }
-        withhold(&**client, scope, &mut page.entries).await?;
+        withhold((&**client).into(), scope, &mut page.entries).await?;
         // The rows changed: ListColumns forgets an unfinished add box, and an
         // open diff belongs to a row no longer shown.
         self.columns
