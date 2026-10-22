@@ -14,10 +14,10 @@ use axum::{
 };
 use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
-use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, EMBEDS};
+use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS};
 use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
-use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, ShellContext};
+use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext};
 use bilibi_user::{PreferenceError, Presentation};
 use serde::Deserialize;
 use serde_json::json;
@@ -160,6 +160,26 @@ async fn context<'a>(
             .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
             .is_core_administrator(scope)
             .await?;
+    // The search lists the pages the person may open, decided as the menu
+    // decides its items: display only and unlogged, since each route checks
+    // its own access again when opened. Two pages the status bar links to
+    // under a condition use the same condition here: Instance settings also
+    // needs the Core Administrator standing, and the operator setup page only
+    // helps while the operator stands on no primary company (afterwards it
+    // sends everyone to that company).
+    let may_open = |access: Access| match access.base() {
+        Access::SignedIn => true,
+        Access::Capability(key) => capabilities.contains(key),
+        Access::AnyOf(keys) => keys.iter().any(|key| capabilities.contains(*key)),
+        Access::Operator => platform_operator,
+        Access::OperatorCapability(bilibi_base::system::INSTANCE_MANAGE) => manage_instance,
+        Access::OperatorCapability(key) => platform_operator && capabilities.contains(key),
+        Access::Owner => owner,
+        Access::Public | Access::StepUp { .. } => false,
+    };
+    let pages = search_pages(app, &tree, |route| {
+        may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)
+    });
     let served = served_routes(app);
     let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
         .await?
@@ -204,7 +224,117 @@ async fn context<'a>(
         },
         versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
+        page_search: bilibi_ui::page_search(&pages).map_err(|_| Error::Internal)?,
     })
+}
+
+/// The address of Company's operator setup page, which the status bar links to
+/// while the operator stands on no primary company (`shell.html`).
+const OPERATOR_SETUP: &str = "/setup/platform-operator";
+
+/// The pages the shell's search lists: each page route the person `may` open,
+/// named by its title, else its menu row, and placed where it lives: at its
+/// menu row, else under the deepest row its address sits beneath. A personal
+/// settings page takes its tab's label under `SETTINGS_LOCATION`. A route with
+/// a path parameter and a page with no name are left out. A route that only
+/// redirects is listed under its title when the person may also open where it
+/// leads (Create Contact opens the Contacts list's dialog), so an old address
+/// that redirects returns no title.
+fn search_pages(app: &App, tree: &[menu::Node], may: impl Fn(&Route) -> bool) -> Vec<SearchPage> {
+    let mut rows = Vec::new();
+    menu_rows(tree, &[], &mut rows);
+    let settings = bilibi_ui::SettingsTab::pages();
+    let mut pages = Vec::new();
+    let mut account = Vec::new();
+    for bound in app.routes.iter() {
+        let route = bound.route;
+        if route.method != Method::Get || route.path.contains('{') || !may(route) {
+            continue;
+        }
+        if let Some(target) = bound.page.0.redirect(route.operation) {
+            let path = target.split('?').next().unwrap_or(target);
+            match crate::routes::resolve(app, path) {
+                Ok((to, _)) if may(to.route) => {}
+                _ => continue,
+            }
+        }
+        if let Some(at) = settings.iter().position(|(_, href)| *href == route.path) {
+            let label = settings[at].0;
+            account.push((
+                at,
+                SearchPage {
+                    label: label.to_owned(),
+                    location: bilibi_ui::SETTINGS_LOCATION
+                        .iter()
+                        .chain([&label])
+                        .map(|part| (*part).to_owned())
+                        .collect(),
+                    href: route.path.to_owned(),
+                    account: true,
+                },
+            ));
+            continue;
+        }
+        let row = rows.iter().find(|(path, _)| *path == route.path);
+        let Some(label) = bound
+            .page
+            .0
+            .title(route.operation)
+            .or(row.and_then(|(_, labels)| labels.last().copied()))
+        else {
+            continue;
+        };
+        let location: Vec<&str> = match row {
+            Some((_, labels)) => labels.clone(),
+            None => rows
+                .iter()
+                .filter(|(path, _)| {
+                    *path != "/"
+                        && route
+                            .path
+                            .strip_prefix(path)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+                .max_by_key(|(path, _)| path.len())
+                .map(|(_, labels)| labels.iter().copied().chain([label]).collect())
+                .unwrap_or_default(),
+        };
+        pages.push(SearchPage {
+            label: label.to_owned(),
+            location: location.into_iter().map(str::to_owned).collect(),
+            href: route.path.to_owned(),
+            account: false,
+        });
+    }
+    // Sections read alphabetically, as the menu does; settings in tab order.
+    pages.sort_by_cached_key(|page| {
+        if page.location.is_empty() {
+            page.label.to_lowercase()
+        } else {
+            page.path().to_lowercase()
+        }
+    });
+    account.sort_by_key(|(at, _)| *at);
+    pages.extend(account.into_iter().map(|(_, page)| page));
+    pages
+}
+
+/// Each visible menu row that opens a page, with the labels from its section
+/// down to it.
+fn menu_rows(
+    nodes: &[menu::Node],
+    above: &[&'static str],
+    rows: &mut Vec<(&'static str, Vec<&'static str>)>,
+) {
+    for node in nodes {
+        let item = node.item.item;
+        let mut labels = above.to_vec();
+        labels.push(item.label);
+        if let Some(route) = item.route {
+            rows.push((route, labels.clone()));
+        }
+        menu_rows(&node.children, &labels, rows);
+    }
 }
 
 /// One `EmbedContext::Shell` contribution and the id of the element it
