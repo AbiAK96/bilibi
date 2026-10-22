@@ -561,6 +561,94 @@ async fn definitions(
     let rows=client.query("SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND ($3 OR archived_at IS NULL) ORDER BY position,field_key", &[&tenant,&record_type,&archived]).await?;
     Ok(rows.iter().map(from_row).collect())
 }
+
+pub(crate) async fn grid_fields(
+    client: &impl GenericClient,
+    scope: &Scope,
+) -> Result<Vec<bilibi_grid::RuntimeField>> {
+    let mut fields = Vec::new();
+    for record_type in &registered_runtime_types()? {
+        for def in active_definitions(client, scope.tenant(), record_type.key).await? {
+            fields.push(bilibi_grid::RuntimeField {
+                table: record_type.grid_table.into(),
+                column: record_type.custom_column,
+                key: def.key,
+                label: def.label,
+                ty: grid_type(def.field_type),
+                values: def
+                    .options
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|option| {
+                        option
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect(),
+            });
+        }
+    }
+    Ok(fields)
+}
+
+pub(crate) async fn authz_fields(
+    client: &impl GenericClient,
+    scope: &Scope,
+) -> Result<Vec<bilibi_authz::field_catalog::CatalogTable>> {
+    let mut tables: BTreeMap<String, bilibi_authz::field_catalog::CatalogTable> = BTreeMap::new();
+    for record_type in &registered_runtime_types()? {
+        let fields = active_definitions(client, scope.tenant(), record_type.key).await?;
+        if fields.is_empty() {
+            continue;
+        }
+        let table = tables
+            .entry(record_type.grid_table.into())
+            .or_insert_with(|| bilibi_authz::field_catalog::CatalogTable {
+                id: record_type.grid_table.into(),
+                label: record_type.label.into(),
+                record_types: vec![record_type.audit_kind.into()],
+                fields: Vec::new(),
+            });
+        table.fields.extend(fields.into_iter().map(|def| {
+            bilibi_authz::field_catalog::CatalogField {
+                id: format!("cf_{}", def.key),
+                label: def.label,
+            }
+        }));
+    }
+    Ok(tables.into_values().collect())
+}
+
+fn registered_runtime_types() -> Result<Vec<RecordType>> {
+    let modules = bilibi_module_registry::discover().map_err(|_| Error::Internal)?;
+    let catalog = Catalog::discover(&modules).map_err(|_| Error::Internal)?;
+    registered(catalog.entries::<RecordType>(RECORD_TYPES)?).map_err(|_| Error::Internal)
+}
+
+fn grid_type(ty: FieldType) -> bilibi_grid::FieldType {
+    use bilibi_grid::FieldType as G;
+    match ty {
+        FieldType::Text | FieldType::LongText | FieldType::Reference | FieldType::MultiChoice => {
+            G::String
+        }
+        FieldType::Integer => G::Integer,
+        FieldType::Decimal => G::Decimal,
+        FieldType::Date => G::Date,
+        FieldType::DateTime => G::DateTime,
+        FieldType::Boolean => G::Boolean,
+        FieldType::Choice => G::Enum,
+    }
+}
+
+pub(crate) async fn active_definitions(
+    client: &impl GenericClient,
+    tenant: i64,
+    record_type: &str,
+) -> Result<Vec<Definition>> {
+    definitions(client, tenant, record_type, false).await
+}
 fn from_row(row: &tokio_postgres::Row) -> Definition {
     let ty: String = row.get("field_type");
     Definition {
