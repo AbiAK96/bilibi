@@ -84,6 +84,18 @@ impl CustomFields {
         &self.record_types
     }
 
+    /// Whether the current tenant actor may define fields for this opted-in
+    /// record type. The page uses this only to hide unavailable write controls;
+    /// every definition mutation still rechecks the capability in its transaction.
+    pub async fn can_manage_record_type(&self, scope: &Scope, record_type: &str) -> Result<bool> {
+        let decl = self.require_record_type(record_type)?;
+        let client = self.db.get().await?;
+        self.administrator(&**client, scope).await?;
+        Ok(bilibi_authz::effective_capabilities(&**client, scope)
+            .await?
+            .contains(decl.capability))
+    }
+
     pub async fn list(
         &self,
         scope: &Scope,

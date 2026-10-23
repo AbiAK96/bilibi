@@ -604,12 +604,15 @@ dependencies = [
 name = "bilibi-custom-fields"
 version = "0.1.1"
 dependencies = [
+ "askama",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-grid",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-ports",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "jiff",
  "rust_decimal",
