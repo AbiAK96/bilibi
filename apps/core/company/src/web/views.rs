@@ -2,6 +2,7 @@ use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
 use askama::Template;
+use bilibi_custom_fields::{Definition, FieldType};
 use bilibi_database::{Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
@@ -411,6 +412,156 @@ fn choice(
         editor,
     })
 }
+
+fn custom_fact(
+    company: &Company,
+    definition: &Definition,
+    value: Option<&Value>,
+    editable: bool,
+    status: CommitStatus,
+) -> Result<Html> {
+    let id = format!("company-custom-{}", definition.key);
+    let name = format!("cf_{}", definition.key);
+    let wire = match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Number(value)) => value.to_string(),
+        Some(Value::Bool(value)) => value.to_string(),
+        Some(value @ Value::Array(_)) => serde_json::to_string(value).unwrap_or_default(),
+        Some(_) => String::new(),
+    };
+    let active_choices = custom_options(
+        definition,
+        &value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .chain(value.and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+    );
+    let display = match definition.field_type {
+        FieldType::Boolean => match value.and_then(Value::as_bool) {
+            Some(true) => "Yes".to_owned(),
+            Some(false) => "No".to_owned(),
+            None => "—".to_owned(),
+        },
+        FieldType::Choice => {
+            let code = value.and_then(Value::as_str).unwrap_or_default();
+            active_choices
+                .iter()
+                .find(|choice| choice.value == code)
+                .map(|choice| choice.label.clone())
+                .unwrap_or_else(|| code.to_owned())
+        }
+        FieldType::MultiChoice => value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|code| {
+                active_choices
+                    .iter()
+                    .find(|choice| choice.value == code)
+                    .map_or_else(|| code.to_owned(), |choice| choice.label.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => wire.clone(),
+    };
+    let display_html = if display.is_empty() {
+        render(&MutedValue { text: "—" })?
+    } else {
+        Html::text(&display)
+    };
+    let mut inline = InlineField::new(&id, &name, format!("Edit {}", definition.label), &wire)
+        .version(company.version)
+        .status(status)
+        .hint(definition.help_text.clone().unwrap_or_default());
+    inline.id_value = company.id.to_string();
+    inline.editable = editable;
+    inline.allow_empty = !definition.required;
+    match definition.field_type {
+        FieldType::LongText => render(&InlineLongText {
+            field: inline,
+            rows: 4,
+        }),
+        FieldType::MultiChoice => {
+            let selected = value
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            let editor = render(
+                &Field::named(&name)
+                    .id(format!("{id}-input"))
+                    .label(&definition.label)
+                    .kind(InputKind::Select)
+                    .multiple()
+                    .values(selected)
+                    .options(active_choices)
+                    .aria_label(&definition.label)
+                    .wrapper_class("mb-0"),
+            )?;
+            render(&InlineMultiChoice {
+                field: inline,
+                display: display_html,
+                editor,
+            })
+        }
+        FieldType::Choice | FieldType::Boolean | FieldType::Date => {
+            let options = if definition.field_type == FieldType::Boolean {
+                choices(&[("Yes", "true"), ("No", "false")])
+            } else {
+                active_choices
+            };
+            let editor = match definition.field_type {
+                FieldType::Date => render(
+                    &Field::named(&name)
+                        .id(format!("{id}-input"))
+                        .label(&definition.label)
+                        .kind(InputKind::Date)
+                        .value(&wire)
+                        .aria_label(&definition.label)
+                        .wrapper_class("mb-0"),
+                )?,
+                _ => {
+                    let mut field = Field::named(&name)
+                        .id(format!("{id}-input"))
+                        .label(&definition.label)
+                        .kind(InputKind::Select)
+                        .aria_label(&definition.label)
+                        .options(options.clone())
+                        .wrapper_class("mb-0");
+                    field = field.value(&wire);
+                    if !definition.required && definition.field_type != FieldType::Boolean {
+                        field = field.prompt("Choose an option...");
+                    }
+                    render(&field)?
+                }
+            };
+            render(&InlineChoice {
+                field: inline,
+                display: display_html,
+                editor,
+            })
+        }
+        FieldType::Text
+        | FieldType::Integer
+        | FieldType::Decimal
+        | FieldType::DateTime
+        | FieldType::Reference => {
+            if definition.field_type == FieldType::DateTime && inline.hint.is_empty() {
+                inline.hint = "Enter an ISO 8601 UTC timestamp.".into();
+            }
+            render(&InlineEdit { field: inline })
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "detail.html")]
 struct DetailBody<'a> {
@@ -441,6 +592,7 @@ fn operation_name(op: crate::lifecycle::Operation) -> (&'static str, &'static st
 /// open dialog, the notice and the Departments table arrangement.
 pub(super) struct DetailState<'a> {
     pub statuses: &'a CommitStates,
+    pub custom_fields: &'a [Definition],
     pub pending: Option<&'a Pending>,
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
@@ -458,6 +610,7 @@ pub(super) async fn detail(
 ) -> Result<String> {
     let DetailState {
         statuses,
+        custom_fields,
         pending,
         notice,
         pending_activity,
@@ -637,6 +790,31 @@ pub(super) async fn detail(
             editable,
         )?,
     });
+    // Company custom facts mirror Bilimbi Core Company's record facts.
+    for definition in custom_fields
+        .iter()
+        .filter(|definition| definition.field_type != FieldType::Reference)
+    {
+        let field_id = format!("cf_{}", definition.key);
+        let id = format!("company-custom-{}", definition.key);
+        let value = company.custom.get(&definition.key);
+        let body = if masked.contains(&field_id) {
+            restricted(&id)?
+        } else {
+            custom_fact(
+                &company,
+                definition,
+                value,
+                editable,
+                statuses.get(&field_id),
+            )?
+        };
+        facts.push(Fact {
+            title: &definition.label,
+            id: "",
+            value: body,
+        });
+    }
     let context = client
         .query_one(
             "SELECT scope_activities,metadata FROM companies WHERE tenant_id=$1 AND id=$2",
@@ -946,6 +1124,8 @@ struct CreateBody {
     fields: Vec<Html>,
     contacts: Vec<Html>,
     context: Vec<Html>,
+    custom: Vec<Html>,
+    custom_heading: Html,
     submit: Html,
 }
 pub(super) async fn create(
@@ -953,6 +1133,7 @@ pub(super) async fn create(
     scope: &Scope,
     values: &HashMap<String, String>,
     errors: &[FieldError],
+    custom_fields: &[Definition],
 ) -> Result<String> {
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
     let masked = bilibi_authz::restrictions(client, scope).await?;
@@ -1057,6 +1238,17 @@ pub(super) async fn create(
         )
     })
     .collect::<Result<Vec<_>>>()?;
+    // Creation controls mirror Bilimbi Core Company's NewLive form.
+    let custom = custom_fields
+        .iter()
+        .filter(|definition| definition.field_type != FieldType::Reference)
+        .map(|definition| custom_create_field(definition, values, errors))
+        .collect::<Result<Vec<_>>>()?;
+    let custom_heading = render(&SectionHeading {
+        id: "company-create-custom-fields-heading",
+        title: "Custom fields",
+        ..SectionHeading::default()
+    })?;
     let header = render(&Header {
         title: Html::text("Create Company"),
         subtitle: "",
@@ -1079,15 +1271,19 @@ pub(super) async fn create(
             fields,
             contacts,
             context,
+            custom,
+            custom_heading,
             submit,
         })?,
     )
 }
 pub(super) fn new_company(
     values: &HashMap<String, String>,
+    custom_fields: &[Definition],
 ) -> (NewCompany, Option<Value>, Option<Value>, Vec<FieldError>) {
     let text = |name| values.get(name).filter(|s| !s.trim().is_empty()).cloned();
     let mut errors = Vec::new();
+    let custom = custom_values(values, custom_fields, &mut errors);
     let mut id = |name: &'static str| match text(name) {
         None => None,
         Some(v) => match v.parse::<i64>() {
@@ -1110,6 +1306,7 @@ pub(super) fn new_company(
         jurisdiction: text("jurisdiction"),
         email: text("email"),
         website: text("website"),
+        custom,
         ..NewCompany::default()
     };
     let mut object = |name: &'static str| {
@@ -1124,6 +1321,225 @@ pub(super) fn new_company(
     let activities = object("scope_activities");
     let metadata = object("metadata");
     (new, activities, metadata, errors)
+}
+
+fn custom_form_name(key: &str, multiple: bool) -> String {
+    format!("custom[{key}]{}", if multiple { "[]" } else { "" })
+}
+
+fn form_custom_value(values: &HashMap<String, String>, definition: &Definition) -> Value {
+    let name = custom_form_name(
+        &definition.key,
+        definition.field_type == FieldType::MultiChoice,
+    );
+    let Some(raw) = values.get(&name) else {
+        return Value::Null;
+    };
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.clone()))
+}
+
+fn custom_error_messages(errors: &[FieldError], key: &str) -> Vec<String> {
+    let field = format!("custom.{key}");
+    errors
+        .iter()
+        .filter(|error| error.field == field || error.field == "custom")
+        .map(|error| error.message.clone())
+        .collect()
+}
+
+fn custom_options(definition: &Definition, include_retired: &[String]) -> Vec<Choice> {
+    definition
+        .options
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            let code = option.get("code")?.as_str()?;
+            let label = option.get("label")?.as_str()?;
+            let active = option
+                .get("active")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            (active || include_retired.iter().any(|value| value == code))
+                .then(|| Choice::new(label, code))
+        })
+        .collect()
+}
+
+fn custom_create_field(
+    definition: &Definition,
+    values: &HashMap<String, String>,
+    errors: &[FieldError],
+) -> Result<Html> {
+    let name = custom_form_name(
+        &definition.key,
+        definition.field_type == FieldType::MultiChoice,
+    );
+    let id = format!("company-custom-{}", definition.key);
+    let value = form_custom_value(values, definition);
+    let mut field = Field::named(&name)
+        .id(&id)
+        .label(&definition.label)
+        .hint(definition.help_text.clone().unwrap_or_default())
+        .errors(custom_error_messages(errors, &definition.key));
+    field = match definition.field_type {
+        FieldType::Text => field
+            .kind(InputKind::Text)
+            .value(value.as_str().unwrap_or_default())
+            .attr(
+                "maxlength",
+                &definition.text_limit.unwrap_or(255).to_string(),
+            ),
+        FieldType::LongText => field
+            .kind(InputKind::Textarea)
+            .value(value.as_str().unwrap_or_default())
+            .attr(
+                "maxlength",
+                &definition.text_limit.unwrap_or(100_000).to_string(),
+            ),
+        FieldType::Integer => field
+            .kind(InputKind::Number)
+            .value(
+                value
+                    .as_i64()
+                    .map(|v| v.to_string())
+                    .or_else(|| value.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+            )
+            .attr("step", "1"),
+        FieldType::Decimal => field
+            .kind(InputKind::Number)
+            .value(value.as_str().map(str::to_owned).unwrap_or_default())
+            .attr("step", "any"),
+        FieldType::Date => field
+            .kind(InputKind::Date)
+            .value(value.as_str().unwrap_or_default()),
+        FieldType::DateTime => field
+            .kind(InputKind::Text)
+            .value(value.as_str().unwrap_or_default())
+            .placeholder("2026-10-23T12:00:00Z")
+            .hint(
+                definition
+                    .help_text
+                    .clone()
+                    .unwrap_or_else(|| "Enter an ISO 8601 UTC timestamp.".into()),
+            ),
+        FieldType::Boolean => field.kind(InputKind::Checkbox).checked(
+            value
+                .as_bool()
+                .unwrap_or_else(|| value.as_str() == Some("true")),
+        ),
+        FieldType::Choice => field
+            .kind(InputKind::Select)
+            .prompt("Choose an option...")
+            .value(value.as_str().unwrap_or_default())
+            .options(custom_options(definition, &[])),
+        FieldType::MultiChoice => field
+            .kind(InputKind::Select)
+            .multiple()
+            .values(
+                value
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            )
+            .options(custom_options(definition, &[])),
+        FieldType::Reference => return Ok(Html::EMPTY),
+    };
+    if definition.required && definition.field_type != FieldType::Boolean {
+        field = field.required();
+    }
+    render(&field)
+}
+
+fn custom_values(
+    values: &HashMap<String, String>,
+    definitions: &[Definition],
+    errors: &mut Vec<FieldError>,
+) -> Value {
+    let mut custom = serde_json::Map::new();
+    for (name, raw) in values {
+        let Some(inner) = name.strip_prefix("custom[") else {
+            continue;
+        };
+        let (key, multiple) = if let Some(key) = inner.strip_suffix("][]") {
+            (key, true)
+        } else if let Some(key) = inner.strip_suffix(']') {
+            (key, false)
+        } else {
+            continue;
+        };
+        let value =
+            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.clone()));
+        let Some(definition) = definitions.iter().find(|definition| definition.key == key) else {
+            custom.insert(key.to_owned(), value);
+            continue;
+        };
+        let parsed = if value.as_str() == Some("")
+            && !matches!(definition.field_type, FieldType::Text | FieldType::LongText)
+        {
+            Value::Null
+        } else {
+            match definition.field_type {
+                FieldType::Text
+                | FieldType::LongText
+                | FieldType::Decimal
+                | FieldType::Date
+                | FieldType::DateTime
+                | FieldType::Choice => {
+                    if value.is_null() || (multiple && value.as_array().is_some_and(Vec::is_empty))
+                    {
+                        Value::Null
+                    } else {
+                        Value::String(
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| raw.clone()),
+                        )
+                    }
+                }
+                FieldType::Integer => match value.as_str().unwrap_or(raw).parse::<i64>() {
+                    Ok(number) => Value::Number(number.into()),
+                    Err(_) => {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "must be a whole number",
+                        ));
+                        Value::Null
+                    }
+                },
+                FieldType::Boolean => match value.as_str().unwrap_or(raw) {
+                    "true" => Value::Bool(true),
+                    "false" => Value::Bool(false),
+                    _ => {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "must be yes or no",
+                        ));
+                        Value::Null
+                    }
+                },
+                FieldType::MultiChoice => {
+                    if !multiple || !value.is_array() {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "has invalid choices",
+                        ));
+                        Value::Array(Vec::new())
+                    } else {
+                        value
+                    }
+                }
+                FieldType::Reference => continue,
+            }
+        };
+        custom.insert(key.to_owned(), parsed);
+    }
+    Value::Object(custom)
 }
 
 #[derive(Template)]

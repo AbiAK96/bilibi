@@ -108,6 +108,20 @@ impl CustomFields {
         definitions(&**client, scope.tenant(), record_type, archived).await
     }
 
+    /// Active definitions for an opted-in record owner's already-authorized
+    /// page. Unlike administration listing, this does not require manage
+    /// permission; the owner route authorizes the record operation first.
+    pub async fn active_for_record(
+        &self,
+        scope: &Scope,
+        record_type: &str,
+    ) -> Result<Vec<Definition>> {
+        let client = self.db.get().await?;
+        self.authentication.reprove(&**client, scope).await?;
+        self.require_record_type(record_type)?;
+        definitions(&**client, scope.tenant(), record_type, false).await
+    }
+
     pub async fn define(
         &self,
         scope: &Scope,
@@ -338,6 +352,16 @@ impl CustomFields {
                 } else {
                     out.insert(def.key.clone(), Value::Null);
                 }
+                continue;
+            }
+            if def.required
+                && (value.as_str().is_some_and(|text| text.trim().is_empty())
+                    || value.as_array().is_some_and(Vec::is_empty))
+            {
+                errors.push(FieldError::new(
+                    format!("custom.{}", def.key),
+                    "is required",
+                ));
                 continue;
             }
             if !valid_value(def, value, current.and_then(|m| m.get(&def.key))) {

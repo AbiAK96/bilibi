@@ -5,6 +5,18 @@ use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 
 impl CompanyService {
+    /// Active Company field definitions for a Company page whose route has
+    /// already authorized create or view. Custom Fields re-proves the sealed
+    /// scope and applies the tenant predicate; no manage permission is needed.
+    pub async fn custom_definitions(
+        &self,
+        scope: &Scope,
+    ) -> Result<Vec<bilibi_custom_fields::Definition>> {
+        self.custom_fields
+            .active_for_record(scope, "core.company")
+            .await
+    }
+
     pub async fn create_with_context(
         &self,
         scope: &Scope,
