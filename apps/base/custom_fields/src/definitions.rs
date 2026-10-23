@@ -199,6 +199,19 @@ impl CustomFields {
         definitions(&**client, scope.tenant(), record_type, false).await
     }
 
+    /// Active definitions on the caller's existing read transaction. The
+    /// owner must authorize the corresponding record operation before calling;
+    /// this is used by Agent API scoped input schemas and plan revalidation.
+    pub async fn active_for_record_on(
+        &self,
+        client: &(impl ReadClient + ?Sized),
+        scope: &Scope,
+        record_type: &str,
+    ) -> Result<Vec<Definition>> {
+        self.require_record_type(record_type)?;
+        definitions_on_read(client, scope.tenant(), record_type).await
+    }
+
     pub async fn define(
         &self,
         scope: &Scope,
@@ -213,6 +226,7 @@ impl CustomFields {
             .await?;
         self.administrator(tx.sql(), scope).await?;
         authorize_key(tx.sql(), scope, decl.capability).await?;
+        lock_definition_set(tx.sql(), scope.tenant(), record_type).await?;
         if let Some(errors) = validate_definition_input(input) {
             drop(tx);
             return Ok(Outcome::Refused(errors));
@@ -268,6 +282,7 @@ impl CustomFields {
             .await?;
         self.administrator(tx.sql(), scope).await?;
         authorize_key(tx.sql(), scope, decl.capability).await?;
+        lock_definition_set(tx.sql(), scope.tenant(), record_type).await?;
         if let Some(errors) = validate_definition_input(input) {
             drop(tx);
             return Ok(Outcome::Refused(errors));
@@ -366,6 +381,7 @@ impl CustomFields {
             .await?;
         self.administrator(tx.sql(), scope).await?;
         authorize_key(tx.sql(), scope, decl.capability).await?;
+        lock_definition_set(tx.sql(), scope.tenant(), record_type).await?;
         let tenant = scope.tenant();
         let rt = record_type.to_owned();
         let key = key.to_owned();
@@ -725,6 +741,40 @@ async fn definitions(
 ) -> Result<Vec<Definition>> {
     let rows=client.query("SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND ($3 OR archived_at IS NULL) ORDER BY position,field_key", &[&tenant,&record_type,&archived]).await?;
     Ok(rows.iter().map(from_row).collect())
+}
+
+async fn definitions_on_read(
+    client: &(impl ReadClient + ?Sized),
+    tenant: i64,
+    record_type: &str,
+) -> Result<Vec<Definition>> {
+    client
+        .query(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1::bigint::text || ':' || $2::text, 0))",
+            &[&tenant, &record_type],
+        )
+        .await?;
+    let rows = client
+        .query(
+            "SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND archived_at IS NULL ORDER BY position,field_key",
+            &[&tenant, &record_type],
+        )
+        .await?;
+    Ok(rows.iter().map(from_row).collect())
+}
+
+async fn lock_definition_set(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    record_type: &str,
+) -> Result<()> {
+    client
+        .query_one(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1::bigint::text || ':' || $2::text, 0))",
+            &[&tenant, &record_type],
+        )
+        .await?;
+    Ok(())
 }
 
 pub(crate) async fn grid_fields(
