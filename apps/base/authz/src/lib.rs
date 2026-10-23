@@ -125,6 +125,34 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
 /// `Owner`): the same vocabulary, tenant, operator and deny-wins rules, the
 /// same decision log, on the caller's connection or transaction.
 pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<Decision> {
+    let decision = effective_proof(client, scope, key).await?;
+    let kind = "user";
+    let principal: Option<&str> = None;
+    client
+        .query_opt(
+            LOG_RETURNING_SQL,
+            &[
+                &scope.tenant(),
+                &scope.user(),
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
+    Ok(decision)
+}
+/// Evaluate a capability on Tenancy's sealed proof connection without writing
+/// a decision log. Use this for filtered reads such as target pickers that may
+/// run inside a read-only transaction; the protected action must still call
+/// [`authorize_proof`].
+pub async fn effective_proof(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    key: &str,
+) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
@@ -153,22 +181,6 @@ pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) ->
             }
         }
     };
-    let kind = "user";
-    let principal: Option<&str> = None;
-    client
-        .query_opt(
-            LOG_RETURNING_SQL,
-            &[
-                &scope.tenant(),
-                &scope.user(),
-                &key,
-                &decision.allowed,
-                &decision.reason,
-                &kind,
-                &principal,
-            ],
-        )
-        .await?;
     Ok(decision)
 }
 /// `authorize_key` on a sealed proof connection.
