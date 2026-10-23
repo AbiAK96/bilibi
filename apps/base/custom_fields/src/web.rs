@@ -30,6 +30,7 @@ const TYPES: &[(&str, &str)] = &[
     ("Yes or no", "boolean"),
     ("Choice", "choice"),
     ("Multiple choice", "multi_choice"),
+    ("Reference", "reference"),
 ];
 
 static SPEC: std::sync::LazyLock<Arc<ListSpec>> = std::sync::LazyLock::new(|| {
@@ -73,6 +74,7 @@ struct Draft {
     text_limit: String,
     format: String,
     options: String,
+    reference_table: String,
 }
 impl Draft {
     fn from_definition(definition: &Definition) -> Self {
@@ -90,6 +92,7 @@ impl Draft {
             format: definition.format.clone().unwrap_or_default(),
             options: serde_json::to_string_pretty(&definition.options)
                 .unwrap_or_else(|_| "[]".into()),
+            reference_table: definition.reference_table.clone().unwrap_or_default(),
         }
     }
 }
@@ -300,9 +303,6 @@ impl Index {
             values.get("type").and_then(|value| FieldType::parse(value))
         }
         .ok_or_else(|| "Choose a supported field type.".to_owned())?;
-        if field_type == FieldType::Reference {
-            return Err("Reference fields are not available yet.".into());
-        }
         let key = self
             .editing
             .as_ref()
@@ -356,7 +356,8 @@ impl Index {
                 .filter(|value| !value.trim().is_empty()),
             position,
             options,
-            reference_table: None,
+            reference_table: (field_type == FieldType::Reference)
+                .then(|| self.draft.reference_table.clone()),
             text_limit,
             format: values
                 .get("format")
@@ -394,6 +395,9 @@ impl Index {
         }
         if let Some(options) = values.get("options") {
             self.draft.options.clone_from(options);
+        }
+        if let Some(reference_table) = values.get("reference_table") {
+            self.draft.reference_table.clone_from(reference_table);
         }
         let input = match self.input(values) {
             Ok(input) => input,
@@ -681,7 +685,15 @@ impl Index {
         })?;
         let dialog = self.render_dialog()?;
         let confirmation = if let Some((key, _)) = &self.confirm_archive {
-            render(&ConfirmDialog { id: "custom-field-archive-confirm", consequence: &format!("Archive {key}?"), detail: "The field will no longer be available for new values. Existing record values stay stored.", confirm: "Archive", working: "Archiving…", confirm_event: "archive", cancel_event: "cancel_archive" })?
+            render(&ConfirmDialog {
+                id: "custom-field-archive-confirm",
+                consequence: &format!("Archive {key}?"),
+                detail: "The field will no longer be available for new values. Existing record values stay stored.",
+                confirm: "Archive",
+                working: "Archiving…",
+                confirm_event: "archive",
+                cancel_event: "cancel_archive",
+            })?
         } else {
             Html::EMPTY
         };
@@ -780,6 +792,25 @@ impl Index {
             render(&options)?,
         ] {
             body.push(&field);
+        }
+        if self.draft.field_type == "reference" {
+            let mut target = Field::in_form("definition", "reference_table")
+                .label("Target record type")
+                .kind(InputKind::Select)
+                .value(&self.draft.reference_table)
+                .prompt("Choose a record type...")
+                .options(
+                    self.pages
+                        .fields
+                        .reference_target_types()
+                        .into_iter()
+                        .map(|target| Choice::new(target.label, target.table))
+                        .collect(),
+                );
+            if is_edit {
+                target = target.disabled();
+            }
+            body.push(&render(&target)?);
         }
         let mut actions = render(&Button {
             variant: ButtonVariant::Primary,

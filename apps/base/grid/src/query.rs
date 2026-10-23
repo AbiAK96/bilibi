@@ -154,7 +154,7 @@ pub fn field_expression(
     }
     let table = catalog.table(table_id)?;
     let field = table.field(field_id)?;
-    if field.hidden {
+    if field.hidden || field.readable_values.is_some() {
         return None;
     }
     if let Some(key) = field.json_key.clone() {
@@ -324,7 +324,20 @@ pub async fn project_lenses<S: AsRef<str>>(
         }
         let mut cells = BTreeMap::new();
         for (i, column) in columns.iter().enumerate() {
-            cells.insert(column.id.clone(), row.try_get(i + 1)?);
+            let mut value: Value = row.try_get(i + 1)?;
+            if let Some(allowed) = column
+                .field
+                .as_ref()
+                .and_then(|field| field.readable_values.as_ref())
+            {
+                if !value
+                    .as_str()
+                    .is_some_and(|key| allowed.iter().any(|allowed| allowed == key))
+                {
+                    value = Value::Null;
+                }
+            }
+            cells.insert(column.id.clone(), value);
         }
         let mut at = columns.len() + 1;
         let mut series = BTreeMap::new();
@@ -404,7 +417,10 @@ pub async fn stats<S: AsRef<str>>(
         .map(|i| format!("to_jsonb(min(c{i})), to_jsonb(max(c{i}))"))
         .collect::<Vec<_>>()
         .join(", ");
-    let sql = format!("WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr) SELECT {ranges} FROM (SELECT {values} FROM {} r CROSS JOIN actor) s", source(root));
+    let sql = format!(
+        "WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr) SELECT {ranges} FROM (SELECT {values} FROM {} r CROSS JOIN actor) s",
+        source(root)
+    );
     let tenant = scope.tenant();
     let user = scope.user();
     let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&tenant, &user];
@@ -477,7 +493,7 @@ pub async fn text_search_sql(
         if !column
             .field
             .as_ref()
-            .is_some_and(|f| f.ty == crate::FieldType::String)
+            .is_some_and(|f| f.ty == crate::FieldType::String && f.readable_values.is_none())
         {
             continue;
         }
@@ -507,7 +523,11 @@ pub async fn text_search_sql(
         predicates.join(" OR ")
     };
     Ok(TextSearchSql {
-        sql: format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key(), &keys), source(root)),
+        sql: format!(
+            "SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})",
+            field("r", root, root.key(), &keys),
+            source(root)
+        ),
         json_keys,
     })
 }
@@ -617,9 +637,20 @@ fn cell(catalog: &Catalog, root: &Table, column: &Column, keys: &KeyParams) -> S
         .map(|f| field(&p, parent, &f.id, keys));
     match column.agg {
         None => format!("(SELECT {} {suffix})", value.unwrap()),
-        Some(Agg::Count) => format!("(SELECT {} {suffix})", aggregate(catalog, column, &p, parent, keys)),
-        Some(Agg::Latest) => format!("(SELECT {} {suffix} ORDER BY {} DESC NULLS LAST, {} DESC LIMIT 1)", value.unwrap(), field(&p, parent, parent.time_field().unwrap(), keys), field(&p, parent, parent.key(), keys)),
-        Some(Agg::List) => format!("(SELECT left(string_agg(v, ', ' ORDER BY v), 300) FROM (SELECT DISTINCT left(({})::text, 300) AS v {suffix} ORDER BY v LIMIT 301) listed)", value.unwrap()),
+        Some(Agg::Count) => format!(
+            "(SELECT {} {suffix})",
+            aggregate(catalog, column, &p, parent, keys)
+        ),
+        Some(Agg::Latest) => format!(
+            "(SELECT {} {suffix} ORDER BY {} DESC NULLS LAST, {} DESC LIMIT 1)",
+            value.unwrap(),
+            field(&p, parent, parent.time_field().unwrap(), keys),
+            field(&p, parent, parent.key(), keys)
+        ),
+        Some(Agg::List) => format!(
+            "(SELECT left(string_agg(v, ', ' ORDER BY v), 300) FROM (SELECT DISTINCT left(({})::text, 300) AS v {suffix} ORDER BY v LIMIT 301) listed)",
+            value.unwrap()
+        ),
         Some(agg) => format!("(SELECT {}({}) {suffix})", agg.key(), value.unwrap()),
     }
 }
@@ -771,5 +802,9 @@ fn statement(
     // Cast input values to the server-described key type. This keeps the owner
     // key bare, allowing its index to bound the page lookup. Type identifiers
     // come from PostgreSQL metadata, never from a request.
-    format!("WITH input AS (SELECT (id #>> '{{}}')::{key_cast} AS key, min(ord) AS ord FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS x(id,ord) GROUP BY 1), actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $4::text::date AS trend_from, $5::text::date AS trend_to, $6::text::date AS since) SELECT {select} FROM input JOIN {} r ON {} = input.key CROSS JOIN actor ORDER BY input.ord LIMIT 101", source(root), field("r", root, root.key(), keys))
+    format!(
+        "WITH input AS (SELECT (id #>> '{{}}')::{key_cast} AS key, min(ord) AS ord FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS x(id,ord) GROUP BY 1), actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $4::text::date AS trend_from, $5::text::date AS trend_to, $6::text::date AS since) SELECT {select} FROM input JOIN {} r ON {} = input.key CROSS JOIN actor ORDER BY input.ord LIMIT 101",
+        source(root),
+        field("r", root, root.key(), keys)
+    )
 }

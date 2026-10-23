@@ -13,6 +13,7 @@ mod page_data;
 mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
+mod reference_targets;
 pub mod reference_types;
 mod relationship_operations;
 pub mod relationship_roles;

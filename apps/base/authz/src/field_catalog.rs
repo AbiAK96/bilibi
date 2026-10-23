@@ -28,6 +28,9 @@ pub type RuntimeFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<CatalogTable
 pub struct CatalogField {
     pub id: String,
     pub label: String,
+    /// Current readable target keys for a reference custom field. The field
+    /// owner supplies this per scope so audit history can mask stale targets.
+    pub reference_values: Option<Vec<String>>,
 }
 /// One table with the fields an operator may restrict. `record_types` are the
 /// audit record types its rows use, so a restriction reaches their audit views.
@@ -187,6 +190,12 @@ pub async fn for_scope(client: PortClient<'_>, scope: &Scope) -> Result<FieldCat
             if !field.id.starts_with("cf_")
                 || !valid_id(&field.id)
                 || field.label.trim().is_empty()
+                || field.reference_values.as_ref().is_some_and(|values| {
+                    let mut keys = BTreeSet::new();
+                    values
+                        .iter()
+                        .any(|key| key.is_empty() || key.len() > 200 || !keys.insert(key))
+                })
                 || !seen_fields.insert(field.id.clone())
             {
                 return Err(Error::Internal);

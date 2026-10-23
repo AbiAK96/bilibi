@@ -356,7 +356,8 @@ fn custom_edit_json(value: &str, definition: &Definition) -> std::result::Result
         | FieldType::Decimal
         | FieldType::Date
         | FieldType::DateTime
-        | FieldType::Choice => Value::String(value.to_owned()),
+        | FieldType::Choice
+        | FieldType::Reference => Value::String(value.to_owned()),
         FieldType::Integer => Value::Number(value.parse::<i64>().map_err(|_| ())?.into()),
         FieldType::Boolean => Value::Bool(match value {
             "true" => true,
@@ -367,7 +368,6 @@ fn custom_edit_json(value: &str, definition: &Definition) -> std::result::Result
             let values: Vec<String> = serde_json::from_str(value).map_err(|_| ())?;
             serde_json::to_value(values).map_err(|_| ())?
         }
-        FieldType::Reference => return Err(()),
     };
     serde_json::to_string(&value).map_err(|_| ())
 }
@@ -423,6 +423,27 @@ impl CompanyPage {
         } else {
             Vec::new()
         };
+        let mut custom_reference_targets = BTreeMap::new();
+        for definition in custom_definitions
+            .iter()
+            .filter(|definition| definition.field_type == FieldType::Reference)
+        {
+            let field_id = format!("cf_{}", definition.key);
+            if masked
+                .get("companies")
+                .is_some_and(|fields| fields.contains(&field_id))
+            {
+                continue;
+            }
+            if let Some(table) = &definition.reference_table {
+                if !custom_reference_targets.contains_key(table) {
+                    custom_reference_targets.insert(
+                        table.clone(),
+                        self.company.custom_reference_choices(scope, table).await?,
+                    );
+                }
+            }
+        }
         let html = match self.operation {
             "list" => {
                 if self
@@ -495,6 +516,7 @@ impl CompanyPage {
                     views::DetailState {
                         statuses: &self.statuses,
                         custom_fields: &custom_definitions,
+                        custom_reference_targets: &custom_reference_targets,
                         pending: self.pending.as_ref(),
                         notice: &self.notice,
                         pending_activity: self.pending_activity.as_ref(),
@@ -513,6 +535,7 @@ impl CompanyPage {
                     &self.form,
                     &self.errors,
                     &custom_definitions,
+                    &custom_reference_targets,
                 )
                 .await?
             }
