@@ -53,6 +53,21 @@ fn show(label: &str, value: impl std::fmt::Debug) {
     println!("{label}: {value:?}");
 }
 
+fn field_input(definition: &bilibi_custom_fields::Definition) -> bilibi_custom_fields::FieldInput {
+    bilibi_custom_fields::FieldInput {
+        key: definition.key.clone(),
+        label: definition.label.clone(),
+        field_type: definition.field_type,
+        required: definition.required,
+        help_text: definition.help_text.clone(),
+        position: definition.position,
+        options: definition.options.clone(),
+        reference_table: definition.reference_table.clone(),
+        text_limit: definition.text_limit,
+        format: definition.format.clone(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     if std::env::var("BILIBI_COMPANY_DEMO").as_deref() != Ok("disposable") {
@@ -68,12 +83,30 @@ async fn main() -> Result<(), Error> {
     let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
     let viewer_login = app.user.login("viewer@example.test", password).await?;
+    let admin_login = app.user.login("admin@example.test", password).await?;
     let other_login = app
         .user
         .login("manager@other.example.test", password)
         .await?;
     let manager = app.security.guard(&manager_login.token).await?;
     let viewer = app.security.guard(&viewer_login.token).await?;
+    let admin = app.security.guard(&admin_login.token).await?;
+    let custom_fields = app
+        .services
+        .get::<bilibi_custom_fields::CustomFields>(bilibi_custom_fields::SERVICE)?;
+    for definition in custom_fields
+        .list(&admin, "core.company", true)
+        .await?
+        .into_iter()
+        .filter(|definition| definition.key == "agent_label" && !definition.archived)
+    {
+        show(
+            "temporarily archive required agent field for legacy create scenarios",
+            custom_fields
+                .archive(&admin, "core.company", &definition.key, definition.version)
+                .await?,
+        );
+    }
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
@@ -85,7 +118,7 @@ async fn main() -> Result<(), Error> {
         .await?
         .get(0);
     // Re-runs start from the fixture state.
-    client.batch_execute("DELETE FROM company_departments WHERE department_type_id IN (SELECT id FROM company_department_types WHERE code LIKE 'WT_%'); DELETE FROM company_department_types WHERE code LIKE 'WT_%'; UPDATE companies SET legal_entity_type_id=NULL WHERE code LIKE 'walkthrough%'; DELETE FROM company_legal_entity_types WHERE code LIKE 'WT_%'; DELETE FROM companies WHERE code LIKE 'walkthrough%' AND id NOT IN (SELECT company_id FROM tenant_primary_companies); UPDATE companies SET status='active' WHERE tenant_id=1 AND id=2").await?;
+    client.batch_execute("DELETE FROM company_departments WHERE department_type_id IN (SELECT id FROM company_department_types WHERE code LIKE 'WT_%'); DELETE FROM company_department_types WHERE code LIKE 'WT_%'; UPDATE companies SET legal_entity_type_id=NULL WHERE code LIKE 'walkthrough%'; DELETE FROM company_legal_entity_types WHERE code LIKE 'WT_%'; DELETE FROM companies WHERE code LIKE 'walkthrough%' AND id NOT IN (SELECT company_id FROM tenant_primary_companies); UPDATE companies SET status='active' WHERE tenant_id=1 AND id=2; DELETE FROM field_restrictions WHERE tenant_id=1 AND table_id='companies' AND field_id='cf_agent_count'").await?;
 
     println!("== identity: existing ids and URLs are kept");
     show(
@@ -609,6 +642,305 @@ async fn main() -> Result<(), Error> {
     let mut plan = plans.preview(&browser, &taken).await?;
     plan["plan_code"].take();
     println!("plan review of a taken code: {plan}");
+
+    println!("== tenant-defined company fields on agent operations");
+    for definition in custom_fields
+        .list(&admin, "core.company", true)
+        .await?
+        .into_iter()
+        .filter(|definition| definition.key == "agent_label" && definition.archived)
+    {
+        show(
+            "restore required agent field",
+            custom_fields
+                .restore(&admin, "core.company", &definition.key, definition.version)
+                .await?,
+        );
+    }
+    let existing = custom_fields.list(&admin, "core.company", false).await?;
+    let specs = [
+        bilibi_custom_fields::FieldInput {
+            key: "agent_label".into(),
+            label: "Agent label".into(),
+            field_type: bilibi_custom_fields::FieldType::Text,
+            required: true,
+            help_text: Some("A required label for the record.".into()),
+            position: 1,
+            options: json!([]),
+            reference_table: None,
+            text_limit: Some(80),
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_notes".into(),
+            label: "Agent notes".into(),
+            field_type: bilibi_custom_fields::FieldType::LongText,
+            required: false,
+            help_text: None,
+            position: 2,
+            options: json!([]),
+            reference_table: None,
+            text_limit: Some(500),
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_count".into(),
+            label: "Agent count".into(),
+            field_type: bilibi_custom_fields::FieldType::Integer,
+            required: false,
+            help_text: None,
+            position: 3,
+            options: json!([]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_amount".into(),
+            label: "Agent amount".into(),
+            field_type: bilibi_custom_fields::FieldType::Decimal,
+            required: false,
+            help_text: None,
+            position: 4,
+            options: json!([]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_date".into(),
+            label: "Agent date".into(),
+            field_type: bilibi_custom_fields::FieldType::Date,
+            required: false,
+            help_text: None,
+            position: 5,
+            options: json!([]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_datetime".into(),
+            label: "Agent date-time".into(),
+            field_type: bilibi_custom_fields::FieldType::DateTime,
+            required: false,
+            help_text: None,
+            position: 6,
+            options: json!([]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_flag".into(),
+            label: "Agent flag".into(),
+            field_type: bilibi_custom_fields::FieldType::Boolean,
+            required: false,
+            help_text: None,
+            position: 7,
+            options: json!([]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_choice".into(),
+            label: "Agent choice".into(),
+            field_type: bilibi_custom_fields::FieldType::Choice,
+            required: false,
+            help_text: None,
+            position: 8,
+            options: json!([{"code":"standard","label":"Standard","active":true},{"code":"premium","label":"Premium","active":true}]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_tags".into(),
+            label: "Agent tags".into(),
+            field_type: bilibi_custom_fields::FieldType::MultiChoice,
+            required: false,
+            help_text: None,
+            position: 9,
+            options: json!([{"code":"blue","label":"Blue","active":true},{"code":"green","label":"Green","active":true}]),
+            reference_table: None,
+            text_limit: None,
+            format: None,
+        },
+        bilibi_custom_fields::FieldInput {
+            key: "agent_related".into(),
+            label: "Related company".into(),
+            field_type: bilibi_custom_fields::FieldType::Reference,
+            required: false,
+            help_text: None,
+            position: 10,
+            options: json!([]),
+            reference_table: Some("companies".into()),
+            text_limit: None,
+            format: None,
+        },
+    ];
+    for input in &specs {
+        if !existing
+            .iter()
+            .any(|definition| definition.key == input.key)
+        {
+            show(
+                "define agent field",
+                custom_fields.define(&admin, "core.company", input).await?,
+            );
+        }
+    }
+    let create_description = registry
+        .describe(client, &manager, "core.company.create")
+        .await?;
+    show(
+        "tenant 1 create custom schema",
+        &create_description["input"]["properties"]["custom"],
+    );
+    let other_description = registry
+        .describe(client, &other, "core.company.create")
+        .await?;
+    show(
+        "tenant 2 custom schema",
+        &other_description["input"]["properties"]["custom"],
+    );
+
+    let custom_create = [PlannedOperation {
+        key: "core.company.create".into(),
+        input: json!({
+            "name":"Walkthrough Custom Agent Co","code":"walkthrough_custom_agent_co",
+            "custom":{"agent_label":"Runtime verified","agent_notes":"Agent API scoped fields","agent_count":7,"agent_amount":"12.50","agent_date":"2026-10-20","agent_datetime":"2026-10-20T08:30:00Z","agent_flag":true,"agent_choice":"standard","agent_tags":["blue"],"agent_related":"1"}
+        }),
+    }];
+    let create_review = plans.preview(&browser, &custom_create).await?;
+    show("custom create review", &create_review["results"]);
+    let create_code = create_review["plan_code"]
+        .as_str()
+        .ok_or("custom create review was invalid")?;
+    show(
+        "custom create commit",
+        plans
+            .commit(&manager, &browser, create_code, &custom_create)
+            .await
+            .map_err(|error| error.to_string()),
+    );
+    let custom_company_id: i64 = client
+        .query_one(
+            "SELECT id FROM companies WHERE tenant_id=1 AND code='walkthrough_custom_agent_co'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let update_description = registry
+        .describe(client, &manager, "core.company.update")
+        .await?;
+    show(
+        "custom update schema",
+        &update_description["input"]["properties"]["custom"],
+    );
+    let custom_update = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":1,"custom":{"agent_label":"Updated by agent","agent_choice":"premium","agent_tags":["blue","green"],"agent_related":"2"}}),
+    }];
+    let update_review = plans.preview(&browser, &custom_update).await?;
+    show("custom update review", &update_review["results"]);
+    let update_code = update_review["plan_code"]
+        .as_str()
+        .ok_or("custom update review was invalid")?;
+    show(
+        "custom update commit",
+        plans
+            .commit(&manager, &browser, update_code, &custom_update)
+            .await
+            .map_err(|error| error.to_string()),
+    );
+
+    let invalid_choice = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":2,"custom":{"agent_choice":"not-a-current-code"}}),
+    }];
+    show(
+        "unknown choice code refused by scoped schema",
+        &plans.preview(&browser, &invalid_choice).await?["results"],
+    );
+    let stale_record = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":1,"custom":{"agent_label":"Stale edit"}}),
+    }];
+    show(
+        "stale Company version refused",
+        &plans.preview(&browser, &stale_record).await?["results"],
+    );
+    let unreadable_reference = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":2,"custom":{"agent_related":"100"}}),
+    }];
+    show(
+        "cross-tenant reference refused",
+        &plans.preview(&browser, &unreadable_reference).await?["results"],
+    );
+    client.execute(
+        "INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id) VALUES(1,1,'companies','cf_agent_count') ON CONFLICT DO NOTHING",
+        &[],
+    ).await?;
+    let restricted_write = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":2,"custom":{"agent_count":8}}),
+    }];
+    show(
+        "restricted custom field write refused",
+        &plans.preview(&browser, &restricted_write).await?["results"],
+    );
+    show(
+        "restricted custom field read masked",
+        registry
+            .call(
+                client,
+                &manager,
+                "core.company.get",
+                &json!({"company_id":custom_company_id}),
+            )
+            .await?,
+    );
+
+    let stale_schema_ops = [PlannedOperation {
+        key: "core.company.update".into(),
+        input: json!({"company_id":custom_company_id,"version":2,"custom":{"agent_choice":"premium"}}),
+    }];
+    let stale_schema_review = plans.preview(&browser, &stale_schema_ops).await?;
+    let stale_schema_code = stale_schema_review["plan_code"]
+        .as_str()
+        .ok_or("schema drift review was invalid")?
+        .to_owned();
+    let current_choice = custom_fields
+        .list(&admin, "core.company", false)
+        .await?
+        .into_iter()
+        .find(|definition| definition.key == "agent_choice")
+        .ok_or("agent choice definition not found")?;
+    let mut changed_choice = field_input(&current_choice);
+    changed_choice.label = format!("Agent choice {}", current_choice.version + 1);
+    changed_choice.options = json!([{"code":"standard","label":"Standard","active":true},{"code":"premium","label":"Premium","active":true},{"code":"enterprise","label":"Enterprise","active":true}]);
+    show(
+        "definition update after review",
+        custom_fields
+            .update(
+                &admin,
+                "core.company",
+                "agent_choice",
+                current_choice.version,
+                &changed_choice,
+            )
+            .await?,
+    );
+    show(
+        "old review after schema change",
+        plans
+            .commit(&manager, &browser, &stale_schema_code, &stale_schema_ops)
+            .await
+            .map_err(|error| error.to_string()),
+    );
 
     println!("== provisioning (deployment commands)");
     show(

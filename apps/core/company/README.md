@@ -101,11 +101,7 @@ edits are rejected in the domain too.
 ## Agent operations
 
 `agent_operations.rs` registers `core.company.list` and `core.company.get`
-(reads) and `core.company.create` (a reviewed safe write: preview shares
-create's validation and code check without reserving it, commit writes
-through the plan's transaction) plus the `core.company` guide. A restricted
-field arrives as `{"restricted": true}`. The handlers read through a pool
-bound once by the service factory.
+(reads), `core.company.create`, and `core.company.update` (reviewed safe writes). Create accepts current tenant-defined custom fields; update changes custom fields only and requires the current company version. The input schemas resolve active custom definitions on the caller's scope and transaction, including field types, required fields, choice codes, and reference target types. Plans include those schemas in review facts and require a new review after definition changes. Writes still validate current definitions, restrictions, references and record version on the owning transaction. Restricted values arrive as `{"restricted": true}`. The handlers use the pool bound once by the service factory when an existing owner preview requires a separate read connection.
 
 ## Provisioning
 
