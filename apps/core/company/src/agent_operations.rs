@@ -81,6 +81,7 @@ fn parse(input: &Value) -> bilibi_agent_api::Result<NewCompany> {
 fn schema_with_custom_fields(
     base: Value,
     definitions: &[bilibi_custom_fields::Definition],
+    limits: bilibi_custom_fields::Limits,
     creating: bool,
 ) -> Value {
     let mut schema = base;
@@ -90,7 +91,14 @@ fn schema_with_custom_fields(
         let mut detail = definition.help_text.clone().unwrap_or_default();
         let mut field = match definition.field_type {
             bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText => {
-                json!({"type":"string","maxLength":definition.text_limit.unwrap_or(if definition.field_type == bilibi_custom_fields::FieldType::LongText { 100_000 } else { 255 })})
+                let default = if definition.field_type == bilibi_custom_fields::FieldType::LongText
+                {
+                    100_000
+                } else {
+                    255
+                };
+                let field_limit = definition.text_limit.unwrap_or(default).max(0) as usize;
+                json!({"type":"string","maxLength":field_limit.min(limits.max_text_length)})
             }
             bilibi_custom_fields::FieldType::Integer => json!({"type":"integer"}),
             bilibi_custom_fields::FieldType::Decimal => {
@@ -186,7 +194,7 @@ fn schema_with_custom_fields(
     schema["properties"]["custom"] = json!({
         "type":"object",
         "title":"Custom fields",
-        "description":"Tenant-defined company fields keyed by field key.",
+        "description":format!("Tenant-defined company fields keyed by field key. The complete custom object is limited to {} bytes.", limits.max_json_bytes),
         "properties":properties,
         "required":required
     });
@@ -207,9 +215,11 @@ fn company_create_schema<'a>(
         let definitions = custom_fields()?
             .active_for_record_on(client, scope, "core.company")
             .await?;
+        let limits = custom_fields()?.limits_on(client, scope).await?;
         Ok(schema_with_custom_fields(
             create_schema(),
             &definitions,
+            limits,
             true,
         ))
     })
@@ -223,9 +233,11 @@ fn company_custom_update_schema<'a>(
         let definitions = custom_fields()?
             .active_for_record_on(client, scope, "core.company")
             .await?;
+        let limits = custom_fields()?.limits_on(client, scope).await?;
         Ok(schema_with_custom_fields(
             update_custom_schema(),
             &definitions,
+            limits,
             false,
         ))
     })

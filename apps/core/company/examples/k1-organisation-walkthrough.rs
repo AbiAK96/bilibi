@@ -17,8 +17,9 @@ use bilibi_company::{
     reference_types::{self, Direction, NewType, Outcome, TypeSort, TypeUpdate},
     CompanyService, NewCompany, SearchQuery, SERVICE,
 };
-use bilibi_database::pool;
+use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
+use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{PartyProofs, ProofFuture};
 use serde_json::json;
 use tokio_postgres::Transaction;
@@ -94,6 +95,10 @@ async fn main() -> Result<(), Error> {
     let custom_fields = app
         .services
         .get::<bilibi_custom_fields::CustomFields>(bilibi_custom_fields::SERVICE)?;
+    let settings = app.services.get::<Settings>("base/settings.store")?;
+    let mutations = app
+        .services
+        .get::<MutationBoundary>("base/database.mutations")?;
     for definition in custom_fields
         .list(&admin, "core.company", true)
         .await?
@@ -791,6 +796,269 @@ async fn main() -> Result<(), Error> {
             );
         }
     }
+    println!("== tenant-configurable custom-field limits");
+    let mut settings_client = db.get().await?;
+    let mut tenant_two_tx = mutations
+        .begin(
+            &mut settings_client,
+            other.mutation_context("walkthrough.custom_limits.tenant_two"),
+        )
+        .await?;
+    settings
+        .put(
+            &mut tenant_two_tx,
+            &other,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+            json!(17),
+        )
+        .await?;
+    tenant_two_tx.commit().await?;
+    let tenant_one_limit = settings
+        .get(
+            &**settings_client,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+        )
+        .await?;
+    let tenant_two_limit = settings
+        .get(
+            &**settings_client,
+            &other,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+        )
+        .await?;
+    show("tenant 1 text limit default", tenant_one_limit.value);
+    show("tenant 2 custom text limit", tenant_two_limit.value);
+    let mut tenant_two_reset = mutations
+        .begin(
+            &mut settings_client,
+            other.mutation_context("walkthrough.custom_limits.tenant_two_reset"),
+        )
+        .await?;
+    settings
+        .delete(
+            &mut tenant_two_reset,
+            &other,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+        )
+        .await?;
+    tenant_two_reset.commit().await?;
+
+    let mut admin_limit_tx = mutations
+        .begin(
+            &mut settings_client,
+            admin.mutation_context("walkthrough.custom_limits.validation"),
+        )
+        .await?;
+    settings
+        .put(
+            &mut admin_limit_tx,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+            json!(5),
+        )
+        .await?;
+    settings
+        .put(
+            &mut admin_limit_tx,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_JSON_BYTES_SETTING,
+            json!(1024),
+        )
+        .await?;
+    admin_limit_tx.commit().await?;
+    let too_long = custom_fields
+        .validate(
+            &**settings_client,
+            &admin,
+            "core.company",
+            &json!({"agent_notes":"longer than five"}),
+            &json!({}),
+            false,
+        )
+        .await?;
+    show("tenant text length refusal", too_long);
+    if let Some(label) = custom_fields
+        .list(&admin, "core.company", false)
+        .await?
+        .into_iter()
+        .find(|definition| definition.key == "agent_label")
+    {
+        show(
+            "definition text limit refusal",
+            custom_fields
+                .update(
+                    &admin,
+                    "core.company",
+                    &label.key,
+                    label.version,
+                    &field_input(&label),
+                )
+                .await?,
+        );
+    }
+    let mut json_limit_tx = mutations
+        .begin(
+            &mut settings_client,
+            admin.mutation_context("walkthrough.custom_limits.json_only"),
+        )
+        .await?;
+    settings
+        .put(
+            &mut json_limit_tx,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+            json!(100_000),
+        )
+        .await?;
+    json_limit_tx.commit().await?;
+    let too_large = custom_fields
+        .validate(
+            &**settings_client,
+            &admin,
+            "core.company",
+            &json!({"agent_flag":true}),
+            &json!({"agent_notes":"x".repeat(2000)}),
+            false,
+        )
+        .await?;
+    show("tenant custom JSON byte refusal", too_large);
+    let mut reset_limits = mutations
+        .begin(
+            &mut settings_client,
+            admin.mutation_context("walkthrough.custom_limits.reset"),
+        )
+        .await?;
+    for key in [
+        bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+        bilibi_custom_fields::MAX_JSON_BYTES_SETTING,
+    ] {
+        settings
+            .delete(&mut reset_limits, &admin, Target::Tenant, key)
+            .await?;
+    }
+    reset_limits.commit().await?;
+
+    let active = custom_fields.list(&admin, "core.company", false).await?;
+    let mut field_limit_tx = mutations
+        .begin(
+            &mut settings_client,
+            admin.mutation_context("walkthrough.custom_limits.field_count"),
+        )
+        .await?;
+    settings
+        .put(
+            &mut field_limit_tx,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_FIELDS_SETTING,
+            json!(active.len()),
+        )
+        .await?;
+    field_limit_tx.commit().await?;
+    let probe_key = format!(
+        "agent_limit_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+    );
+    let probe = bilibi_custom_fields::FieldInput {
+        key: probe_key,
+        label: "Limit probe".into(),
+        field_type: bilibi_custom_fields::FieldType::Text,
+        required: false,
+        help_text: None,
+        position: 50,
+        options: json!([]),
+        reference_table: None,
+        text_limit: Some(80),
+        format: None,
+    };
+    show(
+        "active field limit refusal",
+        custom_fields.define(&admin, "core.company", &probe).await?,
+    );
+    if let Some(label) = active
+        .iter()
+        .find(|definition| definition.key == "agent_label")
+    {
+        let archived = custom_fields
+            .archive(&admin, "core.company", &label.key, label.version)
+            .await?;
+        let label_archived = match archived {
+            bilibi_custom_fields::Outcome::Saved(definition) => definition,
+            other => {
+                return Err(
+                    format!("could not archive field for restore-limit proof: {other:?}").into(),
+                )
+            }
+        };
+        let probe_saved = custom_fields.define(&admin, "core.company", &probe).await?;
+        let probe_saved = match probe_saved {
+            bilibi_custom_fields::Outcome::Saved(definition) => definition,
+            other => {
+                return Err(
+                    format!("could not fill field slot for restore-limit proof: {other:?}").into(),
+                )
+            }
+        };
+        show(
+            "restore field limit refusal",
+            custom_fields
+                .restore(
+                    &admin,
+                    "core.company",
+                    &label_archived.key,
+                    label_archived.version,
+                )
+                .await?,
+        );
+        show(
+            "archive field-limit probe",
+            custom_fields
+                .archive(
+                    &admin,
+                    "core.company",
+                    &probe_saved.key,
+                    probe_saved.version,
+                )
+                .await?,
+        );
+        show(
+            "restore required agent field after freeing slot",
+            custom_fields
+                .restore(
+                    &admin,
+                    "core.company",
+                    &label_archived.key,
+                    label_archived.version,
+                )
+                .await?,
+        );
+    }
+    let mut reset_field_limit = mutations
+        .begin(
+            &mut settings_client,
+            admin.mutation_context("walkthrough.custom_limits.field_count_reset"),
+        )
+        .await?;
+    settings
+        .delete(
+            &mut reset_field_limit,
+            &admin,
+            Target::Tenant,
+            bilibi_custom_fields::MAX_FIELDS_SETTING,
+        )
+        .await?;
+    reset_field_limit.commit().await?;
+
     let create_description = registry
         .describe(client, &manager, "core.company.create")
         .await?;

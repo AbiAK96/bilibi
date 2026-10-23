@@ -12,6 +12,7 @@ bilibi-module-registry.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-grid = { path = "../grid" }
 bilibi-menu.workspace = true
+bilibi-settings.workspace = true
 bilibi-ports = { path = "../ports" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
