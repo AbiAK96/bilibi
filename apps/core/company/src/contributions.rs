@@ -197,6 +197,7 @@ static GRID: GridContribution = GridContribution {
 
 // Tenant-defined Company facts (Bilimbi `CustomFields` record-type opt-in).
 inventory::submit! { Contribution::new(bilibi_custom_fields::RECORD_TYPES, "core.company.custom-fields", provenance!(), &bilibi_custom_fields::RecordType::new("core.company", "Company", "company", "companies", "custom", LIST)) }
+inventory::submit! { Contribution::new(bilibi_custom_fields::REFERENCE_TARGETS, "core.company.reference-targets", provenance!(), &bilibi_custom_fields::ReferenceTargetSource { table: "companies", provider: &crate::reference_targets::COMPANIES }) }
 bilibi_grid::contribute!("core/company", "company.grid", &GRID);
 
 // Global search finds live companies by name, code and legal name; an archived

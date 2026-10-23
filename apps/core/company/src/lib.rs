@@ -14,6 +14,7 @@ mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
 mod reference_types;
+mod reference_targets;
 mod relationship_operations;
 mod relationship_roles;
 mod relationships;

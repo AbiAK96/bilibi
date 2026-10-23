@@ -2,9 +2,14 @@
 //! and owner-side validation. Values remain in the opted-in record owner's row.
 mod definitions;
 mod model;
+mod references;
 mod web;
 pub use definitions::{CustomFields, FieldError, FieldInput, Outcome, ServiceError};
 pub use model::{Definition, FieldType, RecordType, RECORD_TYPES, SERVICE};
+pub use references::{
+    ReferenceFuture, ReferenceOption, ReferenceTargetProvider, ReferenceTargetSource,
+    ReferenceTargetType, REFERENCE_TARGETS,
+};
 
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::Db;

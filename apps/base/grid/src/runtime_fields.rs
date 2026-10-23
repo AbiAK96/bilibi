@@ -18,6 +18,8 @@ pub struct RuntimeField {
     pub label: String,
     pub ty: crate::FieldType,
     pub values: Vec<String>,
+    /// For reference values, only these target keys may leave the projection.
+    pub readable_values: Option<Vec<String>>,
 }
 
 pub trait RuntimeFieldProvider: Send + Sync {

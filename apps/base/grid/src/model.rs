@@ -69,6 +69,8 @@ pub struct FieldValue {
     pub json_key: Option<String>,
     pub hidden: bool,
     pub values: Vec<String>,
+    /// Reference target keys the current scoped catalog may reveal.
+    pub readable_values: Option<Vec<String>>,
     pub protected: bool,
 }
 impl FieldValue {
@@ -357,6 +359,7 @@ impl Table {
                 json_key: None,
                 hidden: field.hidden,
                 values: field.values.iter().map(|value| (*value).into()).collect(),
+                readable_values: None,
                 protected: field.protected,
             })
             .chain(self.runtime_fields.iter().cloned())
@@ -374,6 +377,7 @@ impl Table {
                 json_key: None,
                 hidden: field.hidden,
                 values: field.values.iter().map(|value| (*value).into()).collect(),
+                readable_values: None,
                 protected: field.protected,
             })
             .or_else(|| {

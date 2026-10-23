@@ -458,7 +458,7 @@ The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the curren
 
 ## Tenant-defined custom fields (#131)
 
-Active tenant definitions are shown on Company create and detail pages. Create values use the owner's audited validation transaction; detail edits use versioned custom-field writes. Shared inline multi-choice submits selected codes as a JSON array. Current restrictions mask custom values and refuse writes. Reference fields remain unavailable until target selection and readability checks are implemented. With no active fields, the existing page layout and create behavior remain unchanged.
+Active tenant definitions are shown on Company create and detail pages. Create values use the owner's audited validation transaction; detail edits use versioned custom-field writes. Shared inline multi-choice submits selected codes as a JSON array. Reference fields target readable live companies through a searchable picker, and writes recheck the target in the owner's mutation transaction. Missing, archived or unreadable stored targets are masked and preserved; an optional reference can be cleared through the ordinary authorized write path. Field restrictions continue to mask values and refuse writes. With no active fields, the existing page layout and create behavior remain unchanged.
 
 ## Postal addresses
 

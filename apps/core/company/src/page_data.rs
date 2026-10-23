@@ -17,6 +17,15 @@ impl CompanyService {
             .await
     }
 
+    /// Fresh readable options for a Company reference custom field.
+    pub async fn custom_reference_choices(
+        &self,
+        scope: &Scope,
+        table: &str,
+    ) -> Result<Vec<bilibi_custom_fields::ReferenceOption>> {
+        self.custom_fields.reference_choices(scope, table).await
+    }
+
     pub async fn create_with_context(
         &self,
         scope: &Scope,

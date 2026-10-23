@@ -1,10 +1,13 @@
 //! Tenant definition service, mirroring Bilimbi `CustomFields` and its owner
 //! validation calls. Definitions are data; owners keep record values.
-use crate::model::{registered, Definition, FieldType, RecordType, RECORD_TYPES};
+use crate::{
+    model::{registered, Definition, FieldType, RecordType, RECORD_TYPES},
+    references::{self, ReferenceOption, ReferenceTargetSourceRef, ReferenceTargetType},
+};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Catalog, RegistryError};
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::{Authentication, ReadClient, Scope};
 use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tokio_postgres::GenericClient;
@@ -57,6 +60,7 @@ pub struct CustomFields {
     boundary: Arc<MutationBoundary>,
     authentication: Arc<Authentication>,
     record_types: Vec<RecordType>,
+    reference_targets: Vec<ReferenceTargetSourceRef>,
 }
 impl CustomFields {
     pub fn new(
@@ -72,16 +76,89 @@ impl CustomFields {
                 "base/custom_fields requires at least one opted-in record type".into(),
             ));
         }
+        let reference_targets = references::providers()?;
+        for target in &reference_targets {
+            if !record_types
+                .iter()
+                .any(|record_type| record_type.grid_table == target.table)
+            {
+                return Err(RegistryError::Contribution(format!(
+                    "reference target {} is not an opted-in record type",
+                    target.table
+                )));
+            }
+        }
         Ok(Self {
             db,
             boundary,
             authentication,
             record_types,
+            reference_targets,
         })
     }
 
     pub fn record_types(&self) -> &[RecordType] {
         &self.record_types
+    }
+
+    pub fn reference_target_types(&self) -> Vec<ReferenceTargetType> {
+        self.reference_targets
+            .iter()
+            .filter_map(|target| {
+                self.record_types
+                    .iter()
+                    .find(|record_type| record_type.grid_table == target.table)
+                    .map(|record_type| ReferenceTargetType {
+                        table: target.table.into(),
+                        label: record_type.label.into(),
+                    })
+            })
+            .collect()
+    }
+
+    /// Readable targets for a definition's opted-in record type, loaded fresh
+    /// for this scope. Empty is safe when the actor cannot read any targets.
+    pub async fn reference_choices(
+        &self,
+        scope: &Scope,
+        table: &str,
+    ) -> Result<Vec<ReferenceOption>> {
+        let client = self.db.get().await?;
+        self.authentication.reprove(&**client, scope).await?;
+        let target = self
+            .reference_targets
+            .iter()
+            .find(|target| target.table == table)
+            .ok_or(Error::Invalid)?;
+        let choices = (target.provider.choices(&**client, scope)).await?;
+        let mut seen = std::collections::HashSet::new();
+        if choices.iter().any(|choice| {
+            choice.key.is_empty()
+                || choice.key.len() > 200
+                || choice.label.trim().is_empty()
+                || !seen.insert(choice.key.as_str())
+        }) {
+            return Err(Error::Internal);
+        }
+        Ok(choices)
+    }
+
+    /// A target name only when the current actor may read the live target.
+    /// Missing, archived, cross-tenant and unreadable targets share `None`.
+    pub async fn reference_label(
+        &self,
+        scope: &Scope,
+        table: &str,
+        key: &str,
+    ) -> Result<Option<String>> {
+        let client = self.db.get().await?;
+        self.authentication.reprove(&**client, scope).await?;
+        let target = self
+            .reference_targets
+            .iter()
+            .find(|target| target.table == table)
+            .ok_or(Error::Invalid)?;
+        (target.provider.resolve(&**client, scope, key)).await
     }
 
     /// Whether the current tenant actor may define fields for this opted-in
@@ -140,6 +217,13 @@ impl CustomFields {
             drop(tx);
             return Ok(Outcome::Refused(errors));
         }
+        if !self.valid_reference_type(input) {
+            drop(tx);
+            return Ok(Outcome::Refused(vec![FieldError::new(
+                "reference_table",
+                "must name an opted-in record type with readable targets",
+            )]));
+        }
         let input = input.clone();
         let record_type = record_type.to_owned();
         let tenant = scope.tenant();
@@ -188,6 +272,13 @@ impl CustomFields {
             drop(tx);
             return Ok(Outcome::Refused(errors));
         }
+        if !self.valid_reference_type(input) {
+            drop(tx);
+            return Ok(Outcome::Refused(vec![FieldError::new(
+                "reference_table",
+                "must name an opted-in record type with readable targets",
+            )]));
+        }
         if key != input.key {
             drop(tx);
             return Ok(Outcome::Refused(vec![FieldError::new(
@@ -199,11 +290,13 @@ impl CustomFields {
         let key = key.to_owned();
         let tenant = scope.tenant();
         let input = input.clone();
+        let old_reference_table = input.reference_table.clone();
         let saved = tx.mutate(move |sql| Box::pin(async move {
             let old_row = sql.query_opt("SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3 AND archived_at IS NULL FOR UPDATE", &[&tenant,&record_type,&key]).await?.ok_or(Error::NotFound)?;
             let old = from_row(&old_row);
             if old.version != version { return Err(Error::Conflict); }
             if old.field_type != input.field_type { return Err(Error::Invalid); }
+            if old.reference_table != old_reference_table { return Err(Error::Invalid); }
             let row = sql.query_one("UPDATE base_custom_field_definitions SET label=$1,required=$2,help_text=$3,position=$4,options=$5,reference_table=$6,text_limit=$7,format=$8,version=version+1,updated_at=now() WHERE tenant_id=$9 AND record_type=$10 AND field_key=$11 RETURNING *", &[&input.label,&input.required,&input.help_text,&input.position,&input.options,&input.reference_table,&input.text_limit,&input.format,&tenant,&record_type,&key]).await?;
             let new = from_row(&row);
             Ok((new.clone(), vec![Change { kind:"custom_field_definition".into(), id:new.id, old:to_json(&old), new:to_json(&new) }]))
@@ -220,6 +313,13 @@ impl CustomFields {
             Err(Error::Conflict) => {
                 drop(tx);
                 Ok(Outcome::Stale)
+            }
+            Err(Error::Invalid) => {
+                drop(tx);
+                Ok(Outcome::Refused(vec![FieldError::new(
+                    "reference_table",
+                    "cannot be changed after creation",
+                )]))
             }
             Err(e) => Err(e),
         }
@@ -364,7 +464,25 @@ impl CustomFields {
                 ));
                 continue;
             }
-            if !valid_value(def, value, current.and_then(|m| m.get(&def.key))) {
+            let previous = current.and_then(|m| m.get(&def.key));
+            let valid = valid_value(def, value, previous)
+                && if def.field_type == FieldType::Reference && previous != Some(value) {
+                    match (def.reference_table.as_deref(), value.as_str()) {
+                        (Some(table), Some(key)) => self
+                            .reference_targets
+                            .iter()
+                            .find(|target| target.table == table)
+                            .ok_or(Error::Internal)?
+                            .provider
+                            .resolve(client as &dyn ReadClient, scope, key)
+                            .await?
+                            .is_some(),
+                        _ => false,
+                    }
+                } else {
+                    true
+                };
+            if !valid {
                 errors.push(FieldError::new(
                     format!("custom.{}", def.key),
                     "has an invalid value",
@@ -401,6 +519,17 @@ impl CustomFields {
             .iter()
             .find(|ty| ty.key == key)
             .ok_or(Error::Invalid)
+    }
+
+    fn valid_reference_type(&self, input: &FieldInput) -> bool {
+        match input.field_type {
+            FieldType::Reference => input.reference_table.as_deref().is_some_and(|table| {
+                self.reference_targets
+                    .iter()
+                    .any(|target| target.table == table)
+            }),
+            _ => input.reference_table.is_none(),
+        }
     }
 }
 
@@ -599,12 +728,30 @@ async fn definitions(
 }
 
 pub(crate) async fn grid_fields(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<Vec<bilibi_grid::RuntimeField>> {
     let mut fields = Vec::new();
     for record_type in &registered_runtime_types()? {
         for def in active_definitions(client, scope.tenant(), record_type.key).await? {
+            let readable_values = if def.field_type == FieldType::Reference {
+                let table = def.reference_table.as_deref().ok_or(Error::Internal)?;
+                let target = references::providers()?
+                    .into_iter()
+                    .find(|target| target.table == table)
+                    .ok_or(Error::Internal)?;
+                Some(
+                    target
+                        .provider
+                        .choices(client as &dyn ReadClient, scope)
+                        .await?
+                        .into_iter()
+                        .map(|choice| choice.key)
+                        .collect(),
+                )
+            } else {
+                None
+            };
             fields.push(bilibi_grid::RuntimeField {
                 table: record_type.grid_table.into(),
                 column: record_type.custom_column,
@@ -623,6 +770,7 @@ pub(crate) async fn grid_fields(
                             .map(str::to_owned)
                     })
                     .collect(),
+                readable_values,
             });
         }
     }
@@ -630,7 +778,7 @@ pub(crate) async fn grid_fields(
 }
 
 pub(crate) async fn authz_fields(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<Vec<bilibi_authz::field_catalog::CatalogTable>> {
     let mut tables: BTreeMap<String, bilibi_authz::field_catalog::CatalogTable> = BTreeMap::new();
@@ -647,12 +795,33 @@ pub(crate) async fn authz_fields(
                 record_types: vec![record_type.audit_kind.into()],
                 fields: Vec::new(),
             });
-        table.fields.extend(fields.into_iter().map(|def| {
-            bilibi_authz::field_catalog::CatalogField {
-                id: format!("cf_{}", def.key),
-                label: def.label,
-            }
-        }));
+        for def in fields {
+            let reference_values = if def.field_type == FieldType::Reference {
+                let table = def.reference_table.as_deref().ok_or(Error::Internal)?;
+                let target = references::providers()?
+                    .into_iter()
+                    .find(|target| target.table == table)
+                    .ok_or(Error::Internal)?;
+                Some(
+                    target
+                        .provider
+                        .choices(client as &dyn ReadClient, scope)
+                        .await?
+                        .into_iter()
+                        .map(|choice| choice.key)
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            table
+                .fields
+                .push(bilibi_authz::field_catalog::CatalogField {
+                    id: format!("cf_{}", def.key),
+                    label: def.label,
+                    reference_values,
+                });
+        }
     }
     Ok(tables.into_values().collect())
 }

@@ -2,6 +2,7 @@ use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
 use askama::Template;
+use bilibi_custom_fields::ReferenceOption;
 use bilibi_custom_fields::{Definition, FieldType};
 use bilibi_database::{Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
@@ -9,7 +10,7 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::*;
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use tokio_postgres::GenericClient;
@@ -419,6 +420,7 @@ fn custom_fact(
     value: Option<&Value>,
     editable: bool,
     status: CommitStatus,
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
 ) -> Result<Html> {
     let id = format!("company-custom-{}", definition.key);
     let name = format!("cf_{}", definition.key);
@@ -441,6 +443,26 @@ fn custom_fact(
             .map(str::to_owned)
             .collect::<Vec<_>>(),
     );
+    let reference_choices = definition
+        .reference_table
+        .as_ref()
+        .and_then(|table| reference_targets.get(table))
+        .map(|targets| {
+            targets
+                .iter()
+                .map(|target| Choice::new(target.label.clone(), target.key.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let reference_readable = definition.field_type != FieldType::Reference
+        || value
+            .and_then(Value::as_str)
+            .is_none_or(|key| reference_choices.iter().any(|choice| choice.value == key));
+    let wire = if definition.field_type == FieldType::Reference && !reference_readable {
+        String::new()
+    } else {
+        wire
+    };
     let display = match definition.field_type {
         FieldType::Boolean => match value.and_then(Value::as_bool) {
             Some(true) => "Yes".to_owned(),
@@ -468,6 +490,19 @@ fn custom_fact(
             })
             .collect::<Vec<_>>()
             .join(", "),
+        FieldType::Reference => {
+            if value.is_none_or(Value::is_null) {
+                "—".into()
+            } else if reference_readable {
+                reference_choices
+                    .iter()
+                    .find(|choice| Some(choice.value.as_str()) == value.and_then(Value::as_str))
+                    .map(|choice| choice.label.clone())
+                    .unwrap_or_else(|| "Unavailable".into())
+            } else {
+                "Unavailable".into()
+            }
+        }
         _ => wire.clone(),
     };
     let display_html = if display.is_empty() {
@@ -512,7 +547,32 @@ fn custom_fact(
                 editor,
             })
         }
-        FieldType::Choice | FieldType::Boolean | FieldType::Date => {
+        FieldType::Choice | FieldType::Boolean | FieldType::Date | FieldType::Reference => {
+            if definition.field_type == FieldType::Reference {
+                let mut options = reference_choices;
+                if !definition.required {
+                    options.insert(0, Choice::new("None", ""));
+                }
+                let editor = render(
+                    &Combobox::new(format!("{id}-input"), &name)
+                        .label(&definition.label)
+                        .value(&wire)
+                        .options(options)
+                        .placeholder(if definition.required {
+                            "Choose a company..."
+                        } else {
+                            "None"
+                        })
+                        .aria_label(&definition.label)
+                        .hint(definition.help_text.clone().unwrap_or_default())
+                        .wrapper_class("mb-0"),
+                )?;
+                return render(&InlineChoice {
+                    field: inline,
+                    display: display_html,
+                    editor,
+                });
+            }
             let options = if definition.field_type == FieldType::Boolean {
                 choices(&[("Yes", "true"), ("No", "false")])
             } else {
@@ -549,11 +609,7 @@ fn custom_fact(
                 editor,
             })
         }
-        FieldType::Text
-        | FieldType::Integer
-        | FieldType::Decimal
-        | FieldType::DateTime
-        | FieldType::Reference => {
+        FieldType::Text | FieldType::Integer | FieldType::Decimal | FieldType::DateTime => {
             if definition.field_type == FieldType::DateTime && inline.hint.is_empty() {
                 inline.hint = "Enter an ISO 8601 UTC timestamp.".into();
             }
@@ -593,6 +649,7 @@ fn operation_name(op: crate::lifecycle::Operation) -> (&'static str, &'static st
 pub(super) struct DetailState<'a> {
     pub statuses: &'a CommitStates,
     pub custom_fields: &'a [Definition],
+    pub custom_reference_targets: &'a BTreeMap<String, Vec<ReferenceOption>>,
     pub pending: Option<&'a Pending>,
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
@@ -611,6 +668,7 @@ pub(super) async fn detail(
     let DetailState {
         statuses,
         custom_fields,
+        custom_reference_targets,
         pending,
         notice,
         pending_activity,
@@ -791,10 +849,7 @@ pub(super) async fn detail(
         )?,
     });
     // Company custom facts mirror Bilimbi Core Company's record facts.
-    for definition in custom_fields
-        .iter()
-        .filter(|definition| definition.field_type != FieldType::Reference)
-    {
+    for definition in custom_fields.iter() {
         let field_id = format!("cf_{}", definition.key);
         let id = format!("company-custom-{}", definition.key);
         let value = company.custom.get(&definition.key);
@@ -807,6 +862,7 @@ pub(super) async fn detail(
                 value,
                 editable,
                 statuses.get(&field_id),
+                custom_reference_targets,
             )?
         };
         facts.push(Fact {
@@ -997,10 +1053,18 @@ pub(super) async fn detail(
             }
         );
         let detail = match pending.operation {
-            crate::lifecycle::Operation::Archive => "Its records are kept. Archiving is final: an archived company cannot be reactivated.",
-            crate::lifecycle::Operation::Suspend => "Its records are kept. Reactivating the company lifts the suspension.",
-            crate::lifecycle::Operation::Activate => "It becomes a working company of this workspace. It can be suspended later.",
-            crate::lifecycle::Operation::Reactivate => "The suspension is lifted and the company is active again.",
+            crate::lifecycle::Operation::Archive => {
+                "Its records are kept. Archiving is final: an archived company cannot be reactivated."
+            }
+            crate::lifecycle::Operation::Suspend => {
+                "Its records are kept. Reactivating the company lifts the suspension."
+            }
+            crate::lifecycle::Operation::Activate => {
+                "It becomes a working company of this workspace. It can be suspended later."
+            }
+            crate::lifecycle::Operation::Reactivate => {
+                "The suspension is lifted and the company is active again."
+            }
         };
         let mut reason = Field::named("reason")
             .id("company-lifecycle-reason")
@@ -1134,6 +1198,7 @@ pub(super) async fn create(
     values: &HashMap<String, String>,
     errors: &[FieldError],
     custom_fields: &[Definition],
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
 ) -> Result<String> {
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
     let masked = bilibi_authz::restrictions(client, scope).await?;
@@ -1241,8 +1306,17 @@ pub(super) async fn create(
     // Creation controls mirror Bilimbi Core Company's NewLive form.
     let custom = custom_fields
         .iter()
-        .filter(|definition| definition.field_type != FieldType::Reference)
-        .map(|definition| custom_create_field(definition, values, errors))
+        .map(|definition| {
+            let id = format!("company-custom-{}", definition.key);
+            if masked
+                .get("companies")
+                .is_some_and(|fields| fields.contains(&format!("cf_{}", definition.key)))
+            {
+                render(&RestrictedField::new(&id, &definition.label))
+            } else {
+                custom_create_field(definition, values, errors, reference_targets)
+            }
+        })
         .collect::<Result<Vec<_>>>()?;
     let custom_heading = render(&SectionHeading {
         id: "company-create-custom-fields-heading",
@@ -1335,6 +1409,9 @@ fn form_custom_value(values: &HashMap<String, String>, definition: &Definition) 
     let Some(raw) = values.get(&name) else {
         return Value::Null;
     };
+    if definition.field_type == FieldType::Reference {
+        return Value::String(raw.clone());
+    }
     serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.clone()))
 }
 
@@ -1370,6 +1447,7 @@ fn custom_create_field(
     definition: &Definition,
     values: &HashMap<String, String>,
     errors: &[FieldError],
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
 ) -> Result<Html> {
     let name = custom_form_name(
         &definition.key,
@@ -1377,6 +1455,47 @@ fn custom_create_field(
     );
     let id = format!("company-custom-{}", definition.key);
     let value = form_custom_value(values, definition);
+    if definition.field_type == FieldType::Reference {
+        let mut options: Vec<Choice> = definition
+            .reference_table
+            .as_ref()
+            .and_then(|table| reference_targets.get(table))
+            .into_iter()
+            .flatten()
+            .map(|target| Choice::new(target.label.clone(), target.key.clone()))
+            .collect();
+        if !definition.required {
+            options.insert(0, Choice::new("None", ""));
+        }
+        let selected = value
+            .as_str()
+            .filter(|key| options.iter().any(|option| option.value == *key))
+            .unwrap_or_default();
+        let mut hint = definition.help_text.clone().unwrap_or_default();
+        if options.is_empty() {
+            if !hint.is_empty() {
+                hint.push(' ');
+            }
+            hint.push_str("No readable targets are available.");
+        }
+        return render(
+            &Combobox::new(&id, &name)
+                .label(&definition.label)
+                .value(selected)
+                .options(options)
+                .placeholder(if definition.required {
+                    "Choose a company..."
+                } else {
+                    "None"
+                })
+                .errors(custom_error_messages(errors, &definition.key))
+                .hint(hint)
+                .attrs(Attrs {
+                    required: definition.required,
+                    ..Attrs::default()
+                }),
+        );
+    }
     let mut field = Field::named(&name)
         .id(&id)
         .label(&definition.label)
@@ -1534,7 +1653,12 @@ fn custom_values(
                         value
                     }
                 }
-                FieldType::Reference => continue,
+                FieldType::Reference => Value::String(
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| raw.clone()),
+                ),
             }
         };
         custom.insert(key.to_owned(), parsed);
