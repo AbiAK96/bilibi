@@ -172,7 +172,11 @@ The estimate is an admission check, not a promise about runtime; the timeout is
 the execution backstop. Owners must still index their sources and join keys.
 
 The query returns typed `QueryError`s and converts to the shared database error
-for page handlers. It does not sort/filter walked columns or persist layouts (G4).
+for page handlers. It does not page owner rows. By default walked columns do
+not sort; a host may opt in to root-level scalar runtime fields with
+`PageColumns::sortable_runtime_fields()`. The owner must re-resolve the current
+scoped catalog and validate sort/filter state on every list request. References,
+multi-choice fields, linked paths and aggregates remain ineligible for sorting.
 
 Run the live projection walkthrough against a **disposable** migrated
 PostgreSQL database:
@@ -267,7 +271,8 @@ The page holds one `PageColumns` in its live state and:
    `PageColumns::rows`, each row's slots filled for the built-in ids);
 5. delegates its `grid` event to `handle(scope, values)`: after
    `Outcome::Patch` it loads again and returns the merged query; `Sort(key)`
-   is a built-in's sort for the page's `ListState`; `Update` re-renders.
+   is a built-in or opted-in runtime field sort for the page's `ListState`; the
+   owner validates it against fresh metadata and restrictions; `Update` re-renders.
 
 `View` is what a person arranged, as one value that round-trips through the
 URL (`cols`, `lens`, `z`, `since`; defaults left out) and the stored JSON

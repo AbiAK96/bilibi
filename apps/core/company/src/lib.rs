@@ -103,6 +103,14 @@ pub struct Params {
     pub dir: String,
     pub q: String,
     pub status: String,
+    #[serde(skip)]
+    pub custom_filters: Vec<CustomFilter>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CustomFilter {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
 }
 impl Default for Params {
     fn default() -> Self {
@@ -113,6 +121,7 @@ impl Default for Params {
             dir: "asc".into(),
             q: String::new(),
             status: String::new(),
+            custom_filters: Vec::new(),
         }
     }
 }
@@ -120,7 +129,12 @@ impl Params {
     pub fn validate(&self) -> Result<()> {
         if !(1..=1_000_000).contains(&self.page)
             || ![25, 50, 100, 300].contains(&self.size)
-            || !["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str())
+            || (!(["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str()))
+                && !(self.sort.starts_with("cf_")
+                    && self.sort.len() <= 68
+                    && self.sort[3..]
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')))
             || !["asc", "desc"].contains(&self.dir.as_str())
             || self.q.chars().count() > 255
             || !["", "active", "suspended", "pending", "archived"].contains(&self.status.as_str())
@@ -215,6 +229,19 @@ pub struct Page {
 use organisation::COLUMNS;
 
 pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
+    list_with_catalog(client, scope, params, None, &[]).await
+}
+
+/// Company list query with current, scoped custom-field metadata. The owner
+/// expression builder binds JSON keys; only fixed operators and catalog types
+/// become SQL syntax. Mirrors Bilimbi Core Company’s custom-field list query.
+pub async fn list_with_catalog(
+    client: &impl GenericClient,
+    scope: &Scope,
+    params: &Params,
+    catalog: Option<&bilibi_grid::Catalog>,
+    definitions: &[bilibi_custom_fields::Definition],
+) -> Result<Page> {
     params.validate()?;
     bilibi_authz::authorize_key(client, scope, LIST).await?;
     let masked = restrictions(client, scope).await?;
@@ -225,44 +252,195 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -
         .map(|field| format!("{field} ILIKE $3"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    let filter =
-        format!("tenant_id=$1 AND deleted_at IS NULL AND ($2='' OR status=$2) AND ({searchable})");
-    let sort = if masked.contains(&params.sort) {
-        "name"
-    } else {
-        &params.sort
-    };
-    let args: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
-        &[&scope.tenant(), &params.status, &query];
+    let mut args: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = vec![
+        Box::new(scope.tenant()),
+        Box::new(params.status.clone()),
+        Box::new(query),
+    ];
+    let mut conditions = vec![
+        "tenant_id=$1".to_owned(),
+        "deleted_at IS NULL".to_owned(),
+        "($2='' OR status=$2)".to_owned(),
+        format!("({searchable})"),
+    ];
+    if params.custom_filters.len() > 10 {
+        return Err(Error::Invalid);
+    }
+    for condition in &params.custom_filters {
+        let Some(definition) = definitions.iter().find(|definition| {
+            format!("cf_{}", definition.key) == condition.field && !definition.archived
+        }) else {
+            return Err(Error::Invalid);
+        };
+        let Some(catalog) = catalog else {
+            return Err(Error::Invalid);
+        };
+        let expression = bilibi_grid::query::field_expression(
+            catalog,
+            "companies",
+            &condition.field,
+            "companies",
+            args.len(),
+        )
+        .ok_or(Error::Forbidden)?;
+        if masked.contains(&condition.field) {
+            return Err(Error::Forbidden);
+        }
+        if definition.field_type == bilibi_custom_fields::FieldType::MultiChoice {
+            if condition.operator != "contains" || !choice_code(definition, &condition.value) {
+                return Err(Error::Invalid);
+            }
+            args.push(Box::new(expression.bind_values[0].clone()));
+            let key_pos = args.len();
+            args.push(Box::new(condition.value.clone()));
+            conditions.push(format!(
+                "jsonb_extract_path(companies.custom, ${key_pos}::text) @> to_jsonb(${}::text)",
+                args.len()
+            ));
+            continue;
+        }
+        let operator = match (definition.field_type, condition.operator.as_str()) {
+            (
+                bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText,
+                "contains",
+            ) => "ILIKE",
+            (
+                bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText,
+                "equals",
+            ) => "=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "eq",
+            ) => "=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "gt",
+            ) => ">",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "gte",
+            ) => ">=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "lt",
+            ) => "<",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "lte",
+            ) => "<=",
+            (
+                bilibi_custom_fields::FieldType::Boolean | bilibi_custom_fields::FieldType::Choice,
+                "equals",
+            ) => "=",
+            _ => return Err(Error::Invalid),
+        };
+        if definition.field_type == bilibi_custom_fields::FieldType::Choice
+            && !choice_code(definition, &condition.value)
+        {
+            return Err(Error::Invalid);
+        }
+        let value = if condition.operator == "contains" {
+            format!("%{}%", organisation::escape_like(&condition.value))
+        } else {
+            condition.value.clone()
+        };
+        for key in expression.bind_values {
+            args.push(Box::new(key));
+        }
+        let value_pos = args.len() + 1;
+        args.push(Box::new(value));
+        let cast = match definition.field_type {
+            bilibi_custom_fields::FieldType::Integer => "::text::bigint",
+            bilibi_custom_fields::FieldType::Decimal => "::text::numeric",
+            bilibi_custom_fields::FieldType::Date => "::text::date",
+            bilibi_custom_fields::FieldType::DateTime => "::text::timestamptz",
+            bilibi_custom_fields::FieldType::Boolean => "::text::boolean",
+            _ => "::text",
+        };
+        conditions.push(format!("{} {operator} ${value_pos}{cast}", expression.sql));
+    }
+    let filter = conditions.join(" AND ");
+    let count_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = args
+        .iter()
+        .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
     let total = client
         .query_one(
             &format!("SELECT count(*) FROM companies WHERE {filter}"),
-            args,
+            &count_refs,
         )
         .await?
         .get(0);
+    let sort_expression = if params.sort.starts_with("cf_") {
+        let allowed = definitions.iter().any(|definition| {
+            format!("cf_{}", definition.key) == params.sort && !definition.archived
+        });
+        if !allowed || masked.contains(&params.sort) {
+            "name".into()
+        } else if let Some(catalog) = catalog {
+            match bilibi_grid::query::field_expression(
+                catalog,
+                "companies",
+                &params.sort,
+                "companies",
+                args.len(),
+            ) {
+                Some(expression) => {
+                    for key in expression.bind_values {
+                        args.push(Box::new(key));
+                    }
+                    expression.sql
+                }
+                None => "name".into(),
+            }
+        } else {
+            "name".into()
+        }
+    } else if masked.contains(&params.sort) {
+        "name".to_owned()
+    } else {
+        params.sort.clone()
+    };
     // Only validated enum values reach the two SQL identifiers below.
-    let sql = format!(
-        "SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {} {}, id {} LIMIT $4 OFFSET $5",
-        sort, params.dir, params.dir
-    );
+    let limit_pos = args.len() + 1;
+    args.push(Box::new(params.size));
     let offset = (params.page - 1) * params.size;
+    args.push(Box::new(offset));
+    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = args
+        .iter()
+        .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+    let sql = format!("SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {sort_expression} {} , id {} LIMIT ${limit_pos} OFFSET ${}", params.dir, params.dir, limit_pos+1);
     let rows = client
-        .query(
-            &sql,
-            &[
-                &scope.tenant(),
-                &params.status,
-                &query,
-                &params.size,
-                &offset,
-            ],
-        )
+        .query(&sql, &refs)
         .await?
         .iter()
         .map(|row| Company::from_row(row, &masked))
         .collect();
     Ok(Page { rows, total })
+}
+
+fn choice_code(definition: &bilibi_custom_fields::Definition, code: &str) -> bool {
+    definition.options.as_array().is_some_and(|options| {
+        options
+            .iter()
+            .any(|option| option.get("code").and_then(serde_json::Value::as_str) == Some(code))
+    })
 }
 
 pub async fn detail(
