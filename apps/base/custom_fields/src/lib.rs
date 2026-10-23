@@ -4,7 +4,7 @@ mod definitions;
 mod model;
 mod references;
 mod web;
-pub use definitions::{CustomFields, FieldError, FieldInput, Outcome, ServiceError};
+pub use definitions::{CustomFields, FieldError, FieldInput, Limits, Outcome, ServiceError};
 pub use model::{Definition, FieldType, RecordType, RECORD_TYPES, SERVICE};
 pub use references::{
     ReferenceFuture, ReferenceOption, ReferenceTargetProvider, ReferenceTargetSource,
@@ -18,7 +18,49 @@ use bilibi_module_registry::{
     contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
     Layer, Module, Service,
 };
+use bilibi_settings::{
+    Definition as SettingDefinition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS as SETTINGS,
+};
 use std::sync::Arc;
+
+pub const MAX_FIELDS_SETTING: &str = "custom_fields.limits.max_fields_per_record_type";
+pub const MAX_TEXT_LENGTH_SETTING: &str = "custom_fields.limits.max_text_length";
+pub const MAX_JSON_BYTES_SETTING: &str = "custom_fields.limits.max_json_bytes";
+const TENANT_SCOPES: &[ScopeKind] = &[ScopeKind::Tenant];
+
+macro_rules! limit_setting {
+    ($key:expr, $default:expr, $minimum:expr, $maximum:expr, $label:literal, $help:literal) => {
+        inventory::submit! { Contribution::new(SETTINGS, $key, bilibi_module_registry::Provenance { module: "base/custom_fields", source: file!(), line: line!() }, &Setting::Definition(SettingDefinition {
+            value_type: ValueType::Integer, scopes: TENANT_SCOPES, default: || serde_json::json!($default), nullable: false, encrypted: false,
+            minimum: Some($minimum as f64), maximum: Some($maximum as f64), validator: None,
+            editor: Some(Editor { group: "Custom field limits", label: $label, help: $help, capability: Some("admin.custom.fields.manage"), reveal_duration_ms: 10_000 }),
+        })) }
+    };
+}
+limit_setting!(
+    MAX_FIELDS_SETTING,
+    100,
+    1,
+    1000,
+    "Fields per record type",
+    "Set the maximum active custom fields for each record type."
+);
+limit_setting!(
+    MAX_TEXT_LENGTH_SETTING,
+    100_000,
+    1,
+    1_000_000,
+    "Text length",
+    "Set the maximum characters in a custom text field."
+);
+limit_setting!(
+    MAX_JSON_BYTES_SETTING,
+    1_048_576,
+    1024,
+    16_777_216,
+    "Custom data size",
+    "Set the maximum size of custom data stored on one record, in bytes."
+);
 
 struct Providers;
 
@@ -54,13 +96,14 @@ inventory::submit! { Contribution::new(bilibi_authz::field_catalog::RUNTIME_FIEL
 inventory::submit! {
     Module {
         id: "base/custom_fields", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/tenancy", "base/grid", "base/ports", "base/ui", "base/menu"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/tenancy", "base/grid", "base/ports", "base/ui", "base/menu", "base/settings"],
         migrations: &[("base-custom-fields-001-definitions", include_str!("../migrations/001-definitions.sql"))],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(CustomFields::new(
                 services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 services.get("base/database.mutations")?,
                 services.get("base/tenancy.authentication")?,
+                services.get("base/settings.store")?,
             )?)) },
             Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages {
                 fields: services.get(SERVICE)?,

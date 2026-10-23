@@ -68,7 +68,8 @@ pub async fn plan(
 ) -> Result<Plan> {
     // The company target shows company-scoped definitions only (Bilimbi
     // `company_groups/0`), the tenant target tenant-scoped ones, and the
-    // global page global ones.
+    // global page global ones. The dedicated tenant page filters that scope
+    // down to the custom-field limits contributed by Bilimbi `CustomFields`.
     let wanted = match target {
         Target::Company(_) => ScopeKind::Company,
         Target::Tenant => ScopeKind::Tenant,
@@ -85,6 +86,16 @@ pub async fn plan(
             continue;
         };
         if owned.pattern.contains('*') || !definition.scopes.contains(&wanted) {
+            continue;
+        }
+        if matches!(target, Target::Tenant)
+            && ![
+                bilibi_custom_fields::MAX_FIELDS_SETTING,
+                bilibi_custom_fields::MAX_TEXT_LENGTH_SETTING,
+                bilibi_custom_fields::MAX_JSON_BYTES_SETTING,
+            ]
+            .contains(&owned.pattern)
+        {
             continue;
         }
         match editor.capability {

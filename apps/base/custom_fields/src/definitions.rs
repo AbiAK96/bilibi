@@ -7,15 +7,23 @@ use crate::{
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Catalog, RegistryError};
+use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ReadClient, Scope};
 use serde_json::{json, Map, Value};
 use std::{collections::BTreeMap, str::FromStr, sync::Arc};
 use tokio_postgres::GenericClient;
 
 pub const MANAGE: &str = "admin.custom.fields.manage";
-const MAX_FIELDS: usize = 100;
 const MAX_LABEL: usize = 120;
 const MAX_HELP: usize = 500;
+const DEFAULT_MAX_TEXT_LENGTH: usize = 100_000;
+
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub max_fields_per_record_type: usize,
+    pub max_text_length: usize,
+    pub max_json_bytes: usize,
+}
 
 #[derive(Clone, Debug)]
 pub struct FieldError {
@@ -59,6 +67,7 @@ pub struct CustomFields {
     db: Db,
     boundary: Arc<MutationBoundary>,
     authentication: Arc<Authentication>,
+    settings: Arc<Settings>,
     record_types: Vec<RecordType>,
     reference_targets: Vec<ReferenceTargetSourceRef>,
 }
@@ -67,6 +76,7 @@ impl CustomFields {
         db: Db,
         boundary: Arc<MutationBoundary>,
         authentication: Arc<Authentication>,
+        settings: Arc<Settings>,
     ) -> std::result::Result<Self, RegistryError> {
         let modules = bilibi_module_registry::discover()?;
         let catalog = Catalog::discover(&modules)?;
@@ -92,6 +102,7 @@ impl CustomFields {
             db,
             boundary,
             authentication,
+            settings,
             record_types,
             reference_targets,
         })
@@ -212,6 +223,12 @@ impl CustomFields {
         definitions_on_read(client, scope.tenant(), record_type).await
     }
 
+    /// Tenant limits for a scoped contract or other owner read. Values are
+    /// resolved through Settings on the caller's current transaction.
+    pub async fn limits_on(&self, client: &dyn ReadClient, scope: &Scope) -> Result<Limits> {
+        self.limits(client, scope).await
+    }
+
     pub async fn define(
         &self,
         scope: &Scope,
@@ -227,7 +244,8 @@ impl CustomFields {
         self.administrator(tx.sql(), scope).await?;
         authorize_key(tx.sql(), scope, decl.capability).await?;
         lock_definition_set(tx.sql(), scope.tenant(), record_type).await?;
-        if let Some(errors) = validate_definition_input(input) {
+        let limits = self.limits(tx.sql(), scope).await?;
+        if let Some(errors) = validate_definition_input(input, limits.max_text_length) {
             drop(tx);
             return Ok(Outcome::Refused(errors));
         }
@@ -241,11 +259,32 @@ impl CustomFields {
         let input = input.clone();
         let record_type = record_type.to_owned();
         let tenant = scope.tenant();
+        let existing: bool = tx.sql().query_one(
+            "SELECT EXISTS(SELECT 1 FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3)",
+            &[&tenant, &record_type, &input.key],
+        ).await?.get(0);
+        if existing {
+            drop(tx);
+            return Ok(Outcome::Refused(vec![FieldError::new(
+                "key",
+                "is already in use",
+            )]));
+        }
+        let active: i64 = tx.sql().query_one(
+            "SELECT count(*) FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND archived_at IS NULL",
+            &[&tenant, &record_type],
+        ).await?.get(0);
+        if active >= limits.max_fields_per_record_type as i64 {
+            drop(tx);
+            return Ok(Outcome::Refused(vec![FieldError::new(
+                "key",
+                format!(
+                    "cannot be added because the active field limit of {} has been reached",
+                    limits.max_fields_per_record_type
+                ),
+            )]));
+        }
         let result = tx.mutate(move |sql| Box::pin(async move {
-            let existing: bool = sql.query_one("SELECT EXISTS(SELECT 1 FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3)", &[&tenant, &record_type, &input.key]).await?.get(0);
-            if existing { return Err(Error::Conflict); }
-            let count: i64 = sql.query_one("SELECT count(*) FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2", &[&tenant, &record_type]).await?.get(0);
-            if count >= MAX_FIELDS as i64 { return Err(Error::Invalid); }
             let row = sql.query_one("INSERT INTO base_custom_field_definitions(tenant_id,record_type,field_key,label,field_type,required,help_text,position,options,reference_table,text_limit,format) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *", &[&tenant,&record_type,&input.key,&input.label,&input.field_type.as_str(),&input.required,&input.help_text,&input.position,&input.options,&input.reference_table,&input.text_limit,&input.format]).await?;
             let def = from_row(&row);
             Ok((def.clone(), vec![Change { kind:"custom_field_definition".into(), id:def.id, old:Value::Null, new:to_json(&def) }]))
@@ -254,13 +293,6 @@ impl CustomFields {
             Ok(def) => {
                 tx.commit().await?;
                 Ok(Outcome::Saved(def))
-            }
-            Err(Error::Conflict) => {
-                drop(tx);
-                Ok(Outcome::Refused(vec![FieldError::new(
-                    "key",
-                    "is already in use",
-                )]))
             }
             Err(e) => Err(e),
         }
@@ -283,7 +315,8 @@ impl CustomFields {
         self.administrator(tx.sql(), scope).await?;
         authorize_key(tx.sql(), scope, decl.capability).await?;
         lock_definition_set(tx.sql(), scope.tenant(), record_type).await?;
-        if let Some(errors) = validate_definition_input(input) {
+        let limits = self.limits(tx.sql(), scope).await?;
+        if let Some(errors) = validate_definition_input(input, limits.max_text_length) {
             drop(tx);
             return Ok(Outcome::Refused(errors));
         }
@@ -385,9 +418,18 @@ impl CustomFields {
         let tenant = scope.tenant();
         let rt = record_type.to_owned();
         let key = key.to_owned();
+        let restoring = !archive;
+        let field_limit = self
+            .limits(tx.sql(), scope)
+            .await?
+            .max_fields_per_record_type;
         let saved=tx.mutate(move |sql| Box::pin(async move {
             let old_row=sql.query_opt("SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3 FOR UPDATE", &[&tenant,&rt,&key]).await?.ok_or(Error::NotFound)?;
             let old=from_row(&old_row); if old.version!=version { return Err(Error::Conflict); }
+            if restoring && old.archived {
+                let active: i64 = sql.query_one("SELECT count(*) FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 AND archived_at IS NULL", &[&tenant,&rt]).await?.get(0);
+                if active >= field_limit as i64 { return Err(Error::Invalid); }
+            }
             let row=sql.query_one(if archive {"UPDATE base_custom_field_definitions SET archived_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3 RETURNING *"} else {"UPDATE base_custom_field_definitions SET archived_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND record_type=$2 AND field_key=$3 RETURNING *"}, &[&tenant,&rt,&key]).await?;
             let new=from_row(&row); Ok((new.clone(),vec![Change{kind:"custom_field_definition".into(),id:new.id,old:to_json(&old),new:to_json(&new)}]))
         })).await;
@@ -403,6 +445,13 @@ impl CustomFields {
             Err(Error::Conflict) => {
                 drop(tx);
                 Ok(Outcome::Stale)
+            }
+            Err(Error::Invalid) if restoring => {
+                drop(tx);
+                Ok(Outcome::Refused(vec![FieldError::new(
+                    "key",
+                    "cannot be restored because the active field limit has been reached",
+                )]))
             }
             Err(e) => Err(e),
         }
@@ -424,12 +473,7 @@ impl CustomFields {
         let Some(object) = patch.as_object() else {
             return Ok(Err(vec![FieldError::new("custom", "must be an object")]));
         };
-        if serde_json::to_vec(patch).map_or(true, |bytes| bytes.len() > 1_048_576) {
-            return Ok(Err(vec![FieldError::new(
-                "custom",
-                "exceeds the size limit",
-            )]));
-        }
+        let limits = self.limits(client, scope).await?;
         let current = existing.as_object();
         let defs = definitions(client, scope.tenant(), record_type, false).await?;
         let known: BTreeMap<&str, &Definition> = defs.iter().map(|d| (d.key.as_str(), d)).collect();
@@ -480,8 +524,20 @@ impl CustomFields {
                 ));
                 continue;
             }
+            if matches!(def.field_type, FieldType::Text | FieldType::LongText) {
+                if let Some(text) = value.as_str() {
+                    let limit = effective_text_limit(def, limits.max_text_length);
+                    if text.chars().count() > limit {
+                        errors.push(FieldError::new(
+                            format!("custom.{}", def.key),
+                            format!("must be at most {limit} characters"),
+                        ));
+                        continue;
+                    }
+                }
+            }
             let previous = current.and_then(|m| m.get(&def.key));
-            let valid = valid_value(def, value, previous)
+            let valid = valid_value(def, value, previous, limits.max_text_length)
                 && if def.field_type == FieldType::Reference && previous != Some(value) {
                     match (def.reference_table.as_deref(), value.as_str()) {
                         (Some(table), Some(key)) => self
@@ -513,10 +569,10 @@ impl CustomFields {
         // Patches preserve values that were not submitted.
         let mut merged = current.cloned().unwrap_or_default();
         merged.extend(out);
-        if serde_json::to_vec(&merged).map_or(true, |bytes| bytes.len() > 1_048_576) {
+        if serde_json::to_vec(&merged).map_or(true, |bytes| bytes.len() > limits.max_json_bytes) {
             return Ok(Err(vec![FieldError::new(
                 "custom",
-                "exceeds the size limit",
+                format!("must be at most {} bytes", limits.max_json_bytes),
             )]));
         }
         Ok(Ok(Value::Object(merged)))
@@ -529,6 +585,29 @@ impl CustomFields {
     ) -> Result<()> {
         self.authentication.reprove(client, scope).await?;
         authorize_key(client, scope, MANAGE).await
+    }
+    async fn limits(&self, client: &dyn ReadClient, scope: &Scope) -> Result<Limits> {
+        let keys = [
+            crate::MAX_FIELDS_SETTING,
+            crate::MAX_TEXT_LENGTH_SETTING,
+            crate::MAX_JSON_BYTES_SETTING,
+        ];
+        let resolved = self
+            .settings
+            .resolve_many(client, scope, Target::Tenant, &keys)
+            .await?;
+        let value = |key: &str| -> Result<usize> {
+            let number = resolved
+                .get(key)
+                .and_then(|resolved| resolved.value.as_u64())
+                .ok_or(Error::Invalid)?;
+            usize::try_from(number).map_err(|_| Error::Invalid)
+        };
+        Ok(Limits {
+            max_fields_per_record_type: value(crate::MAX_FIELDS_SETTING)?,
+            max_text_length: value(crate::MAX_TEXT_LENGTH_SETTING)?,
+            max_json_bytes: value(crate::MAX_JSON_BYTES_SETTING)?,
+        })
     }
     fn require_record_type(&self, key: &str) -> Result<&RecordType> {
         self.record_types
@@ -549,7 +628,10 @@ impl CustomFields {
     }
 }
 
-fn validate_definition_input(input: &FieldInput) -> Option<Vec<FieldError>> {
+fn validate_definition_input(
+    input: &FieldInput,
+    max_text_length: usize,
+) -> Option<Vec<FieldError>> {
     let mut errors = Vec::new();
     if input.key.is_empty()
         || input.key.len() > 63
@@ -589,11 +671,11 @@ fn validate_definition_input(input: &FieldInput) -> Option<Vec<FieldError>> {
     }
     if input
         .text_limit
-        .is_some_and(|n| !(1..=100_000).contains(&n))
+        .is_some_and(|n| n < 1 || n as usize > max_text_length)
     {
         errors.push(FieldError::new(
             "text_limit",
-            "must be between 1 and 100000",
+            format!("must be between 1 and {max_text_length}"),
         ));
     }
     if input.text_limit.is_some()
@@ -669,17 +751,15 @@ fn valid_options(value: &Value) -> bool {
             && keys.insert(key.to_owned())
     })
 }
-fn valid_value(def: &Definition, value: &Value, current: Option<&Value>) -> bool {
+fn valid_value(
+    def: &Definition,
+    value: &Value,
+    current: Option<&Value>,
+    max_text_length: usize,
+) -> bool {
     match def.field_type {
         FieldType::Text | FieldType::LongText => value.as_str().is_some_and(|s| {
-            s.chars().count()
-                <= def
-                    .text_limit
-                    .unwrap_or(if def.field_type == FieldType::LongText {
-                        100_000
-                    } else {
-                        255
-                    }) as usize
+            s.chars().count() <= effective_text_limit(def, max_text_length)
                 && match def.format.as_deref() {
                     Some("email") => s.is_empty() || s.contains('@'),
                     Some("url") => {
@@ -721,6 +801,17 @@ fn valid_value(def: &Definition, value: &Value, current: Option<&Value>) -> bool
             .as_str()
             .is_some_and(|s| !s.is_empty() && s.len() <= 200),
     }
+}
+
+fn effective_text_limit(def: &Definition, configured: usize) -> usize {
+    def.text_limit
+        .map(|limit| limit as usize)
+        .unwrap_or(if def.field_type == FieldType::LongText {
+            DEFAULT_MAX_TEXT_LENGTH
+        } else {
+            255
+        })
+        .min(configured)
 }
 fn option_exists(options: &Value, code: &str) -> bool {
     options

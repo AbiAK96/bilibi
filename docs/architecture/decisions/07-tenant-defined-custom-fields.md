@@ -20,6 +20,7 @@ Modules currently declare record and Grid fields at compile time. Tenants need a
 6. **Field restrictions reuse Authz storage.** Restrictions keep the existing `(tenant, table, field)` identity. Dynamic custom field IDs use the `cf_<key>` namespace. Authz validates new restrictions against the current tenant catalog, applies existing deny-wins masking/refusal behavior, and maps field restrictions to the opted-in audit record kind.
 7. **Choice options belong to the field in this phase.** Codes are stable; labels and order may change; retired options remain valid on stored values but are unavailable for new assignments. Integration with governed pick-lists is a later change.
 8. **No reporting or shared export support is added.** Those are separate issues.
+9. **Custom-field resource limits are tenant settings.** The defaults are 100 active fields per record type, 100,000 text characters and 1 MiB of serialized custom JSON; tenant custom-field administrators may adjust them within 1–1,000 fields, 1–1,000,000 characters and 1 KiB–16 MiB. Owners resolve the current tenant values during definition and record-write transactions. Lowering a limit never rewrites stored values; changed values and the resulting custom object must satisfy the current limits.
 
 ## Consequences
 
