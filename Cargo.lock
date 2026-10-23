@@ -578,6 +578,7 @@ dependencies = [
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "inventory",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror",

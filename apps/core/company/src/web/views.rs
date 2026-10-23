@@ -44,7 +44,9 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         }
     })
     .collect();
-    PageColumns::mount(views, "companies", columns).map_err(|_| Error::Internal)
+    PageColumns::mount(views, "companies", columns)
+        .map(PageColumns::sortable_runtime_fields)
+        .map_err(|_| Error::Internal)
 }
 pub(super) fn badge(status: &str) -> Result<Html> {
     render(&Badge::status(
@@ -107,15 +109,36 @@ struct CompanyName<'a> {
     link: Html,
     legal: Option<&'a str>,
 }
+pub(super) struct CustomListState<'a> {
+    pub definitions: &'a [Definition],
+    pub filters: &'a [crate::CustomFilter],
+}
+pub(super) struct ListRenderState<'a> {
+    pub params: &'a Params,
+    pub columns: &'a PageColumns,
+    pub workspace: bool,
+    pub masked: &'a HashSet<String>,
+    pub warning: &'a str,
+    pub custom: CustomListState<'a>,
+}
 pub(super) async fn list(
     client: &impl GenericClient,
     scope: &Scope,
     data: &crate::Page,
-    params: &Params,
-    columns: &PageColumns,
-    workspace: bool,
-    masked: &HashSet<String>,
+    state: ListRenderState<'_>,
 ) -> Result<String> {
+    let ListRenderState {
+        params,
+        columns,
+        workspace,
+        masked,
+        warning,
+        custom,
+    } = state;
+    let CustomListState {
+        definitions,
+        filters: custom_filters,
+    } = custom;
     let mut actions = Html::EMPTY;
     if allowed(client, scope, crate::CREATE).await? {
         actions.push(&render(&CreateButton {
@@ -125,6 +148,35 @@ pub(super) async fn list(
             class: "",
             event: "",
             button_type: "button",
+        })?);
+    }
+    let filterable: Vec<&Definition> = definitions
+        .iter()
+        .filter(|definition| {
+            !definition.archived
+                && !matches!(definition.field_type, FieldType::Reference)
+                && !masked.contains(&format!("cf_{}", definition.key))
+        })
+        .collect();
+    if !filterable.is_empty() && custom_filters.len() < 10 {
+        actions.push(&render(&Button {
+            id: "companies-add-custom-filter",
+            event: "add_cf_filter",
+            body: Html::text("Add custom filter"),
+            ..Button::default()
+        })?);
+    }
+    for index in 0..custom_filters.len() {
+        let id = format!("companies-remove-custom-filter-{index}");
+        let label = format!("Remove filter {}", index + 1);
+        let value = index.to_string();
+        actions.push(&render(&Button {
+            id: &id,
+            event: "remove_cf_filter",
+            name: "index",
+            value: &value,
+            body: Html::text(&label),
+            ..Button::default()
         })?);
     }
     actions.push(&link(
@@ -164,31 +216,128 @@ pub(super) async fn list(
     } else {
         "Search by name, code, legal name, email, or jurisdiction..."
     };
-    let toolbar = render(&FilterToolbar::new(
-        "companies-filters",
-        vec![
-            ToolbarControl::search(
-                "companies-search",
-                "search",
-                "Search companies",
-                &params.q,
-                placeholder,
-            ),
-            ToolbarControl::select(
-                "companies-status-filter",
-                "status_filter",
-                "Status filter",
-                &params.status,
-                choices(&[
-                    ("All statuses", ""),
-                    ("Active", "active"),
-                    ("Suspended", "suspended"),
-                    ("Pending", "pending"),
-                    ("Archived", "archived"),
-                ]),
-            ),
-        ],
-    ))?;
+    let mut controls = vec![
+        ToolbarControl::search(
+            "companies-search",
+            "search",
+            "Search companies",
+            &params.q,
+            placeholder,
+        ),
+        ToolbarControl::select(
+            "companies-status-filter",
+            "status_filter",
+            "Status filter",
+            &params.status,
+            choices(&[
+                ("All statuses", ""),
+                ("Active", "active"),
+                ("Suspended", "suspended"),
+                ("Pending", "pending"),
+                ("Archived", "archived"),
+            ]),
+        ),
+    ];
+    for (index, filter) in custom_filters.iter().enumerate() {
+        let field_key = format!("cf_field_{index}");
+        let operator_key = format!("cf_operator_{index}");
+        let value_key = format!("cf_value_{index}");
+        let fields = filterable
+            .iter()
+            .map(|definition| Choice::new(&definition.label, format!("cf_{}", definition.key)))
+            .collect();
+        controls.push(ToolbarControl::select(
+            &format!("companies-cf-field-{index}"),
+            &field_key,
+            "Custom field",
+            &filter.field,
+            fields,
+        ));
+        let definition = filterable
+            .iter()
+            .find(|definition| format!("cf_{}", definition.key) == filter.field);
+        let operators: Vec<(&str, &str)> = definition.map_or(
+            vec![("Contains", "contains"), ("Equals", "equals")],
+            |definition| match definition.field_type {
+                FieldType::Text | FieldType::LongText => {
+                    vec![("Contains", "contains"), ("Equals", "equals")]
+                }
+                FieldType::Integer | FieldType::Decimal | FieldType::Date | FieldType::DateTime => {
+                    vec![
+                        ("Equals", "eq"),
+                        ("Greater than", "gt"),
+                        ("At least", "gte"),
+                        ("Less than", "lt"),
+                        ("At most", "lte"),
+                    ]
+                }
+                FieldType::Boolean | FieldType::Choice => vec![("Equals", "equals")],
+                FieldType::MultiChoice => vec![("Contains", "contains")],
+                FieldType::Reference => vec![],
+            },
+        );
+        controls.push(ToolbarControl::select(
+            &format!("companies-cf-operator-{index}"),
+            &operator_key,
+            "Operator",
+            &filter.operator,
+            choices(&operators),
+        ));
+        if let Some(definition) = definition.filter(|definition| {
+            matches!(
+                definition.field_type,
+                FieldType::Choice | FieldType::MultiChoice | FieldType::Boolean
+            )
+        }) {
+            let options = if definition.field_type == FieldType::Boolean {
+                choices(&[("Yes", "true"), ("No", "false")])
+            } else {
+                definition
+                    .options
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|option| {
+                        Some(Choice::new(
+                            option.get("label")?.as_str()?,
+                            option.get("code")?.as_str()?,
+                        ))
+                    })
+                    .collect()
+            };
+            controls.push(ToolbarControl::select(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+                options,
+            ));
+        } else if definition.is_some_and(|definition| definition.field_type == FieldType::Date) {
+            controls.push(ToolbarControl::date(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+            ));
+        } else {
+            controls.push(ToolbarControl::search(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+                "Filter value",
+            ));
+        }
+    }
+    let mut toolbar = render(&FilterToolbar::new("companies-filters", controls))?;
+    if !warning.is_empty() {
+        toolbar.push(&render(&Alert {
+            kind: StatusKind::Warning,
+            id: "companies-custom-filter-warning",
+            body: Html::text(warning),
+            ..Alert::default()
+        })?);
+    }
     let ids: Vec<i64> = data.rows.iter().map(|row| row.id).collect();
     let facts=client.query("SELECT c.id,p.name,(t.company_id IS NOT NULL) FROM companies c LEFT JOIN companies p ON p.id=c.parent_id AND p.tenant_id=c.tenant_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE c.tenant_id=$1 AND c.id=ANY($2)",&[&scope.tenant(),&ids]).await?;
     let mut rows = columns.rows.clone();
@@ -258,7 +407,8 @@ pub(super) async fn list(
     table.caption = "Companies";
     table.framed = false;
     table.actions = true;
-    let filtered = !params.q.is_empty() || !params.status.is_empty();
+    let filtered =
+        !params.q.is_empty() || !params.status.is_empty() || !params.custom_filters.is_empty();
     let title = if filtered {
         format!(
             "No {}companies{}",
@@ -268,7 +418,11 @@ pub(super) async fn list(
                 format!("{} ", params.status)
             },
             if params.q.is_empty() {
-                String::new()
+                if params.custom_filters.is_empty() {
+                    String::new()
+                } else {
+                    " with custom filters".into()
+                }
             } else {
                 format!(" match “{}”", params.q)
             }

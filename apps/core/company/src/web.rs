@@ -168,7 +168,12 @@ impl Pages {
             locales: self.locales.clone(),
             operation: request.operation,
             id,
-            params: list_state(request.query)?,
+            params: list_state(
+                request.query,
+                &self.company.custom_definitions(scope).await?,
+                &masked,
+            )?,
+            custom_filters: parse_custom_filters(request.query.get("cf_filters")),
             columns,
             framed: request.framed,
             statuses: CommitStates::default(),
@@ -192,6 +197,7 @@ impl Pages {
             record_panels: self.record_panels.clone(),
             active_panels: Vec::new(),
             notice: String::new(),
+            filter_notice: String::new(),
             landing: Flash::default(),
         })
     }
@@ -283,7 +289,11 @@ static LIST_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .shared()
     .expect("company list specification")
 });
-fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
+fn list_state(
+    values: &HashMap<String, String>,
+    definitions: &[Definition],
+    masked: &std::collections::HashSet<String>,
+) -> Result<ListState> {
     let mut values = values.clone();
     if !values.contains_key("search") {
         if let Some(q) = values.get("q").cloned() {
@@ -295,7 +305,106 @@ fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
             values.insert("status".into(), status);
         }
     }
-    ListState::parse(&values, LIST_SPEC.clone()).map_err(|_| Error::Internal)
+    let mut spec = (**LIST_SPEC).clone();
+    for definition in definitions.iter().filter(|d| !d.archived) {
+        let id = format!("cf_{}", definition.key);
+        if masked.contains(&id) {
+            continue;
+        }
+        if matches!(
+            definition.field_type,
+            FieldType::Reference | FieldType::MultiChoice
+        ) {
+            continue;
+        }
+        spec.sortable.insert(id, SortDir::Asc);
+    }
+    ListState::parse(&values, Arc::new(spec)).map_err(|_| Error::Internal)
+}
+fn parse_custom_filters(value: Option<&String>) -> Vec<crate::CustomFilter> {
+    let Some(value) = value.filter(|value| value.len() <= 8192) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<crate::CustomFilter>>(value)
+        .ok()
+        .filter(|filters| filters.len() <= 10)
+        .unwrap_or_default()
+}
+fn custom_filter_valid(
+    filter: &crate::CustomFilter,
+    definitions: &[Definition],
+    masked: &std::collections::HashSet<String>,
+) -> bool {
+    let Some(key) = filter.field.strip_prefix("cf_") else {
+        return false;
+    };
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.key == key && !definition.archived)
+    else {
+        return false;
+    };
+    if masked.contains(&filter.field) {
+        return false;
+    }
+    if filter.value.is_empty() || filter.value.len() > 255 {
+        return false;
+    }
+    match definition.field_type {
+        FieldType::Text | FieldType::LongText => {
+            matches!(filter.operator.as_str(), "contains" | "equals")
+        }
+        FieldType::Integer => {
+            matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
+                && filter.value.parse::<i64>().is_ok()
+        }
+        FieldType::Decimal => {
+            matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
+                && filter.value.parse::<f64>().is_ok_and(f64::is_finite)
+        }
+        FieldType::Date => {
+            matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
+                && filter.value.parse::<jiff::civil::Date>().is_ok()
+        }
+        FieldType::DateTime => {
+            matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
+                && filter.value.parse::<jiff::Timestamp>().is_ok()
+        }
+        FieldType::Boolean => {
+            filter.operator == "equals" && matches!(filter.value.as_str(), "true" | "false")
+        }
+        FieldType::Choice => filter.operator == "equals" && choice_code(definition, &filter.value),
+        FieldType::MultiChoice => {
+            filter.operator == "contains" && choice_code(definition, &filter.value)
+        }
+        FieldType::Reference => false,
+    }
+}
+fn choice_code(definition: &Definition, code: &str) -> bool {
+    definition.options.as_array().is_some_and(|options| {
+        options
+            .iter()
+            .any(|option| option.get("code").and_then(Value::as_str) == Some(code))
+    })
+}
+fn filter_operator_valid(field_type: FieldType, operator: &str) -> bool {
+    match field_type {
+        FieldType::Text | FieldType::LongText => matches!(operator, "contains" | "equals"),
+        FieldType::Integer | FieldType::Decimal | FieldType::Date | FieldType::DateTime => {
+            matches!(operator, "eq" | "gt" | "gte" | "lt" | "lte")
+        }
+        FieldType::Boolean | FieldType::Choice => operator == "equals",
+        FieldType::MultiChoice => operator == "contains",
+        FieldType::Reference => false,
+    }
+}
+fn default_filter_operator(field_type: FieldType) -> &'static str {
+    match field_type {
+        FieldType::Integer | FieldType::Decimal | FieldType::Date | FieldType::DateTime => "eq",
+        FieldType::Boolean | FieldType::Choice => "equals",
+        FieldType::MultiChoice => "contains",
+        _ => "contains",
+    }
 }
 fn query_params(state: &ListState) -> Params {
     Params {
@@ -305,6 +414,7 @@ fn query_params(state: &ListState) -> Params {
         dir: state.sort_dir.unwrap_or_default().key().into(),
         q: state.search.clone(),
         status: state.filters.get("status").cloned().unwrap_or_default(),
+        custom_filters: Vec::new(),
     }
 }
 struct Pending {
@@ -321,6 +431,7 @@ struct CompanyPage {
     operation: &'static str,
     id: Option<i64>,
     params: ListState,
+    custom_filters: Vec<crate::CustomFilter>,
     columns: PageColumns,
     framed: bool,
     statuses: CommitStates,
@@ -339,6 +450,7 @@ struct CompanyPage {
     record_panels: Vec<RecordPanel>,
     active_panels: Vec<PanelSpec>,
     notice: String,
+    filter_notice: String,
     /// What the page a create redirects to shows.
     landing: Flash,
 }
@@ -413,12 +525,17 @@ impl CompanyPage {
     fn query(&self) -> HashMap<String, String> {
         let mut values = self.params.to_params();
         values.extend(self.columns.params());
+        if !self.custom_filters.is_empty() {
+            if let Ok(json) = serde_json::to_string(&self.custom_filters) {
+                values.insert("cf_filters".into(), json);
+            }
+        }
         values
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
         let client = self.db.get().await?;
         let masked = bilibi_authz::restrictions(&**client, scope).await?;
-        let custom_definitions = if matches!(self.operation, "create" | "detail") {
+        let custom_definitions = if matches!(self.operation, "create" | "detail" | "list") {
             self.company.custom_definitions(scope).await?
         } else {
             Vec::new()
@@ -446,20 +563,64 @@ impl CompanyPage {
         }
         let html = match self.operation {
             "list" => {
-                if self
-                    .params
-                    .sort_by
-                    .as_ref()
-                    .is_some_and(|key| masked.contains(key))
-                {
+                let active_sort = self.params.sort_by.as_ref().is_some_and(|key| {
+                    if let Some(custom_key) = key.strip_prefix("cf_") {
+                        custom_definitions.iter().any(|definition| {
+                            definition.key == custom_key
+                                && !definition.archived
+                                && !matches!(
+                                    definition.field_type,
+                                    FieldType::Reference | FieldType::MultiChoice
+                                )
+                                && !masked.contains(key)
+                        })
+                    } else {
+                        !masked.contains(key)
+                    }
+                });
+                if !active_sort {
                     self.params.sort_by = Some("name".into());
                     self.params.sort_dir = Some(SortDir::Asc);
                 }
-                let mut page = crate::list(&**client, scope, &query_params(&self.params)).await?;
+                let catalog = bilibi_grid::Catalog::for_scope_with_runtime(
+                    &**client,
+                    scope,
+                    Some((&**client).into()),
+                )
+                .await?;
+                let mut query = query_params(&self.params);
+                query.custom_filters = self
+                    .custom_filters
+                    .iter()
+                    .filter(|filter| custom_filter_valid(filter, &custom_definitions, &masked))
+                    .cloned()
+                    .collect();
+                if query.custom_filters.len() != self.custom_filters.len() {
+                    self.filter_notice =
+                        "Some custom filters are no longer available or contain invalid values."
+                            .into();
+                } else {
+                    self.filter_notice.clear();
+                }
+                let mut page = crate::list_with_catalog(
+                    &**client,
+                    scope,
+                    &query,
+                    Some(&catalog),
+                    &custom_definitions,
+                )
+                .await?;
                 let last = ((page.total + self.params.page_size as i64 - 1)
                     / self.params.page_size as i64) as u64;
                 if self.params.clamp_to_last_page(last, true) {
-                    page = crate::list(&**client, scope, &query_params(&self.params)).await?;
+                    page = crate::list_with_catalog(
+                        &**client,
+                        scope,
+                        &query,
+                        Some(&catalog),
+                        &custom_definitions,
+                    )
+                    .await?;
                 }
                 // Rebuild built-ins under the fresh restrictions too: a retained
                 // built-in must never outlive its reader's field access.
@@ -489,10 +650,17 @@ impl CompanyPage {
                     &**client,
                     scope,
                     &page,
-                    &query_params(&self.params),
-                    &self.columns,
-                    self.framed,
-                    &masked,
+                    views::ListRenderState {
+                        params: &query,
+                        columns: &self.columns,
+                        workspace: self.framed,
+                        masked: &masked,
+                        warning: &self.filter_notice,
+                        custom: views::CustomListState {
+                            definitions: &custom_definitions,
+                            filters: &self.custom_filters,
+                        },
+                    },
                 )
                 .await?
             }
@@ -605,9 +773,81 @@ impl CompanyPage {
                     }
                 }
                 self.params.apply_filters(&posted);
+                let definitions = self.company.custom_definitions(scope).await?;
+                for (index, filter) in self.custom_filters.iter_mut().enumerate() {
+                    let previous = filter.field.clone();
+                    if let Some(field) = value
+                        .get(format!("filters[cf_field_{index}]"))
+                        .and_then(Value::as_str)
+                    {
+                        filter.field = field.to_owned();
+                    }
+                    if let Some(operator) = value
+                        .get(format!("filters[cf_operator_{index}]"))
+                        .and_then(Value::as_str)
+                    {
+                        filter.operator = operator.to_owned();
+                    }
+                    if let Some(input) = value
+                        .get(format!("filters[cf_value_{index}]"))
+                        .and_then(Value::as_str)
+                    {
+                        filter.value = input.chars().take(255).collect();
+                    }
+                    if filter.field != previous {
+                        if let Some(definition) = definitions.iter().find(|definition| {
+                            format!("cf_{}", definition.key) == filter.field && !definition.archived
+                        }) {
+                            if !filter_operator_valid(definition.field_type, &filter.operator) {
+                                filter.operator =
+                                    default_filter_operator(definition.field_type).into();
+                            }
+                            filter.value.clear();
+                        }
+                    }
+                }
+            }
+            "add_cf_filter" if self.operation == "list" => {
+                if self.custom_filters.len() < 10 {
+                    let definitions = self.company.custom_definitions(scope).await?;
+                    let client = self.db.get().await?;
+                    let masked = bilibi_authz::restrictions(&**client, scope).await?;
+                    if let Some(definition) = definitions.iter().find(|definition| {
+                        !definition.archived
+                            && definition.field_type != FieldType::Reference
+                            && !masked.contains(&format!("cf_{}", definition.key))
+                    }) {
+                        let (field, operator) = (
+                            format!("cf_{}", definition.key),
+                            match definition.field_type {
+                                FieldType::Integer
+                                | FieldType::Decimal
+                                | FieldType::Date
+                                | FieldType::DateTime => "eq",
+                                FieldType::MultiChoice => "contains",
+                                FieldType::Boolean | FieldType::Choice => "equals",
+                                _ => "contains",
+                            },
+                        );
+                        self.custom_filters.push(crate::CustomFilter {
+                            field,
+                            operator: operator.into(),
+                            value: String::new(),
+                        });
+                        self.params.put_page(Some("1"));
+                    }
+                }
+            }
+            "remove_cf_filter" if self.operation == "list" => {
+                let index = get("index").parse::<usize>().map_err(|_| Error::Invalid)?;
+                if index < self.custom_filters.len() {
+                    self.custom_filters.remove(index);
+                    self.params.put_page(Some("1"));
+                }
             }
             "page" if self.operation == "list" => self.params.put_page(Some(get("page"))),
             "clear_filters" if self.operation == "list" => {
+                self.custom_filters.clear();
                 self.params.apply_filters(&HashMap::from([
                     ("search".into(), "".into()),
                     ("status".into(), "".into()),
@@ -816,7 +1056,11 @@ impl LiveState<Scope, Error> for CompanyPage {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
-                    self.params = list_state(values)?;
+                    let definitions = self.company.custom_definitions(request.scope).await?;
+                    let client = self.db.get().await?;
+                    let masked = bilibi_authz::restrictions(&**client, request.scope).await?;
+                    self.params = list_state(values, &definitions, &masked)?;
+                    self.custom_filters = parse_custom_filters(values.get("cf_filters"));
                     self.columns.from_params(request.scope, values).await?;
                 }
                 LiveInput::Event(value) => {
