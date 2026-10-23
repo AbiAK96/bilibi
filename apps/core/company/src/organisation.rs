@@ -8,7 +8,7 @@ use crate::{
     contributions::{CREATE, TENANT_WIDE},
     Company, FieldError, WriteError, MASK,
 };
-use bilibi_authz::{authorize_key, authorize_proof, decide_proof, restrictions};
+use bilibi_authz::{authorize_key, authorize_proof, decide_proof, effective_proof, restrictions};
 use bilibi_custom_fields::CustomFields;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
@@ -277,11 +277,13 @@ impl OrganisationDirectory for Directory {
         capability: &'a str,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
         Box::pin(async move {
-            if !decide_proof(client, scope, capability).await?.allowed {
+            // Bilimbi Company directory pickers are filtered reads, not access attempts.
+            // Keep this usable from Grid's read-only projection transaction.
+            if !effective_proof(client, scope, capability).await?.allowed {
                 return Ok(Vec::new());
             }
             let tenant_wide = scope.principal().is_some()
-                || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+                || effective_proof(client, scope, TENANT_WIDE).await?.allowed;
             let own = scope.actor().organisation();
             Ok(named_in_scope(client, scope)
                 .await?
