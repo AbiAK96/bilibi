@@ -456,6 +456,10 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
 
+## Tenant-defined custom fields (#131)
+
+Active tenant definitions are shown on Company create and detail pages. Create values use the owner's audited validation transaction; detail edits use versioned custom-field writes. Shared inline multi-choice submits selected codes as a JSON array. Current restrictions mask custom values and refuse writes. Reference fields remain unavailable until target selection and readability checks are implemented. With no active fields, the existing page layout and create behavior remain unchanged.
+
 ## Postal addresses
 
 Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.

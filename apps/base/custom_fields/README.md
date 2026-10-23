@@ -2,7 +2,7 @@
 
 `base/custom_fields` owns tenant-specific definitions for record types that opt in through `RecordType`. The record owner continues to store values in its own JSONB column and validates every submitted patch inside its write transaction.
 
-The public facade is `base/custom_fields.fields`. It lists definitions and supports define, update, archive, restore and owner-side validation. Definition writes use `MutationBoundary`, require `admin.custom.fields.manage` and the opted-in record type's capability, and enforce immutable keys and types.
+The public facade is `base/custom_fields.fields`. It lists definitions and supports define, update, archive, restore and owner-side validation. Definition writes use `MutationBoundary`, require `admin.custom.fields.manage` and the opted-in record type's capability, and enforce immutable keys and types. `active_for_record` returns current tenant definitions to an already-authorized owner page without requiring definition-management permission; the owner route must authorize its create or view operation first.
 
 Choice values are stable codes; an option with `active: false` is retired and remains valid only when preserving an existing value. Grid and Authz now consume typed runtime-provider contributions from this module. They load active definitions per scope on each request, expose them as `cf_<key>` fields, and bind JSON keys as values in Grid SQL. Reference fields name a Grid table; reference target links and readability validation are still pending.
 

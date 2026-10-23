@@ -4,6 +4,8 @@
 //! relationship-role catalog, relationship page and panel in `relationships`
 //! the platform-operator setup page in `setup` and the two dashboard entries
 //! in `dashboard`.
+//! The create and detail flows mirror Bilimbi Core Company's `NewLive` and
+//! `ShowLive` pages.
 mod dashboard;
 mod departments;
 mod reference_types;
@@ -11,6 +13,7 @@ pub(super) mod relationships;
 mod setup;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
+use bilibi_custom_fields::{Definition, FieldType};
 use bilibi_database::{Db, Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
@@ -339,6 +342,35 @@ struct CompanyPage {
     /// What the page a create redirects to shows.
     landing: Flash,
 }
+
+fn custom_edit_json(value: &str, definition: &Definition) -> std::result::Result<String, ()> {
+    if value.is_empty()
+        && !definition.required
+        && !matches!(definition.field_type, FieldType::Text | FieldType::LongText)
+    {
+        return Ok("null".into());
+    }
+    let value = match definition.field_type {
+        FieldType::Text
+        | FieldType::LongText
+        | FieldType::Decimal
+        | FieldType::Date
+        | FieldType::DateTime
+        | FieldType::Choice => Value::String(value.to_owned()),
+        FieldType::Integer => Value::Number(value.parse::<i64>().map_err(|_| ())?.into()),
+        FieldType::Boolean => Value::Bool(match value {
+            "true" => true,
+            "false" => false,
+            _ => return Err(()),
+        }),
+        FieldType::MultiChoice => {
+            let values: Vec<String> = serde_json::from_str(value).map_err(|_| ())?;
+            serde_json::to_value(values).map_err(|_| ())?
+        }
+        FieldType::Reference => return Err(()),
+    };
+    serde_json::to_string(&value).map_err(|_| ())
+}
 impl CompanyPage {
     /// The contributed record panels this reader may mount.
     async fn allowed_panels(
@@ -386,6 +418,11 @@ impl CompanyPage {
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
         let client = self.db.get().await?;
         let masked = bilibi_authz::restrictions(&**client, scope).await?;
+        let custom_definitions = if matches!(self.operation, "create" | "detail") {
+            self.company.custom_definitions(scope).await?
+        } else {
+            Vec::new()
+        };
         let html = match self.operation {
             "list" => {
                 if self
@@ -457,6 +494,7 @@ impl CompanyPage {
                     id,
                     views::DetailState {
                         statuses: &self.statuses,
+                        custom_fields: &custom_definitions,
                         pending: self.pending.as_ref(),
                         notice: &self.notice,
                         pending_activity: self.pending_activity.as_ref(),
@@ -468,7 +506,16 @@ impl CompanyPage {
                 )
                 .await?
             }
-            "create" => views::create(&**client, scope, &self.form, &self.errors).await?,
+            "create" => {
+                views::create(
+                    &**client,
+                    scope,
+                    &self.form,
+                    &self.errors,
+                    &custom_definitions,
+                )
+                .await?
+            }
             _ => return Err(Error::NotFound),
         };
         Ok(LiveBody {
@@ -548,10 +595,32 @@ impl CompanyPage {
                 if self.id != Some(id) {
                     return Err(Error::Invalid);
                 }
+                let field_name = get("field").to_owned();
+                let mut submitted = get("value").to_owned();
+                if let Some(key) = field_name.strip_prefix("cf_") {
+                    let definitions = self.company.custom_definitions(scope).await?;
+                    let Some(definition) = definitions.iter().find(|d| d.key == key) else {
+                        self.statuses.put(
+                            field_name,
+                            CommitStatus::Error("This custom field is no longer available.".into()),
+                        );
+                        return Ok(None);
+                    };
+                    match custom_edit_json(&submitted, definition) {
+                        Ok(value) => submitted = value,
+                        Err(()) => {
+                            self.statuses.put(
+                                field_name,
+                                CommitStatus::Error("Enter a valid value for this field.".into()),
+                            );
+                            return Ok(None);
+                        }
+                    }
+                }
                 let edit = Edit {
                     id,
-                    field: get("field").into(),
-                    value: get("value").into(),
+                    field: field_name,
+                    value: submitted,
                     version: get("version").parse().map_err(|_| Error::Invalid)?,
                 };
                 let result = self.company.save_fact(scope, credential, &edit).await;
@@ -683,10 +752,20 @@ impl CompanyPage {
                     .as_object()
                     .ok_or(Error::Invalid)?
                     .iter()
-                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
+                    .filter_map(|(k, v)| {
+                        if k == "type" {
+                            None
+                        } else if k.starts_with("custom[") {
+                            serde_json::to_string(v).ok().map(|v| (k.clone(), v))
+                        } else {
+                            v.as_str().map(|v| (k.clone(), v.into()))
+                        }
+                    })
                     .filter(|(k, _)| k != "type")
                     .collect();
-                let (new, activities, metadata, errors) = views::new_company(&self.form);
+                let definitions = self.company.custom_definitions(scope).await?;
+                let (new, activities, metadata, errors) =
+                    views::new_company(&self.form, &definitions);
                 self.errors = errors;
                 if self.errors.is_empty() {
                     match self
