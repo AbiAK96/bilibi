@@ -1,6 +1,6 @@
 //! Companies: the Organisation of the approved party model, its reference
 //! catalogs (legal entity types, department types), departments, the tenant's
-//! primary company and provisioning, plus shared-UI list/create/detail pages
+//! primary company and provisioning, mirroring Bilimbi Core Company, plus shared-UI list/create/detail pages
 //! and audited inline facts. See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;
@@ -262,18 +262,33 @@ impl Company {
 pub struct Page {
     pub rows: Vec<Company>,
     pub total: i64,
+    /// The Grid cost admission bound refused this list query before execution.
+    pub(crate) limited: bool,
 }
 use organisation::COLUMNS;
 
-pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
-    list_with_catalog(client, scope, params, None, &[]).await
+pub async fn list(
+    client: &mut tokio_postgres::Client,
+    scope: &Scope,
+    params: &Params,
+) -> Result<Page> {
+    let tx = client
+        .build_transaction()
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .start()
+        .await?;
+    tx.batch_execute("SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'")
+        .await?;
+    let page = list_with_catalog(&tx, scope, params, None, &[]).await?;
+    tx.commit().await?;
+    Ok(page)
 }
 
 /// Company list query with current, scoped custom-field metadata. The owner
 /// expression builder binds JSON keys; only fixed operators and catalog types
 /// become SQL syntax. Mirrors Bilimbi Core Company’s custom-field list query.
 pub async fn list_with_catalog(
-    client: &impl GenericClient,
+    client: &tokio_postgres::Transaction<'_>,
     scope: &Scope,
     params: &Params,
     catalog: Option<&bilibi_grid::Catalog>,
@@ -335,6 +350,11 @@ pub async fn list_with_catalog(
                 args.len()
             ));
             continue;
+        }
+        if definition.field_type == bilibi_custom_fields::FieldType::Decimal
+            && !valid_decimal_filter(&condition.value)
+        {
+            return Err(Error::Invalid);
         }
         let operator = match (definition.field_type, condition.operator.as_str()) {
             (
@@ -416,13 +436,40 @@ pub async fn list_with_catalog(
         .iter()
         .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
         .collect();
-    let total = client
-        .query_one(
-            &format!("SELECT count(*) FROM companies WHERE {filter}"),
-            &count_refs,
-        )
-        .await?
-        .get(0);
+    let count_sql = format!("SELECT count(*) FROM companies WHERE {filter}");
+    if !within_grid_cost(client, &count_sql, &count_refs).await? {
+        return Ok(Page {
+            rows: Vec::new(),
+            total: 0,
+            limited: true,
+        });
+    }
+    client.batch_execute("SAVEPOINT company_grid_count").await?;
+    let count = client.query_one(&count_sql, &count_refs).await;
+    let total = match count {
+        Ok(row) => {
+            client
+                .batch_execute("RELEASE SAVEPOINT company_grid_count")
+                .await?;
+            row.get(0)
+        }
+        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) => {
+            client
+                .batch_execute("ROLLBACK TO SAVEPOINT company_grid_count; RELEASE SAVEPOINT company_grid_count")
+                .await?;
+            return Ok(Page {
+                rows: Vec::new(),
+                total: 0,
+                limited: true,
+            });
+        }
+        Err(error) => {
+            client
+                .batch_execute("ROLLBACK TO SAVEPOINT company_grid_count; RELEASE SAVEPOINT company_grid_count")
+                .await?;
+            return Err(error.into());
+        }
+    };
     let sort_expression = if params.sort.starts_with("cf_") {
         let allowed = definitions.iter().any(|definition| {
             format!("cf_{}", definition.key) == params.sort && !definition.archived
@@ -463,13 +510,92 @@ pub async fn list_with_catalog(
         .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
         .collect();
     let sql = format!("SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {sort_expression} {} , id {} LIMIT ${limit_pos} OFFSET ${}", params.dir, params.dir, limit_pos+1);
-    let rows = client
-        .query(&sql, &refs)
-        .await?
+    if !within_grid_cost(client, &sql, &refs).await? {
+        return Ok(Page {
+            rows: Vec::new(),
+            total: 0,
+            limited: true,
+        });
+    }
+    client.batch_execute("SAVEPOINT company_grid_rows").await?;
+    let selected = client.query(&sql, &refs).await;
+    let selected = match selected {
+        Ok(rows) => {
+            client
+                .batch_execute("RELEASE SAVEPOINT company_grid_rows")
+                .await?;
+            rows
+        }
+        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) => {
+            client
+                .batch_execute(
+                    "ROLLBACK TO SAVEPOINT company_grid_rows; RELEASE SAVEPOINT company_grid_rows",
+                )
+                .await?;
+            return Ok(Page {
+                rows: Vec::new(),
+                total: 0,
+                limited: true,
+            });
+        }
+        Err(error) => {
+            client
+                .batch_execute(
+                    "ROLLBACK TO SAVEPOINT company_grid_rows; RELEASE SAVEPOINT company_grid_rows",
+                )
+                .await?;
+            return Err(error.into());
+        }
+    };
+    let rows = selected
         .iter()
         .map(|row| Company::from_row(row, &masked))
         .collect();
-    Ok(Page { rows, total })
+    Ok(Page {
+        rows,
+        total,
+        limited: false,
+    })
+}
+
+async fn within_grid_cost(
+    client: &impl GenericClient,
+    sql: &str,
+    params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+) -> Result<bool> {
+    client.batch_execute("SAVEPOINT company_grid_cost").await?;
+    let estimate = client
+        .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), params)
+        .await;
+    let estimate = match estimate {
+        Ok(row) => {
+            client
+                .batch_execute("RELEASE SAVEPOINT company_grid_cost")
+                .await?;
+            row.try_get(0)?
+        }
+        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) => {
+            client
+                .batch_execute(
+                    "ROLLBACK TO SAVEPOINT company_grid_cost; RELEASE SAVEPOINT company_grid_cost",
+                )
+                .await?;
+            return Ok(false);
+        }
+        Err(error) => {
+            client
+                .batch_execute(
+                    "ROLLBACK TO SAVEPOINT company_grid_cost; RELEASE SAVEPOINT company_grid_cost",
+                )
+                .await?;
+            return Err(error.into());
+        }
+    };
+    let explain: serde_json::Value = estimate;
+    let Some(cost) = explain[0]["Plan"]["Total Cost"].as_f64() else {
+        return Err(Error::Internal);
+    };
+    Ok(cost.is_finite() && cost <= bilibi_grid::query::MAX_ESTIMATED_COST)
 }
 
 fn choice_code(definition: &bilibi_custom_fields::Definition, code: &str) -> bool {
@@ -478,6 +604,35 @@ fn choice_code(definition: &bilibi_custom_fields::Definition, code: &str) -> boo
             .iter()
             .any(|option| option.get("code").and_then(serde_json::Value::as_str) == Some(code))
     })
+}
+
+/// Accept exact base-10 values that PostgreSQL `numeric` can parse without
+/// exponent expansion. The URL value is already capped at 255 bytes, so this
+/// also stays well inside PostgreSQL's precision and scale limits.
+pub(crate) fn valid_decimal_filter(value: &str) -> bool {
+    if value.is_empty() || value.len() > 255 {
+        return false;
+    }
+    let unsigned = value
+        .strip_prefix('-')
+        .or_else(|| value.strip_prefix('+'))
+        .unwrap_or(value);
+    if unsigned.is_empty() {
+        return false;
+    }
+    let mut parts = unsigned.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    let whole_digits = whole.bytes().all(|byte| byte.is_ascii_digit());
+    let fraction_digits = fraction.is_none_or(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    let has_digit = whole.bytes().any(|byte| byte.is_ascii_digit())
+        || fraction.is_some_and(|digits| digits.bytes().any(|byte| byte.is_ascii_digit()));
+    (whole_digits || whole.is_empty()) && fraction_digits && has_digit
 }
 
 pub async fn detail(

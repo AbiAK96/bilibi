@@ -1,7 +1,8 @@
-//! Generalized field withholding, independent of Grid and presentation. Never
+//! Generalized field withholding, mirroring Bilimbi `Authz`, independent of Grid and presentation. Never
 //! serialize an original value beside a restricted placeholder.
 use bilibi_database::{Error, Result};
 use bilibi_ports::PortClient;
+use bilibi_tenancy::ReadClient;
 use bilibi_tenancy::Scope;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -38,6 +39,30 @@ pub async fn restricted(
         result.entry(row.get(0)).or_default().insert(row.get(1));
     }
     Ok(result)
+}
+
+/// Current field restrictions through an object-safe owner read client, for
+/// scope-aware schemas such as Agent API's dynamic input contract.
+pub async fn restricted_for_read(
+    client: &dyn ReadClient,
+    scope: &Scope,
+    table: &str,
+) -> Result<HashSet<String>> {
+    if table.is_empty() || table.len() > 200 {
+        return Err(Error::Invalid);
+    }
+    let tenant = scope.tenant();
+    let user = scope.user();
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] = [&tenant, &user, &table];
+    Ok(client
+        .query(
+            "SELECT DISTINCT f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3",
+            &params,
+        )
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
 }
 /// The fields of each audit record type the scope may not see, keyed by the
 /// names a recorded value uses (Bilimbi `Authz.withheld_fields_by_type/2`). A

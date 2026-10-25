@@ -1,3 +1,4 @@
+//! Company list rendering, mirroring Bilimbi Core Company's list page.
 use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
@@ -101,6 +102,7 @@ fn back(id: &str) -> Result<Html> {
 struct ListBody {
     header: Html,
     toolbar: Html,
+    custom_filters: Vec<Html>,
     card: Html,
 }
 #[derive(Template)]
@@ -154,6 +156,7 @@ pub(super) async fn list(
         .iter()
         .filter(|definition| {
             !definition.archived
+                && definition.key.len() <= 61
                 && !matches!(definition.field_type, FieldType::Reference)
                 && !masked.contains(&format!("cf_{}", definition.key))
         })
@@ -216,7 +219,7 @@ pub(super) async fn list(
     } else {
         "Search by name, code, legal name, email, or jurisdiction..."
     };
-    let mut controls = vec![
+    let controls = vec![
         ToolbarControl::search(
             "companies-search",
             "search",
@@ -238,15 +241,17 @@ pub(super) async fn list(
             ]),
         ),
     ];
+    let mut custom_filter_rows = Vec::new();
     for (index, filter) in custom_filters.iter().enumerate() {
         let field_key = format!("cf_field_{index}");
         let operator_key = format!("cf_operator_{index}");
         let value_key = format!("cf_value_{index}");
+        let mut row_controls = Vec::new();
         let fields = filterable
             .iter()
             .map(|definition| Choice::new(&definition.label, format!("cf_{}", definition.key)))
             .collect();
-        controls.push(ToolbarControl::select(
+        row_controls.push(ToolbarControl::select(
             &format!("companies-cf-field-{index}"),
             &field_key,
             "Custom field",
@@ -276,7 +281,7 @@ pub(super) async fn list(
                 FieldType::Reference => vec![],
             },
         );
-        controls.push(ToolbarControl::select(
+        row_controls.push(ToolbarControl::select(
             &format!("companies-cf-operator-{index}"),
             &operator_key,
             "Operator",
@@ -305,7 +310,7 @@ pub(super) async fn list(
                     })
                     .collect()
             };
-            controls.push(ToolbarControl::select(
+            row_controls.push(ToolbarControl::select(
                 &format!("companies-cf-value-{index}"),
                 &value_key,
                 "Value",
@@ -313,21 +318,24 @@ pub(super) async fn list(
                 options,
             ));
         } else if definition.is_some_and(|definition| definition.field_type == FieldType::Date) {
-            controls.push(ToolbarControl::date(
+            row_controls.push(ToolbarControl::date(
                 &format!("companies-cf-value-{index}"),
                 &value_key,
                 "Value",
                 &filter.value,
             ));
         } else {
-            controls.push(ToolbarControl::search(
+            row_controls.push(ToolbarControl::text(
                 &format!("companies-cf-value-{index}"),
                 &value_key,
                 "Value",
                 &filter.value,
-                "Filter value",
             ));
         }
+        let row_id = format!("companies-custom-filter-{index}");
+        let mut row = FilterToolbar::new(&row_id, row_controls);
+        row.class = "w-full";
+        custom_filter_rows.push(render(&row)?);
     }
     let mut toolbar = render(&FilterToolbar::new("companies-filters", controls))?;
     if !warning.is_empty() {
@@ -463,6 +471,7 @@ pub(super) async fn list(
         render(&ListBody {
             header,
             toolbar,
+            custom_filters: custom_filter_rows,
             card: card("companies-card", contents, true)?,
         })?,
     )

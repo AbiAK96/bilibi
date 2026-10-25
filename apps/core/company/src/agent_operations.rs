@@ -83,11 +83,15 @@ fn schema_with_custom_fields(
     definitions: &[bilibi_custom_fields::Definition],
     limits: bilibi_custom_fields::Limits,
     creating: bool,
+    restricted: &std::collections::HashSet<String>,
 ) -> Value {
     let mut schema = base;
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
     for definition in definitions {
+        if restricted.contains(&format!("cf_{}", definition.key)) {
+            continue;
+        }
         let mut detail = definition.help_text.clone().unwrap_or_default();
         let mut field = match definition.field_type {
             bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText => {
@@ -216,11 +220,15 @@ fn company_create_schema<'a>(
             .active_for_record_on(client, scope, "core.company")
             .await?;
         let limits = custom_fields()?.limits_on(client, scope).await?;
+        let restricted = bilibi_authz::fields::restricted_for_read(client, scope, "companies")
+            .await
+            .map_err(bilibi_agent_api::Error::from)?;
         Ok(schema_with_custom_fields(
             create_schema(),
             &definitions,
             limits,
             true,
+            &restricted,
         ))
     })
 }
@@ -234,11 +242,15 @@ fn company_custom_update_schema<'a>(
             .active_for_record_on(client, scope, "core.company")
             .await?;
         let limits = custom_fields()?.limits_on(client, scope).await?;
+        let restricted = bilibi_authz::fields::restricted_for_read(client, scope, "companies")
+            .await
+            .map_err(bilibi_agent_api::Error::from)?;
         Ok(schema_with_custom_fields(
             update_custom_schema(),
             &definitions,
             limits,
             false,
+            &restricted,
         ))
     })
 }
@@ -325,6 +337,35 @@ impl ReadHandler for Get {
                     })?;
             let primary = crate::primary::is_primary(&**client, scope, id).await?;
             let mut value = company_json(&company, &masked);
+            let definitions = custom_fields()?
+                .active_for_record_on(&**client, scope, "core.company")
+                .await?;
+            if let Some(custom) = value.get_mut("custom").and_then(Value::as_object_mut) {
+                for definition in definitions.iter().filter(|definition| {
+                    definition.field_type == bilibi_custom_fields::FieldType::Reference
+                        && !masked.contains(&format!("cf_{}", definition.key))
+                }) {
+                    let Some(key) = custom
+                        .get(&definition.key)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                    else {
+                        continue;
+                    };
+                    let Some(table) = definition.reference_table.as_deref() else {
+                        continue;
+                    };
+                    if custom_fields()?
+                        .reference_label_on(&**client, scope, table, &key)
+                        .await?
+                        .is_none()
+                    {
+                        // Match the Company detail page: unavailable targets
+                        // never disclose their stored opaque key to the agent.
+                        custom.insert(definition.key.clone(), json!("Unavailable"));
+                    }
+                }
+            }
             value["primary"] = json!(primary);
             value["path"] = json!(format!("/companies/{id}"));
             Ok(Output::Data(Data::restricted(value, &masked)))

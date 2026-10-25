@@ -384,7 +384,16 @@ fields cannot be filtered or sorted. Each request reloads the tenant's active
 definitions and current restrictions; stale or invalid conditions are omitted
 with a notice, and an unavailable custom sort returns to Name. JSON keys and
 filter values are bound parameters, and accepted operators come from a fixed
-allowlist.
+allowlist. Decimal filters accept plain exact base-10 notation only; exponent
+notation and values outside PostgreSQL's numeric precision bounds stay as
+visible filter drafts with a validation notice. Count, cost-estimate and row
+queries run in a repeatable-read transaction with Grid's 100,000
+estimated-cost admission bound, a 2-second statement timeout and a 500ms lock
+timeout. A query over the cost bound is refused with a notice before count or
+row execution. Count or row timeouts roll back to a savepoint and show the same
+notice without aborting the list transaction. Each custom filter is rendered
+in its own responsive control group so its field, operator and value stay
+together on narrow screens.
 
 Create uses K1 validation and records optional business context on the same
 audited transaction. Detail uses shared read-first inline text, choice and

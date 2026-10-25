@@ -134,5 +134,5 @@ bilibi_menu::contribute!(
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, bilibi_module_registry::Provenance { module: "base/custom_fields", source: file!(), line: line!() }, &PageWrites {
     service: web::PAGES,
     contracts: &[],
-    pending: Pending::Events { events: &["save", "archive", "restore"], reason: "Custom-field definition writes use the audited Custom Fields facade; operation contracts are deferred to the agent-operations slice." },
+    pending: Pending::Events { events: &["save_definition", "archive", "restore"], reason: "Custom-field definition writes use the audited Custom Fields facade; operation contracts are deferred to the agent-operations slice." },
 }) }

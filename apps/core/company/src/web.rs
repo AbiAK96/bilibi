@@ -338,10 +338,9 @@ fn custom_filter_valid(
     let Some(key) = filter.field.strip_prefix("cf_") else {
         return false;
     };
-    let Some(definition) = definitions
-        .iter()
-        .find(|definition| definition.key == key && !definition.archived)
-    else {
+    let Some(definition) = definitions.iter().find(|definition| {
+        definition.key == key && definition.key.len() <= 61 && !definition.archived
+    }) else {
         return false;
     };
     if masked.contains(&filter.field) {
@@ -360,7 +359,7 @@ fn custom_filter_valid(
         }
         FieldType::Decimal => {
             matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
-                && filter.value.parse::<f64>().is_ok_and(f64::is_finite)
+                && crate::valid_decimal_filter(&filter.value)
         }
         FieldType::Date => {
             matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
@@ -533,7 +532,7 @@ impl CompanyPage {
         values
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
-        let client = self.db.get().await?;
+        let mut client = self.db.get().await?;
         let masked = bilibi_authz::restrictions(&**client, scope).await?;
         let custom_definitions = if matches!(self.operation, "create" | "detail" | "list") {
             self.company.custom_definitions(scope).await?
@@ -563,10 +562,20 @@ impl CompanyPage {
         }
         let html = match self.operation {
             "list" => {
+                let tx = client
+                    .build_transaction()
+                    .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+                    .start()
+                    .await?;
+                tx.batch_execute("SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'")
+                    .await?;
+                let masked = bilibi_authz::restrictions(&*tx, scope).await?;
+                let custom_definitions = self.company.custom_definitions_on(&*tx, scope).await?;
                 let active_sort = self.params.sort_by.as_ref().is_some_and(|key| {
                     if let Some(custom_key) = key.strip_prefix("cf_") {
                         custom_definitions.iter().any(|definition| {
                             definition.key == custom_key
+                                && definition.key.len() <= 61
                                 && !definition.archived
                                 && !matches!(
                                     definition.field_type,
@@ -582,12 +591,9 @@ impl CompanyPage {
                     self.params.sort_by = Some("name".into());
                     self.params.sort_dir = Some(SortDir::Asc);
                 }
-                let catalog = bilibi_grid::Catalog::for_scope_with_runtime(
-                    &**client,
-                    scope,
-                    Some((&**client).into()),
-                )
-                .await?;
+                let catalog =
+                    bilibi_grid::Catalog::for_scope_with_runtime(&*tx, scope, Some((&*tx).into()))
+                        .await?;
                 let mut query = query_params(&self.params);
                 query.custom_filters = self
                     .custom_filters
@@ -603,18 +609,21 @@ impl CompanyPage {
                     self.filter_notice.clear();
                 }
                 let mut page = crate::list_with_catalog(
-                    &**client,
+                    &tx,
                     scope,
                     &query,
                     Some(&catalog),
                     &custom_definitions,
                 )
                 .await?;
+                if page.limited {
+                    self.filter_notice = "This list query exceeds Grid's cost or 2-second time limit. Narrow the search or remove custom filters.".into();
+                }
                 let last = ((page.total + self.params.page_size as i64 - 1)
                     / self.params.page_size as i64) as u64;
                 if self.params.clamp_to_last_page(last, true) {
                     page = crate::list_with_catalog(
-                        &**client,
+                        &tx,
                         scope,
                         &query,
                         Some(&catalog),
@@ -622,6 +631,7 @@ impl CompanyPage {
                     )
                     .await?;
                 }
+                tx.commit().await?;
                 // Rebuild built-ins under the fresh restrictions too: a retained
                 // built-in must never outlive its reader's field access.
                 if masked != self.masked {

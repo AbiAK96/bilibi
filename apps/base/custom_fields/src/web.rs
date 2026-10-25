@@ -270,7 +270,7 @@ impl Index {
                 }
             }
             "cancel_archive" => self.confirm_archive = None,
-            "save" => {
+            "save_definition" => {
                 let mut values = params::form_values(value, "definition");
                 if let Some(options) = value.get("definition[options]").and_then(Value::as_str) {
                     if options.len() > MAX_OPTIONS_FORM_BYTES {
@@ -827,7 +827,7 @@ impl Index {
         })?);
         body = render(&Form {
             id: "custom-field-form",
-            event: "save",
+            event: "save_definition",
             change: false,
             class: "",
             actions,

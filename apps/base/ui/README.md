@@ -8,7 +8,7 @@ Single selects and multi-selects share the 16 px outline chevron and right align
 
 Multi-selects show the inset label and selected count above removable chips inside one field. The default keeps chips on one line with “…” for hidden selections; `.wrap_chips()` lets the field grow onto multiple lines. The empty prompt defaults to “Select options…”. Removal uses the checkbox's normal change event; `.chips(event)` can retain an owner's explicit remove event. Every selection remains available in the dropdown, including chips hidden by overflow.
 
-List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
+List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first. `ToolbarControl::text` renders a bounded plain-text filter without search styling or search-first ordering; use it when a text value belongs beside related condition controls.
 
 ## Colour input
 

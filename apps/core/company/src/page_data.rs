@@ -1,6 +1,7 @@
-//! Company page read models and audited writes missing from the original slice.
+//! Company page read models mirroring Bilimbi Core Company and audited writes missing from the original slice.
 use crate::{organisation, CompanyService, CreateOutcome, Edit, NewCompany, UPDATE};
 use bilibi_database::{Change, Error, Result};
+use bilibi_tenancy::ReadClient;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 
@@ -14,6 +15,18 @@ impl CompanyService {
     ) -> Result<Vec<bilibi_custom_fields::Definition>> {
         self.custom_fields
             .active_for_record(scope, "core.company")
+            .await
+    }
+
+    /// Active definitions from the Company's current list transaction, so the
+    /// owner's sort and filter allowlists share Grid's catalog snapshot.
+    pub(crate) async fn custom_definitions_on(
+        &self,
+        client: &(impl ReadClient + ?Sized),
+        scope: &Scope,
+    ) -> Result<Vec<bilibi_custom_fields::Definition>> {
+        self.custom_fields
+            .active_for_record_on(client, scope, "core.company")
             .await
     }
 

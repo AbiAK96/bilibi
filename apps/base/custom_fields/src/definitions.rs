@@ -172,6 +172,24 @@ impl CustomFields {
         (target.provider.resolve(&**client, scope, key)).await
     }
 
+    /// Resolve a target label on the caller's already-authorized read client.
+    /// The owner must authorize its own record read first; the target provider
+    /// still checks target readability with this exact scope and connection.
+    pub async fn reference_label_on(
+        &self,
+        client: &dyn ReadClient,
+        scope: &Scope,
+        table: &str,
+        key: &str,
+    ) -> Result<Option<String>> {
+        let target = self
+            .reference_targets
+            .iter()
+            .find(|target| target.table == table)
+            .ok_or(Error::Invalid)?;
+        (target.provider.resolve(client, scope, key)).await
+    }
+
     /// Whether the current tenant actor may define fields for this opted-in
     /// record type. The page uses this only to hide unavailable write controls;
     /// every definition mutation still rechecks the capability in its transaction.
@@ -634,7 +652,9 @@ fn validate_definition_input(
 ) -> Option<Vec<FieldError>> {
     let mut errors = Vec::new();
     if input.key.is_empty()
-        || input.key.len() > 63
+        // Grid column ids use the `cf_` prefix and have a 64-byte id limit.
+        // Keep the owner's key limit aligned before definitions are persisted.
+        || input.key.len() > 61
         || !input
             .key
             .bytes()
@@ -875,6 +895,12 @@ pub(crate) async fn grid_fields(
     let mut fields = Vec::new();
     for record_type in &registered_runtime_types()? {
         for def in active_definitions(client, scope.tenant(), record_type.key).await? {
+            // Older releases could persist keys that cannot fit Grid's
+            // prefixed field id. Keep those definitions out of the runtime
+            // catalog so they do not make every Company list fail to load.
+            if def.key.len() > 61 {
+                continue;
+            }
             let readable_values = if def.field_type == FieldType::Reference {
                 let table = def.reference_table.as_deref().ok_or(Error::Internal)?;
                 let target = references::providers()?

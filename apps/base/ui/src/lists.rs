@@ -76,13 +76,14 @@ impl<'a> Pagination<'a> {
 #[derive(Clone, Debug)]
 pub enum ControlKind {
     Search,
+    Text,
     Select,
     MultiSelect(Box<MultiSelect>),
     Date,
 }
 
-/// One toolbar cell. Framing, the magnifier, debounce, length cap and the
-/// screen-reader-only label are the toolbar's, never the caller's.
+/// One toolbar cell. Search framing, magnifier and debounce, plus the
+/// screen-reader-only label, are the toolbar's, never the caller's.
 #[derive(Clone, Debug)]
 pub struct ToolbarControl {
     pub kind: ControlKind,
@@ -107,6 +108,20 @@ impl ToolbarControl {
         let mut field = field;
         field.attrs.maxlength = Some("255".into());
         Self::new(ControlKind::Search, id, label, field)
+    }
+
+    /// A plain bounded text value, without search styling or search-first
+    /// ordering. Useful for a typed filter condition grouped with its controls.
+    pub fn text(id: &str, key: &str, label: &str, value: &str) -> Self {
+        let mut field = Field::in_form(FILTERS_FORM, key)
+            .id(id)
+            .kind(InputKind::Text)
+            .wrapper_class("mb-0")
+            .value(value)
+            .autocomplete("off")
+            .class(field_base_class(false, "px-3"));
+        field.attrs.maxlength = Some("255".into());
+        Self::new(ControlKind::Text, id, label, field)
     }
 
     /// A select posting `filters[key]`; `options` are label/value pairs.
@@ -149,7 +164,9 @@ impl ToolbarControl {
         match &mut self.kind {
             ControlKind::Search => self.hint = hint.into(),
             ControlKind::MultiSelect(control) => control.hint = hint.into(),
-            ControlKind::Select | ControlKind::Date => self.field.hint = hint.into(),
+            ControlKind::Text | ControlKind::Select | ControlKind::Date => {
+                self.field.hint = hint.into()
+            }
         }
         self
     }
