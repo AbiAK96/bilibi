@@ -23,7 +23,7 @@ use tokio_postgres::{GenericClient, Transaction};
 
 /// The columns of `companies` a read model carries, with restricted ones
 /// masked (`Company::from_row`).
-pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version,custom";
+pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version,custom_fields";
 /// The fields a role may be restricted from (Bilimbi `Summary`); `code` and
 /// `status` are protected, `id` and `name` implicitly.
 pub const RESTRICTABLE: [&str; 7] = [
@@ -760,7 +760,7 @@ pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> 
 /// Inserts the company row. Plain SQL on the caller's transaction: the
 /// audited paths wrap it in `tx.mutate`, provisioning records its own action.
 pub async fn insert(sql: &Transaction<'_>, tenant: i64, company: &ValidCompany) -> Result<Company> {
-    let row = sql.query_one(&format!("INSERT INTO companies(tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,custom,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()) RETURNING {COLUMNS}"), &[
+    let row = sql.query_one(&format!("INSERT INTO companies(tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,custom_fields,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()) RETURNING {COLUMNS}"), &[
         &tenant, &company.parent_id, &company.name, &company.code, &company.status, &company.legal_name,
         &company.registration_number, &company.tax_id, &company.legal_entity_type_id, &company.jurisdiction,
         &company.email, &company.phone, &company.website, &company.custom,

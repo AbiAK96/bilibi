@@ -477,6 +477,8 @@ The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the curren
 
 Active tenant definitions are shown on Company create and detail pages. Create values use the owner's audited validation transaction; detail edits use versioned custom-field writes. Shared inline multi-choice submits selected codes as a JSON array. Reference fields target readable live companies through a searchable picker capped at 50 results; the stored key is resolved separately for display. Writes recheck targets in the owner's mutation transaction. Missing, archived or unreadable stored targets are masked and preserved; an optional reference can be cleared through the ordinary authorized write path. Field restrictions continue to mask values and refuse writes. With no active fields, the existing page layout and create behavior remain unchanged.
 
+Company stores these values in the `companies.custom_fields` JSONB column. The owner column name is descriptive; the agent-facing `custom` object remains the value payload contract.
+
 ## Postal addresses
 
 Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.

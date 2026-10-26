@@ -495,7 +495,7 @@ impl WriteHandler for UpdateCustom {
             crate::organisation::authorize_target(&**client, scope, input.company_id, UPDATE)
                 .await?;
             let row = client.query_opt(
-                "SELECT custom,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+                "SELECT custom_fields,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
                 &[&scope.tenant(), &input.company_id],
             ).await.map_err(bilibi_database::Error::from)?.ok_or(bilibi_agent_api::Error::NotFound)?;
             if row.get::<_, i64>(1) != input.version {
@@ -568,7 +568,7 @@ impl WriteHandler for UpdateCustom {
             crate::organisation::authorize_target(tx.sql(), scope, input.company_id, UPDATE)
                 .await?;
             let row = tx.sql().query_opt(
-                "SELECT custom,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
+                "SELECT custom_fields,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
                 &[&scope.tenant(), &input.company_id],
             ).await.map_err(bilibi_database::Error::from)?.ok_or(bilibi_agent_api::Error::NotFound)?;
             if row.get::<_, i64>(1) != input.version {
@@ -613,7 +613,7 @@ impl WriteHandler for UpdateCustom {
                 .map(|key| (key.clone(), merged.get(key).cloned().unwrap_or(Value::Null)))
                 .collect::<serde_json::Map<_, _>>();
             tx.mutate(move |sql| Box::pin(async move {
-                sql.execute("UPDATE companies SET custom=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3", &[&merged, &tenant, &id]).await?;
+                sql.execute("UPDATE companies SET custom_fields=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3", &[&merged, &tenant, &id]).await?;
                 Ok(((), vec![Change {
                     kind:"company".into(), id,
                     old:json!({"custom":before}),

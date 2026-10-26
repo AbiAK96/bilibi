@@ -1,6 +1,6 @@
 # Base Custom Fields
 
-`base/custom_fields` owns tenant-specific definitions for record types that opt in through `RecordType`. The record owner continues to store values in its own JSONB column and validates every submitted patch inside its write transaction.
+`base/custom_fields` owns tenant-specific definitions for record types that opt in through `RecordType`. The record owner continues to store values in its own descriptively named JSONB column and validates every submitted patch inside its write transaction. Core Company stores values in `companies.custom_fields`.
 
 The public facade is `base/custom_fields.fields`. It lists definitions and supports define, update, archive, restore and owner-side validation. Definition writes use `MutationBoundary`, require `admin.custom.fields.manage` and the opted-in record type's capability, and enforce immutable keys and types. `active_for_record` returns current tenant definitions to an already-authorized owner page without requiring definition-management permission; `active_for_record_on` reads definitions through the caller's transaction for scoped Agent API schemas. The owner route must authorize its create or view operation first.
 

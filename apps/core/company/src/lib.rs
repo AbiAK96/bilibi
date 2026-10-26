@@ -95,6 +95,10 @@ pub const MIGRATION_CUSTOM_FIELDS: (&str, &str) = (
     "core-company-008-custom-fields",
     include_str!("../migrations/008-custom-fields.sql"),
 );
+pub const MIGRATION_CUSTOM_FIELDS_COLUMN_NAME: (&str, &str) = (
+    "core-company-009-custom-fields-column-name",
+    include_str!("../migrations/009-custom-fields-column-name.sql"),
+);
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
 pub const SERVICE: &str = "core/company.companies";
@@ -232,7 +236,8 @@ impl Company {
                 row.get(field)
             }
         };
-        let mut custom: serde_json::Value = row.try_get("custom").unwrap_or_else(|_| json!({}));
+        let mut custom: serde_json::Value =
+            row.try_get("custom_fields").unwrap_or_else(|_| json!({}));
         if let Some(object) = custom.as_object_mut() {
             for field in masked.iter().filter_map(|field| field.strip_prefix("cf_")) {
                 object.remove(field);
@@ -346,7 +351,7 @@ pub async fn list_with_catalog(
             let key_pos = args.len();
             args.push(Box::new(condition.value.clone()));
             conditions.push(format!(
-                "jsonb_extract_path(companies.custom, ${key_pos}::text) @> to_jsonb(${}::text)",
+            "jsonb_extract_path(companies.custom_fields, ${key_pos}::text) @> to_jsonb(${}::text)",
                 args.len()
             ));
             continue;
@@ -778,7 +783,7 @@ pub async fn save(
     };
     if let Some(key) = field.strip_prefix("cf_").map(str::to_owned) {
         let row = tx.sql().query_opt(
-            "SELECT custom,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
+            "SELECT custom_fields,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
             &[&tenant, &id],
         ).await?.ok_or(Error::NotFound)?;
         if row.get::<_, i64>(1) != version {
@@ -805,7 +810,7 @@ pub async fn save(
         let new_value = merged.get(&key).cloned().unwrap_or(serde_json::Value::Null);
         tx.mutate(move |sql| Box::pin(async move {
             sql.execute(
-                "UPDATE companies SET custom=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3",
+                "UPDATE companies SET custom_fields=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3",
                 &[&merged, &tenant, &id],
             ).await?;
             Ok(((), vec![Change { kind: "company".into(), id,
@@ -1145,7 +1150,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
         dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/custom_fields","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, MIGRATION_CUSTOM_FIELDS],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, MIGRATION_CUSTOM_FIELDS, MIGRATION_CUSTOM_FIELDS_COLUMN_NAME],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
