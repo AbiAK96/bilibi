@@ -63,9 +63,9 @@ without it is not withheld in the audit views, so declare `record_types` with
 every restrictable table.
 
 For opted-in reference fields, the runtime Authz catalog includes the target
-keys currently readable by this actor. The audit screen withholds old and new
-reference values whose targets are missing, archived or unreadable, even when
-the reference field itself is not restricted.
+table. The audit screen resolves only old and new keys present on the current
+page, then withholds values whose targets are missing, archived or unreadable,
+even when the reference field itself is not restricted.
 
 ## Record History (`record.history` embed)
 

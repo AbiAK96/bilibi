@@ -141,31 +141,51 @@ pub(crate) async fn withhold(
             .get(&entry.auditable_type)
             .cloned()
             .unwrap_or_default();
-        for table in catalog.tables().iter().filter(|table| {
+        let relevant_tables = catalog.tables().iter().filter(|table| {
             table
                 .record_types
                 .iter()
                 .any(|kind| kind == &entry.auditable_type)
-        }) {
+        });
+        let mut references = Vec::new();
+        for table in relevant_tables {
             for field in table
                 .fields
                 .iter()
-                .filter(|field| field.reference_values.is_some() && field.id.starts_with("cf_"))
+                .filter(|field| field.reference_table.is_some())
             {
                 let key = field.id.strip_prefix("cf_").unwrap_or(&field.id);
-                let path = format!("custom.{key}");
-                let readable = field.reference_values.as_ref().expect("checked");
-                if [
-                    entry.old_values.pointer(&format!("/custom/{key}")),
-                    entry.new_values.pointer(&format!("/custom/{key}")),
-                ]
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|value| !readable.iter().any(|key| key == value))
-                {
-                    fields.insert(path);
+                if let Some(target_table) = field.reference_table.as_deref() {
+                    for value in [
+                        entry.old_values.pointer(&format!("/custom/{key}")),
+                        entry.new_values.pointer(&format!("/custom/{key}")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    {
+                        references.push((
+                            key.to_owned(),
+                            bilibi_authz::field_catalog::RuntimeReference {
+                                table: target_table.to_owned(),
+                                key: value.to_owned(),
+                            },
+                        ));
+                    }
                 }
+            }
+        }
+        let requested = references
+            .iter()
+            .map(|(_, reference)| reference.clone())
+            .collect::<Vec<_>>();
+        let readable = bilibi_authz::field_catalog::readable_references(client, scope, &requested)
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        for (field_key, reference) in references {
+            if !readable.contains(&reference) {
+                fields.insert(format!("custom.{field_key}"));
             }
         }
         if !fields.is_empty() {

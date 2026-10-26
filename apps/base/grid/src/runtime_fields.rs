@@ -9,6 +9,14 @@ use std::{future::Future, pin::Pin, sync::OnceLock};
 
 pub const RUNTIME_FIELDS: &str = "base/grid.runtime_fields";
 pub type RuntimeFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<RuntimeField>>> + Send + 'a>>;
+pub type ReferenceFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<RuntimeReference>>> + Send + 'a>>;
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RuntimeReference {
+    pub table: String,
+    pub key: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct RuntimeField {
@@ -18,12 +26,17 @@ pub struct RuntimeField {
     pub label: String,
     pub ty: crate::FieldType,
     pub values: Vec<String>,
-    /// For reference values, only these target keys may leave the projection.
-    pub readable_values: Option<Vec<String>>,
+    pub reference_table: Option<String>,
 }
 
 pub trait RuntimeFieldProvider: Send + Sync {
     fn fields<'a>(&'a self, client: PortClient<'a>, scope: &'a Scope) -> RuntimeFuture<'a>;
+    fn readable_references<'a>(
+        &'a self,
+        client: PortClient<'a>,
+        scope: &'a Scope,
+        requested: &'a [RuntimeReference],
+    ) -> ReferenceFuture<'a>;
 }
 
 pub struct RuntimeFieldSource {

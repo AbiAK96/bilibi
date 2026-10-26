@@ -12,11 +12,13 @@ impl ReferenceTargetProvider for Companies {
         &'a self,
         client: &'a dyn ReadClient,
         scope: &'a Scope,
+        search: &'a str,
+        limit: usize,
     ) -> ReferenceFuture<'a, Vec<ReferenceOption>> {
         Box::pin(async move {
-            let companies = crate::organisation::Directory
-                .selectable(client, scope, crate::VIEW)
-                .await?;
+            let companies =
+                crate::organisation::searchable_reference_targets(client, scope, search, limit)
+                    .await?;
             Ok(companies
                 .into_iter()
                 .filter(|company| !company.archived)
@@ -54,6 +56,29 @@ impl ReferenceTargetProvider for Companies {
                 }
                 Err(error) => Err(error),
             }
+        })
+    }
+
+    fn resolve_many<'a>(
+        &'a self,
+        client: &'a dyn ReadClient,
+        scope: &'a Scope,
+        keys: &'a [String],
+    ) -> ReferenceFuture<'a, Vec<ReferenceOption>> {
+        Box::pin(async move {
+            let ids = keys
+                .iter()
+                .filter_map(|key| key.parse::<i64>().ok().filter(|id| *id > 0))
+                .collect::<Vec<_>>();
+            let companies =
+                crate::organisation::readable_reference_targets(client, scope, &ids).await?;
+            Ok(companies
+                .into_iter()
+                .map(|company| ReferenceOption {
+                    key: company.id.get().to_string(),
+                    label: company.name,
+                })
+                .collect())
         })
     }
 }

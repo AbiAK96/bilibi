@@ -338,7 +338,7 @@ impl PageColumns {
                         && column.hops.is_empty()
                         && column.field.as_ref().is_some_and(|field| {
                             field.json_key.is_some()
-                                && field.readable_values.is_none()
+                                && field.reference_table.is_none()
                                 && !(field.ty == crate::FieldType::String
                                     && !field.values.is_empty())
                         })
@@ -500,7 +500,7 @@ impl PageColumns {
                         && column.hops.is_empty()
                         && column.field.as_ref().is_some_and(|field| {
                             field.json_key.is_some()
-                                && field.readable_values.is_none()
+                                && field.reference_table.is_none()
                                 && !(field.ty == crate::FieldType::String
                                     && !field.values.is_empty())
                         })

@@ -85,11 +85,11 @@ the whole JSON column, and a provider failure refuses the catalog build. The
 two-argument `for_scope` remains the static-catalog entry point for existing
 callers.
 
-Reference fields carry the current actor's readable target keys in runtime
-metadata. Grid masks other keys from projections and excludes reference fields
-from text search and owner sorting/filtering to prevent indirect value probes.
-Readable values remain stored target keys; Grid does not add dynamic
-relationship paths or target labels.
+Reference fields carry the opted-in target table in runtime metadata. Grid
+resolves only keys present in each bounded projection and masks unresolved keys.
+Reference fields remain unavailable to text search and owner sorting/filtering
+to prevent indirect value probes. Grid does not add dynamic relationship paths
+or target labels.
 
 `query::field_expression` exposes a typed root-field expression for an owner's
 bounded sort or filter query. It returns JSON keys separately for binding after

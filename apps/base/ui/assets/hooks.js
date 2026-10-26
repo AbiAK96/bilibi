@@ -404,6 +404,14 @@
         if (!this.open) this.setOpen(true)
         this.activeIndex = 0
         this.applyFilter()
+        if (this.el.dataset.searchEvent) {
+          clearTimeout(this.searchTimer)
+          const query = this.input.value.trim()
+          this.searchTimer = setTimeout(() => this.emit(this.el.dataset.searchEvent, {
+            key: this.el.dataset.searchKey,
+            query
+          }), 250)
+        }
       }
       this.onChange = event => event.stopPropagation()
       this.onFocus = () => this.openList(true)
@@ -487,6 +495,8 @@
       this.bindClear()
       document.addEventListener("pointerdown", this.onDocumentPointerDown)
 
+      this.destroySearch = () => clearTimeout(this.searchTimer)
+
       this.applyFilter()
     },
 
@@ -508,6 +518,7 @@
       this.clearButton?.removeEventListener("click", this.onClear)
       this.clearButton?.removeEventListener("mousedown", this.onClearMouseDown)
       document.removeEventListener("pointerdown", this.onDocumentPointerDown)
+      this.destroySearch?.()
     },
   }
 

@@ -74,6 +74,20 @@ impl bilibi_grid::RuntimeFieldProvider for Providers {
             bilibi_ports::on_client!(client, |sql| definitions::grid_fields(sql, scope).await)
         })
     }
+
+    fn readable_references<'a>(
+        &'a self,
+        client: bilibi_ports::PortClient<'a>,
+        scope: &'a bilibi_tenancy::Scope,
+        requested: &'a [bilibi_grid::RuntimeReference],
+    ) -> bilibi_grid::ReferenceFuture<'a> {
+        Box::pin(async move {
+            bilibi_ports::on_client!(client, |sql| definitions::grid_readable_references(
+                sql, scope, requested
+            )
+            .await)
+        })
+    }
 }
 
 impl bilibi_authz::field_catalog::RuntimeCatalogProvider for Providers {
@@ -84,6 +98,20 @@ impl bilibi_authz::field_catalog::RuntimeCatalogProvider for Providers {
     ) -> bilibi_authz::field_catalog::RuntimeFuture<'a> {
         Box::pin(async move {
             bilibi_ports::on_client!(client, |sql| definitions::authz_fields(sql, scope).await)
+        })
+    }
+
+    fn readable_references<'a>(
+        &'a self,
+        client: bilibi_ports::PortClient<'a>,
+        scope: &'a bilibi_tenancy::Scope,
+        requested: &'a [bilibi_authz::field_catalog::RuntimeReference],
+    ) -> bilibi_authz::field_catalog::ReferenceFuture<'a> {
+        Box::pin(async move {
+            bilibi_ports::on_client!(client, |sql| definitions::authz_readable_references(
+                sql, scope, requested
+            )
+            .await)
         })
     }
 }

@@ -22,7 +22,7 @@ impl CompanyService {
     /// owner's sort and filter allowlists share Grid's catalog snapshot.
     pub(crate) async fn custom_definitions_on(
         &self,
-        client: &(impl ReadClient + ?Sized),
+        client: &dyn ReadClient,
         scope: &Scope,
     ) -> Result<Vec<bilibi_custom_fields::Definition>> {
         self.custom_fields
@@ -35,8 +35,23 @@ impl CompanyService {
         &self,
         scope: &Scope,
         table: &str,
+        search: &str,
     ) -> Result<Vec<bilibi_custom_fields::ReferenceOption>> {
-        self.custom_fields.reference_choices(scope, table).await
+        self.custom_fields
+            .reference_choices(scope, table, search)
+            .await
+    }
+
+    pub(crate) async fn custom_reference_labels_on(
+        &self,
+        client: &dyn ReadClient,
+        scope: &Scope,
+        table: &str,
+        keys: &[String],
+    ) -> Result<Vec<bilibi_custom_fields::ReferenceOption>> {
+        self.custom_fields
+            .reference_labels_on(client, scope, table, keys)
+            .await
     }
 
     pub async fn create_with_context(

@@ -154,7 +154,7 @@ pub fn field_expression(
     }
     let table = catalog.table(table_id)?;
     let field = table.field(field_id)?;
-    if field.hidden || field.readable_values.is_some() {
+    if field.hidden || field.reference_table.is_some() {
         return None;
     }
     if let Some(key) = field.json_key.clone() {
@@ -166,8 +166,8 @@ pub fn field_expression(
         let sql = match field.ty {
             crate::FieldType::Integer => format!("NULLIF({raw}, '')::bigint"),
             crate::FieldType::Decimal => format!("NULLIF({raw}, '')::numeric"),
-            crate::FieldType::Date => format!("NULLIF({raw}, '')::date"),
-            crate::FieldType::DateTime => format!("NULLIF({raw}, '')::timestamptz"),
+            crate::FieldType::Date => format!("CASE WHEN pg_input_is_valid(NULLIF({raw}, ''), 'date') THEN NULLIF({raw}, '')::date END"),
+            crate::FieldType::DateTime => format!("CASE WHEN pg_input_is_valid(NULLIF({raw}, ''), 'timestamp with time zone') THEN NULLIF({raw}, '')::timestamptz END"),
             crate::FieldType::Boolean => format!("NULLIF({raw}, '')::boolean"),
             _ => raw,
         };
@@ -311,6 +311,37 @@ pub async fn project_lenses<S: AsRef<str>>(
         ))
         .into());
     }
+    let mut requested_references = BTreeSet::new();
+    for row in &selected {
+        for (index, column) in columns.iter().enumerate() {
+            let Some(table) = column
+                .field
+                .as_ref()
+                .and_then(|field| field.reference_table.as_ref())
+            else {
+                continue;
+            };
+            let value: Value = row.try_get(index + 1)?;
+            if let Some(key) = value.as_str().filter(|key| key.len() <= 200) {
+                requested_references.insert(crate::RuntimeReference {
+                    table: table.clone(),
+                    key: key.to_owned(),
+                });
+            }
+        }
+    }
+    let readable_references = if requested_references.is_empty() {
+        BTreeSet::new()
+    } else if let Some(provider) = crate::runtime_fields::provider()? {
+        let requested = requested_references.into_iter().collect::<Vec<_>>();
+        let resolved = bilibi_ports::on_client!((&*tx).into(), |sql| {
+            provider.readable_references(sql.into(), scope, &requested)
+        })
+        .await?;
+        resolved.into_iter().collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
     let mut keys = BTreeSet::new();
     let mut rows = Vec::with_capacity(selected.len());
     for row in selected {
@@ -325,15 +356,17 @@ pub async fn project_lenses<S: AsRef<str>>(
         let mut cells = BTreeMap::new();
         for (i, column) in columns.iter().enumerate() {
             let mut value: Value = row.try_get(i + 1)?;
-            if let Some(allowed) = column
+            if let Some(table) = column
                 .field
                 .as_ref()
-                .and_then(|field| field.readable_values.as_ref())
+                .and_then(|field| field.reference_table.as_ref())
             {
-                if !value
-                    .as_str()
-                    .is_some_and(|key| allowed.iter().any(|allowed| allowed == key))
-                {
+                if !value.as_str().is_some_and(|key| {
+                    readable_references.contains(&crate::RuntimeReference {
+                        table: table.clone(),
+                        key: key.to_owned(),
+                    })
+                }) {
                     value = Value::Null;
                 }
             }
@@ -493,7 +526,7 @@ pub async fn text_search_sql(
         if !column
             .field
             .as_ref()
-            .is_some_and(|f| f.ty == crate::FieldType::String && f.readable_values.is_none())
+            .is_some_and(|f| f.ty == crate::FieldType::String && f.reference_table.is_none())
         {
             continue;
         }
@@ -577,8 +610,8 @@ fn field(alias: &str, table: &Table, id: &str, keys: &KeyParams) -> String {
         return match field.ty {
             crate::FieldType::Integer => format!("NULLIF({raw}, '')::bigint"),
             crate::FieldType::Decimal => format!("NULLIF({raw}, '')::numeric"),
-            crate::FieldType::Date => format!("NULLIF({raw}, '')::date"),
-            crate::FieldType::DateTime => format!("NULLIF({raw}, '')::timestamptz"),
+            crate::FieldType::Date => format!("CASE WHEN pg_input_is_valid(NULLIF({raw}, ''), 'date') THEN NULLIF({raw}, '')::date END"),
+            crate::FieldType::DateTime => format!("CASE WHEN pg_input_is_valid(NULLIF({raw}, ''), 'timestamp with time zone') THEN NULLIF({raw}, '')::timestamptz END"),
             crate::FieldType::Boolean => format!("NULLIF({raw}, '')::boolean"),
             _ => raw,
         };

@@ -33,7 +33,8 @@ pub use model::{
     RecordFields, Source, Table, TableDecl,
 };
 pub use runtime_fields::{
-    RuntimeField, RuntimeFieldProvider, RuntimeFieldSource, RuntimeFuture, RUNTIME_FIELDS,
+    ReferenceFuture, RuntimeField, RuntimeFieldProvider, RuntimeFieldSource, RuntimeFuture,
+    RuntimeReference, RUNTIME_FIELDS,
 };
 
 #[doc(hidden)]
@@ -122,7 +123,7 @@ fn restriction_snapshot(
                     .map(|(id, label)| CatalogField {
                         id,
                         label,
-                        reference_values: None,
+                        reference_table: None,
                     })
                     .collect(),
             })

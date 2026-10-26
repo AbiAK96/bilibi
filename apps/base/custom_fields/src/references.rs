@@ -5,6 +5,7 @@ use bilibi_tenancy::{ReadClient, Scope};
 use std::{future::Future, pin::Pin};
 
 pub const REFERENCE_TARGETS: &str = "base/custom_fields.reference_targets";
+pub const MAX_REFERENCE_CHOICES: usize = 50;
 pub type ReferenceFuture<'a, T> =
     Pin<Box<dyn Future<Output = std::result::Result<T, Error>> + Send + 'a>>;
 
@@ -28,6 +29,8 @@ pub trait ReferenceTargetProvider: Send + Sync {
         &'a self,
         client: &'a dyn ReadClient,
         scope: &'a Scope,
+        search: &'a str,
+        limit: usize,
     ) -> ReferenceFuture<'a, Vec<ReferenceOption>>;
     fn resolve<'a>(
         &'a self,
@@ -35,6 +38,29 @@ pub trait ReferenceTargetProvider: Send + Sync {
         scope: &'a Scope,
         key: &'a str,
     ) -> ReferenceFuture<'a, Option<String>>;
+
+    /// Resolve only keys present in the current read. Providers with a batch
+    /// query override this default; mirrors Bilimbi's per-record reference
+    /// label resolution rather than loading a whole target directory.
+    fn resolve_many<'a>(
+        &'a self,
+        client: &'a dyn ReadClient,
+        scope: &'a Scope,
+        keys: &'a [String],
+    ) -> ReferenceFuture<'a, Vec<ReferenceOption>> {
+        Box::pin(async move {
+            let mut options = Vec::new();
+            for key in keys {
+                if let Some(label) = self.resolve(client, scope, key).await? {
+                    options.push(ReferenceOption {
+                        key: key.clone(),
+                        label,
+                    });
+                }
+            }
+            Ok(options)
+        })
+    }
 }
 
 pub struct ReferenceTargetSource {

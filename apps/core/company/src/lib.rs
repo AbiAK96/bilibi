@@ -356,6 +356,15 @@ pub async fn list_with_catalog(
         {
             return Err(Error::Invalid);
         }
+        let normalized_temporal = match definition.field_type {
+            bilibi_custom_fields::FieldType::Date => {
+                Some(normalize_date_filter(&condition.value).ok_or(Error::Invalid)?)
+            }
+            bilibi_custom_fields::FieldType::DateTime => {
+                Some(normalize_datetime_filter(&condition.value).ok_or(Error::Invalid)?)
+            }
+            _ => None,
+        };
         let operator = match (definition.field_type, condition.operator.as_str()) {
             (
                 bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText,
@@ -411,7 +420,9 @@ pub async fn list_with_catalog(
         {
             return Err(Error::Invalid);
         }
-        let value = if condition.operator == "contains" {
+        let value = if let Some(value) = normalized_temporal {
+            value
+        } else if condition.operator == "contains" {
             format!("%{}%", organisation::escape_like(&condition.value))
         } else {
             condition.value.clone()
@@ -633,6 +644,20 @@ pub(crate) fn valid_decimal_filter(value: &str) -> bool {
     let has_digit = whole.bytes().any(|byte| byte.is_ascii_digit())
         || fraction.is_some_and(|digits| digits.bytes().any(|byte| byte.is_ascii_digit()));
     (whole_digits || whole.is_empty()) && fraction_digits && has_digit
+}
+
+pub(crate) fn normalize_date_filter(value: &str) -> Option<String> {
+    let date = value.parse::<jiff::civil::Date>().ok()?;
+    (date.year() > 0 && date.year() <= 9999 && date.to_string() == value).then(|| date.to_string())
+}
+
+pub(crate) fn normalize_datetime_filter(value: &str) -> Option<String> {
+    if value.contains(['[', ']']) {
+        return None;
+    }
+    let timestamp = value.parse::<jiff::Timestamp>().ok()?;
+    let year = timestamp.to_zoned(jiff::tz::TimeZone::UTC).date().year();
+    (year > 0 && year <= 9999).then(|| timestamp.to_string())
 }
 
 pub async fn detail(

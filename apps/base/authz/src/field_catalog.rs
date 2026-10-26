@@ -22,15 +22,22 @@ use std::{collections::BTreeSet, future::Future, pin::Pin, sync::OnceLock};
 pub const FIELD_CATALOG: &str = "base/authz.field_catalog";
 pub const RUNTIME_FIELD_CATALOG: &str = "base/authz.runtime_field_catalog";
 pub type RuntimeFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<CatalogTable>>> + Send + 'a>>;
+pub type ReferenceFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<RuntimeReference>>> + Send + 'a>>;
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct RuntimeReference {
+    pub table: String,
+    pub key: String,
+}
 
 /// One restrictable field, by the id restrictions store and its display label.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogField {
     pub id: String,
     pub label: String,
-    /// Current readable target keys for a reference custom field. The field
-    /// owner supplies this per scope so audit history can mask stale targets.
-    pub reference_values: Option<Vec<String>>,
+    /// Opted-in reference target table; keys are resolved only for values read.
+    pub reference_table: Option<String>,
 }
 /// One table with the fields an operator may restrict. `record_types` are the
 /// audit record types its rows use, so a restriction reaches their audit views.
@@ -47,6 +54,12 @@ pub struct CatalogSource {
 }
 pub trait RuntimeCatalogProvider: Send + Sync {
     fn catalog<'a>(&'a self, client: PortClient<'a>, scope: &'a Scope) -> RuntimeFuture<'a>;
+    fn readable_references<'a>(
+        &'a self,
+        client: PortClient<'a>,
+        scope: &'a Scope,
+        requested: &'a [RuntimeReference],
+    ) -> ReferenceFuture<'a>;
 }
 pub struct RuntimeCatalogSource {
     pub provider: &'static dyn RuntimeCatalogProvider,
@@ -190,12 +203,10 @@ pub async fn for_scope(client: PortClient<'_>, scope: &Scope) -> Result<FieldCat
             if !field.id.starts_with("cf_")
                 || !valid_id(&field.id)
                 || field.label.trim().is_empty()
-                || field.reference_values.as_ref().is_some_and(|values| {
-                    let mut keys = BTreeSet::new();
-                    values
-                        .iter()
-                        .any(|key| key.is_empty() || key.len() > 200 || !keys.insert(key))
-                })
+                || field
+                    .reference_table
+                    .as_ref()
+                    .is_some_and(|table| !valid_id(table))
                 || !seen_fields.insert(field.id.clone())
             {
                 return Err(Error::Internal);
@@ -228,6 +239,23 @@ pub async fn for_scope(client: PortClient<'_>, scope: &Scope) -> Result<FieldCat
         .tables
         .sort_by(|a, b| a.label.cmp(&b.label).then(a.id.cmp(&b.id)));
     Ok(catalog)
+}
+
+/// Resolve only reference keys present in the current scoped read.
+pub async fn readable_references(
+    client: PortClient<'_>,
+    scope: &Scope,
+    requested: &[RuntimeReference],
+) -> Result<Vec<RuntimeReference>> {
+    let Some(provider) = runtime_provider()? else {
+        return Ok(Vec::new());
+    };
+    bilibi_ports::on_client!(client, |sql| provider.readable_references(
+        sql.into(),
+        scope,
+        requested
+    ))
+    .await
 }
 
 /// Restrictions store ids of at most 200 bytes (`field_restrictions` checks).

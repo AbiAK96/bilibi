@@ -165,12 +165,10 @@ impl Catalog {
                 if !super::model::id_valid(&field.key)
                     || field.key.len() + 3 > 64
                     || field.label.trim().is_empty()
-                    || field.readable_values.as_ref().is_some_and(|values| {
-                        let mut keys = BTreeSet::new();
-                        values.iter().any(|key| {
-                            key.is_empty() || key.len() > 200 || !keys.insert(key.as_str())
-                        })
-                    })
+                    || field
+                        .reference_table
+                        .as_ref()
+                        .is_some_and(|table| table.is_empty() || table.len() > 64)
                     || !seen.insert((field.table.clone(), field.key.clone()))
                 {
                     return Err(CatalogError::Misdeclared(
@@ -201,7 +199,7 @@ impl Catalog {
                     json_key: Some(field.key),
                     hidden: false,
                     values: field.values,
-                    readable_values: field.readable_values,
+                    reference_table: field.reference_table,
                     protected: false,
                 });
             }

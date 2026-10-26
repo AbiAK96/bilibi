@@ -584,6 +584,7 @@ fn custom_fact(
     editable: bool,
     status: CommitStatus,
     reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
+    reference_search: &BTreeMap<String, String>,
 ) -> Result<Html> {
     let id = format!("company-custom-{}", definition.key);
     let name = format!("cf_{}", definition.key);
@@ -609,7 +610,7 @@ fn custom_fact(
     let reference_choices = definition
         .reference_table
         .as_ref()
-        .and_then(|table| reference_targets.get(table))
+        .and_then(|_| reference_targets.get(&definition.key))
         .map(|targets| {
             targets
                 .iter()
@@ -720,6 +721,12 @@ fn custom_fact(
                     &Combobox::new(format!("{id}-input"), &name)
                         .label(&definition.label)
                         .value(&wire)
+                        .query(
+                            reference_search
+                                .get(&definition.key)
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
                         .options(options)
                         .placeholder(if definition.required {
                             "Choose a company..."
@@ -728,6 +735,7 @@ fn custom_fact(
                         })
                         .aria_label(&definition.label)
                         .hint(definition.help_text.clone().unwrap_or_default())
+                        .search("reference_search", &definition.key)
                         .wrapper_class("mb-0"),
                 )?;
                 return render(&InlineChoice {
@@ -813,6 +821,7 @@ pub(super) struct DetailState<'a> {
     pub statuses: &'a CommitStates,
     pub custom_fields: &'a [Definition],
     pub custom_reference_targets: &'a BTreeMap<String, Vec<ReferenceOption>>,
+    pub reference_search: &'a BTreeMap<String, String>,
     pub pending: Option<&'a Pending>,
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
@@ -832,6 +841,7 @@ pub(super) async fn detail(
         statuses,
         custom_fields,
         custom_reference_targets,
+        reference_search,
         pending,
         notice,
         pending_activity,
@@ -1026,6 +1036,7 @@ pub(super) async fn detail(
                 editable,
                 statuses.get(&field_id),
                 custom_reference_targets,
+                reference_search,
             )?
         };
         facts.push(Fact {
@@ -1362,6 +1373,7 @@ pub(super) async fn create(
     errors: &[FieldError],
     custom_fields: &[Definition],
     reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
+    reference_search: &BTreeMap<String, String>,
 ) -> Result<String> {
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
     let masked = bilibi_authz::restrictions(client, scope).await?;
@@ -1477,7 +1489,13 @@ pub(super) async fn create(
             {
                 render(&RestrictedField::new(&id, &definition.label))
             } else {
-                custom_create_field(definition, values, errors, reference_targets)
+                custom_create_field(
+                    definition,
+                    values,
+                    errors,
+                    reference_targets,
+                    reference_search,
+                )
             }
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1611,6 +1629,7 @@ fn custom_create_field(
     values: &HashMap<String, String>,
     errors: &[FieldError],
     reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
+    reference_search: &BTreeMap<String, String>,
 ) -> Result<Html> {
     let name = custom_form_name(
         &definition.key,
@@ -1622,7 +1641,7 @@ fn custom_create_field(
         let mut options: Vec<Choice> = definition
             .reference_table
             .as_ref()
-            .and_then(|table| reference_targets.get(table))
+            .and_then(|_| reference_targets.get(&definition.key))
             .into_iter()
             .flatten()
             .map(|target| Choice::new(target.label.clone(), target.key.clone()))
@@ -1639,12 +1658,18 @@ fn custom_create_field(
             if !hint.is_empty() {
                 hint.push(' ');
             }
-            hint.push_str("No readable targets are available.");
+            hint.push_str("Type to search readable companies.");
         }
         return render(
             &Combobox::new(&id, &name)
                 .label(&definition.label)
                 .value(selected)
+                .query(
+                    reference_search
+                        .get(&definition.key)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
                 .options(options)
                 .placeholder(if definition.required {
                     "Choose a company..."
@@ -1653,6 +1678,7 @@ fn custom_create_field(
                 })
                 .errors(custom_error_messages(errors, &definition.key))
                 .hint(hint)
+                .search("reference_search", &definition.key)
                 .attrs(Attrs {
                     required: definition.required,
                     ..Attrs::default()

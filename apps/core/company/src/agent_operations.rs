@@ -338,7 +338,7 @@ impl ReadHandler for Get {
             let primary = crate::primary::is_primary(&**client, scope, id).await?;
             let mut value = company_json(&company, &masked);
             let definitions = custom_fields()?
-                .active_for_record_on(&**client, scope, "core.company")
+                .all_for_record_on(&**client, scope, "core.company")
                 .await?;
             if let Some(custom) = value.get_mut("custom").and_then(Value::as_object_mut) {
                 for definition in definitions.iter().filter(|definition| {
@@ -524,16 +524,35 @@ impl WriteHandler for UpdateCustom {
                 .keys()
                 .map(|key| (key.clone(), merged.get(key).cloned().unwrap_or(Value::Null)))
                 .collect();
-            let changes: Vec<_> = before
-                .iter()
-                .map(|(key, from)| {
-                    json!({
-                        "field":format!("custom.{key}"),
-                        "from":existing.get(key).cloned().unwrap_or(Value::Null),
-                        "to":after.get(key).unwrap_or(from)
-                    })
-                })
-                .collect();
+            let definitions = custom_fields()?
+                .active_for_record_on(&**client, scope, "core.company")
+                .await?;
+            let mut changes = Vec::with_capacity(before.len());
+            for (key, to) in before {
+                let mut from = existing.get(key).cloned().unwrap_or(Value::Null);
+                if let Some(definition) = definitions.iter().find(|definition| {
+                    definition.key == *key
+                        && definition.field_type == bilibi_custom_fields::FieldType::Reference
+                }) {
+                    let stored_key = from.as_str().map(str::to_owned);
+                    if let (Some(table), Some(stored_key)) =
+                        (definition.reference_table.as_deref(), stored_key)
+                    {
+                        if custom_fields()?
+                            .reference_label_on(&**client, scope, table, &stored_key)
+                            .await?
+                            .is_none()
+                        {
+                            from = json!("Unavailable");
+                        }
+                    }
+                }
+                changes.push(json!({
+                    "field":format!("custom.{key}"),
+                    "from":from,
+                    "to":after.get(key).unwrap_or(to)
+                }));
+            }
             Ok(json!({"summary":"Update company custom fields","company_id":input.company_id,"version":input.version,"changes":changes}).into())
         })
     }

@@ -1173,12 +1173,15 @@ pub struct Combobox {
     pub name: String,
     pub label: String,
     pub value: String,
+    pub query: String,
     pub options: Vec<Choice>,
     pub placeholder: String,
     pub errors: Vec<String>,
     /// One line under the box, such as why the fields that depend on it are off.
     pub hint: String,
     pub cancel_event: String,
+    pub search_event: String,
+    pub search_key: String,
     pub wrapper_class: String,
     pub attrs: Attrs,
 }
@@ -1207,6 +1210,11 @@ impl Combobox {
         self
     }
 
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = query.into();
+        self
+    }
+
     pub fn options(mut self, options: Vec<Choice>) -> Self {
         self.options = options;
         self
@@ -1224,6 +1232,12 @@ impl Combobox {
 
     pub fn cancel_event(mut self, event: impl Into<String>) -> Self {
         self.cancel_event = event.into();
+        self
+    }
+
+    pub fn search(mut self, event: impl Into<String>, key: impl Into<String>) -> Self {
+        self.search_event = event.into();
+        self.search_key = key.into();
         self
     }
 

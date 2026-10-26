@@ -13,7 +13,8 @@ use bilibi_custom_fields::CustomFields;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{
-    NamedOrganisation, OrganisationDirectory, OrganisationProvider, ProofClient, ProofFuture, Scope,
+    NamedOrganisation, OrganisationDirectory, OrganisationProvider, ProofClient, ProofFuture,
+    ReadClient, Scope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -248,6 +249,59 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
     }
     companies.sort_by_cached_key(|company| (company.name.to_lowercase(), company.id.get()));
     Ok(companies)
+}
+
+/// Bounded target choices for Company reference fields. Search is literal and
+/// tenant scoped; the actor's current Company reach is applied before limiting.
+/// Mirrors Bilimbi's searchable Company reference picker.
+pub(crate) async fn searchable_reference_targets(
+    client: &dyn ReadClient,
+    scope: &Scope,
+    search: &str,
+    limit: usize,
+) -> Result<Vec<NamedOrganisation>> {
+    if search.chars().count() > 100 {
+        return Err(Error::Invalid);
+    }
+    if !effective_proof(client, scope, crate::VIEW).await?.allowed {
+        return Ok(Vec::new());
+    }
+    let tenant_wide =
+        scope.principal().is_some() || effective_proof(client, scope, TENANT_WIDE).await?.allowed;
+    let own = scope.actor().organisation().map(|id| id.get());
+    let limit = i64::try_from(limit.min(50)).map_err(|_| Error::Invalid)?;
+    let rows = client
+        .query(
+            "SELECT id,name,legal_name,status FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND status <> 'archived' AND ($2='' OR position(lower($2) in lower(name))>0 OR position(lower($2) in lower(coalesce(legal_name,'')))>0) AND ($3 OR id=$4) ORDER BY lower(coalesce(nullif(legal_name,''),name)),id LIMIT $5",
+            &[&scope.tenant(), &search, &tenant_wide, &own, &limit],
+        )
+        .await?;
+    rows.iter().map(named).collect()
+}
+
+/// Labels for only keys stored on the record(s) being read. This is the
+/// reference visibility check used by Grid and audit projections.
+pub(crate) async fn readable_reference_targets(
+    client: &dyn ReadClient,
+    scope: &Scope,
+    ids: &[i64],
+) -> Result<Vec<NamedOrganisation>> {
+    if ids.len() > 10_000 {
+        return Err(Error::Invalid);
+    }
+    if !effective_proof(client, scope, crate::VIEW).await?.allowed {
+        return Ok(Vec::new());
+    }
+    let tenant_wide =
+        scope.principal().is_some() || effective_proof(client, scope, TENANT_WIDE).await?.allowed;
+    let own = scope.actor().organisation().map(|id| id.get());
+    let rows = client
+        .query(
+            "SELECT id,name,legal_name,status FROM companies WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL AND status <> 'archived' AND ($3 OR id=$4) ORDER BY id",
+            &[&scope.tenant(), &ids, &tenant_wide, &own],
+        )
+        .await?;
+    rows.iter().map(named).collect()
 }
 /// Own company, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).

@@ -10,7 +10,7 @@ use bilibi_module_registry::{Catalog, RegistryError};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ReadClient, Scope};
 use serde_json::{json, Map, Value};
-use std::{collections::BTreeMap, str::FromStr, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 use tokio_postgres::GenericClient;
 
 pub const MANAGE: &str = "admin.custom.fields.manage";
@@ -133,7 +133,11 @@ impl CustomFields {
         &self,
         scope: &Scope,
         table: &str,
+        search: &str,
     ) -> Result<Vec<ReferenceOption>> {
+        if search.chars().count() > 100 {
+            return Err(Error::Invalid);
+        }
         let client = self.db.get().await?;
         self.authentication.reprove(&**client, scope).await?;
         let target = self
@@ -141,7 +145,13 @@ impl CustomFields {
             .iter()
             .find(|target| target.table == table)
             .ok_or(Error::Invalid)?;
-        let choices = (target.provider.choices(&**client, scope)).await?;
+        let choices = (target.provider.choices(
+            &**client,
+            scope,
+            search,
+            crate::references::MAX_REFERENCE_CHOICES,
+        ))
+        .await?;
         let mut seen = std::collections::HashSet::new();
         if choices.iter().any(|choice| {
             choice.key.is_empty()
@@ -151,7 +161,46 @@ impl CustomFields {
         }) {
             return Err(Error::Internal);
         }
+        if choices.len() > crate::references::MAX_REFERENCE_CHOICES {
+            return Err(Error::Internal);
+        }
         Ok(choices)
+    }
+
+    /// Resolve labels for only the opaque keys present in the current record
+    /// read. This prevents a reference picker or read model from materializing
+    /// the target owner's whole directory.
+    pub async fn reference_labels_on(
+        &self,
+        client: &dyn ReadClient,
+        scope: &Scope,
+        table: &str,
+        keys: &[String],
+    ) -> Result<Vec<ReferenceOption>> {
+        if keys.len() > 100 {
+            return Err(Error::Invalid);
+        }
+        let target = self
+            .reference_targets
+            .iter()
+            .find(|target| target.table == table)
+            .ok_or(Error::Invalid)?;
+        let options = target.provider.resolve_many(client, scope, keys).await?;
+        let allowed = keys
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        let mut seen = std::collections::HashSet::<String>::new();
+        if options.iter().any(|option| {
+            option.key.is_empty()
+                || option.key.len() > 200
+                || option.label.trim().is_empty()
+                || !allowed.contains(option.key.as_str())
+                || !seen.insert(option.key.clone())
+        }) {
+            return Err(Error::Internal);
+        }
+        Ok(options)
     }
 
     /// A target name only when the current actor may read the live target.
@@ -239,6 +288,26 @@ impl CustomFields {
     ) -> Result<Vec<Definition>> {
         self.require_record_type(record_type)?;
         definitions_on_read(client, scope.tenant(), record_type).await
+    }
+
+    /// Active and archived definitions for an already-authorized record read.
+    /// Archived references still need visibility checks because their stored
+    /// keys remain in the owner's JSONB row. Mirrors Bilimbi Core Company's
+    /// read model retaining retired field metadata for safe rendering.
+    pub async fn all_for_record_on(
+        &self,
+        client: &(impl ReadClient + ?Sized),
+        scope: &Scope,
+        record_type: &str,
+    ) -> Result<Vec<Definition>> {
+        self.require_record_type(record_type)?;
+        let rows = client
+            .query(
+                "SELECT * FROM base_custom_field_definitions WHERE tenant_id=$1 AND record_type=$2 ORDER BY position,field_key",
+                &[&scope.tenant(), &record_type],
+            )
+            .await?;
+        Ok(rows.iter().map(from_row).collect())
     }
 
     /// Tenant limits for a scoped contract or other owner read. Values are
@@ -555,7 +624,10 @@ impl CustomFields {
                 }
             }
             let previous = current.and_then(|m| m.get(&def.key));
-            let valid = valid_value(def, value, previous, limits.max_text_length)
+            let normalized = normalize_temporal(def.field_type, value);
+            let candidate = normalized.as_ref().unwrap_or(value);
+            let valid = normalized.is_some()
+                && valid_value(def, candidate, previous, limits.max_text_length)
                 && if def.field_type == FieldType::Reference && previous != Some(value) {
                     match (def.reference_table.as_deref(), value.as_str()) {
                         (Some(table), Some(key)) => self
@@ -578,7 +650,7 @@ impl CustomFields {
                     "has an invalid value",
                 ));
             } else {
-                out.insert(def.key.clone(), value.clone());
+                out.insert(def.key.clone(), candidate.clone());
             }
         }
         if !errors.is_empty() {
@@ -794,12 +866,10 @@ fn valid_value(
             .as_str()
             .is_some_and(|s| s.parse::<rust_decimal::Decimal>().is_ok()),
         FieldType::Boolean => value.is_boolean(),
-        FieldType::Date => value
-            .as_str()
-            .is_some_and(|s| jiff::civil::Date::from_str(s).is_ok()),
+        FieldType::Date => value.as_str().is_some_and(|s| normalize_date(s).is_some()),
         FieldType::DateTime => value
             .as_str()
-            .is_some_and(|s| jiff::Timestamp::from_str(s).is_ok()),
+            .is_some_and(|s| normalize_datetime(s).is_some()),
         FieldType::Choice => value.as_str().is_some_and(|code| {
             option_exists(&def.options, code)
                 && (option_active(&def.options, code) || current == Some(value))
@@ -821,6 +891,28 @@ fn valid_value(
             .as_str()
             .is_some_and(|s| !s.is_empty() && s.len() <= 200),
     }
+}
+
+fn normalize_temporal(field_type: FieldType, value: &Value) -> Option<Value> {
+    match field_type {
+        FieldType::Date => normalize_date(value.as_str()?).map(Value::String),
+        FieldType::DateTime => normalize_datetime(value.as_str()?).map(Value::String),
+        _ => Some(value.clone()),
+    }
+}
+
+fn normalize_date(value: &str) -> Option<String> {
+    let date = value.parse::<jiff::civil::Date>().ok()?;
+    (date.year() > 0 && date.year() <= 9999 && date.to_string() == value).then(|| date.to_string())
+}
+
+fn normalize_datetime(value: &str) -> Option<String> {
+    if value.contains(['[', ']']) {
+        return None;
+    }
+    let timestamp = value.parse::<jiff::Timestamp>().ok()?;
+    let utc_year = timestamp.to_zoned(jiff::tz::TimeZone::UTC).date().year();
+    (utc_year > 0 && utc_year <= 9999).then(|| timestamp.to_string())
 }
 
 fn effective_text_limit(def: &Definition, configured: usize) -> usize {
@@ -901,24 +993,6 @@ pub(crate) async fn grid_fields(
             if def.key.len() > 61 {
                 continue;
             }
-            let readable_values = if def.field_type == FieldType::Reference {
-                let table = def.reference_table.as_deref().ok_or(Error::Internal)?;
-                let target = references::providers()?
-                    .into_iter()
-                    .find(|target| target.table == table)
-                    .ok_or(Error::Internal)?;
-                Some(
-                    target
-                        .provider
-                        .choices(client as &dyn ReadClient, scope)
-                        .await?
-                        .into_iter()
-                        .map(|choice| choice.key)
-                        .collect(),
-                )
-            } else {
-                None
-            };
             fields.push(bilibi_grid::RuntimeField {
                 table: record_type.grid_table.into(),
                 column: record_type.custom_column,
@@ -937,11 +1011,88 @@ pub(crate) async fn grid_fields(
                             .map(str::to_owned)
                     })
                     .collect(),
-                readable_values,
+                reference_table: def.reference_table,
             });
         }
     }
     Ok(fields)
+}
+
+pub(crate) async fn grid_readable_references(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    requested: &[bilibi_grid::RuntimeReference],
+) -> Result<Vec<bilibi_grid::RuntimeReference>> {
+    if requested.len() > 10_000 {
+        return Err(Error::Invalid);
+    }
+    let mut grouped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for reference in requested {
+        if reference.key.is_empty() || reference.key.len() > 200 {
+            return Err(Error::Invalid);
+        }
+        grouped
+            .entry(reference.table.as_str())
+            .or_default()
+            .push(reference.key.clone());
+    }
+    let providers = references::providers()?;
+    let mut readable = Vec::new();
+    for (table, keys) in grouped {
+        let provider = providers
+            .iter()
+            .find(|provider| provider.table == table)
+            .ok_or(Error::Internal)?;
+        let allowed = keys
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        let mut seen = std::collections::HashSet::<String>::new();
+        for option in provider
+            .provider
+            .resolve_many(client as &dyn ReadClient, scope, &keys)
+            .await?
+        {
+            if option.key.is_empty()
+                || option.key.len() > 200
+                || option.label.trim().is_empty()
+                || !allowed.contains(option.key.as_str())
+                || !seen.insert(option.key.clone())
+            {
+                return Err(Error::Internal);
+            }
+            readable.push(bilibi_grid::RuntimeReference {
+                table: table.to_owned(),
+                key: option.key,
+            });
+        }
+    }
+    Ok(readable)
+}
+
+pub(crate) async fn authz_readable_references(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    requested: &[bilibi_authz::field_catalog::RuntimeReference],
+) -> Result<Vec<bilibi_authz::field_catalog::RuntimeReference>> {
+    if requested.len() > 10_000 {
+        return Err(Error::Invalid);
+    }
+    let grid_requested = requested
+        .iter()
+        .map(|reference| bilibi_grid::RuntimeReference {
+            table: reference.table.clone(),
+            key: reference.key.clone(),
+        })
+        .collect::<Vec<_>>();
+    Ok(grid_readable_references(client, scope, &grid_requested)
+        .await?
+        .into_iter()
+        .map(|reference| bilibi_authz::field_catalog::RuntimeReference {
+            table: reference.table,
+            key: reference.key,
+        })
+        .collect())
 }
 
 pub(crate) async fn authz_fields(
@@ -963,30 +1114,12 @@ pub(crate) async fn authz_fields(
                 fields: Vec::new(),
             });
         for def in fields {
-            let reference_values = if def.field_type == FieldType::Reference {
-                let table = def.reference_table.as_deref().ok_or(Error::Internal)?;
-                let target = references::providers()?
-                    .into_iter()
-                    .find(|target| target.table == table)
-                    .ok_or(Error::Internal)?;
-                Some(
-                    target
-                        .provider
-                        .choices(client as &dyn ReadClient, scope)
-                        .await?
-                        .into_iter()
-                        .map(|choice| choice.key)
-                        .collect(),
-                )
-            } else {
-                None
-            };
             table
                 .fields
                 .push(bilibi_authz::field_catalog::CatalogField {
                     id: format!("cf_{}", def.key),
                     label: def.label,
-                    reference_values,
+                    reference_table: def.reference_table,
                 });
         }
     }

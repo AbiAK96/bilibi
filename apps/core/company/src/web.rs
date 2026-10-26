@@ -190,6 +190,7 @@ impl Pages {
             )
             .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
+            reference_search: BTreeMap::new(),
             errors: Vec::new(),
             pending: None,
             pending_activity: None,
@@ -363,11 +364,11 @@ fn custom_filter_valid(
         }
         FieldType::Date => {
             matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
-                && filter.value.parse::<jiff::civil::Date>().is_ok()
+                && crate::normalize_date_filter(&filter.value).is_some()
         }
         FieldType::DateTime => {
             matches!(filter.operator.as_str(), "eq" | "gt" | "gte" | "lt" | "lte")
-                && filter.value.parse::<jiff::Timestamp>().is_ok()
+                && crate::normalize_datetime_filter(&filter.value).is_some()
         }
         FieldType::Boolean => {
             filter.operator == "equals" && matches!(filter.value.as_str(), "true" | "false")
@@ -442,6 +443,7 @@ struct CompanyPage {
     /// Bilimbi Company.ShowLive's independent `children_grid`.
     children_columns: ListColumns,
     form: HashMap<String, String>,
+    reference_search: BTreeMap<String, String>,
     errors: Vec<FieldError>,
     pending: Option<Pending>,
     pending_activity: Option<(String, i64)>,
@@ -539,6 +541,12 @@ impl CompanyPage {
         } else {
             Vec::new()
         };
+        let current_custom = if self.operation == "detail" {
+            let id = self.id.ok_or(Error::Invalid)?;
+            crate::detail(&**client, scope, id).await?.0.custom
+        } else {
+            Value::Object(Default::default())
+        };
         let mut custom_reference_targets = BTreeMap::new();
         for definition in custom_definitions
             .iter()
@@ -552,12 +560,38 @@ impl CompanyPage {
                 continue;
             }
             if let Some(table) = &definition.reference_table {
-                if !custom_reference_targets.contains_key(table) {
-                    custom_reference_targets.insert(
-                        table.clone(),
-                        self.company.custom_reference_choices(scope, table).await?,
-                    );
+                let search = self
+                    .reference_search
+                    .get(&definition.key)
+                    .map(String::as_str)
+                    .unwrap_or_default();
+                let mut options = self
+                    .company
+                    .custom_reference_choices(scope, table, search)
+                    .await?;
+                let stored_key = if self.operation == "detail" {
+                    current_custom
+                        .get(&definition.key)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                } else {
+                    self.form
+                        .get(&format!("custom[{}]", definition.key))
+                        .filter(|key| !key.is_empty())
+                        .cloned()
+                };
+                if let Some(key) = stored_key {
+                    let labels = self
+                        .company
+                        .custom_reference_labels_on(&**client, scope, table, &[key])
+                        .await?;
+                    for option in labels {
+                        if !options.iter().any(|choice| choice.key == option.key) {
+                            options.push(option);
+                        }
+                    }
                 }
+                custom_reference_targets.insert(definition.key.clone(), options);
             }
         }
         let html = match self.operation {
@@ -695,6 +729,7 @@ impl CompanyPage {
                         statuses: &self.statuses,
                         custom_fields: &custom_definitions,
                         custom_reference_targets: &custom_reference_targets,
+                        reference_search: &self.reference_search,
                         pending: self.pending.as_ref(),
                         notice: &self.notice,
                         pending_activity: self.pending_activity.as_ref(),
@@ -714,6 +749,7 @@ impl CompanyPage {
                     &self.errors,
                     &custom_definitions,
                     &custom_reference_targets,
+                    &self.reference_search,
                 )
                 .await?
             }
@@ -745,6 +781,27 @@ impl CompanyPage {
     ) -> Result<Option<String>> {
         let get = |key| value.get(key).and_then(Value::as_str).unwrap_or("");
         match get("type") {
+            "reference_search" if matches!(self.operation, "create" | "detail") => {
+                let key = get("key");
+                let search = get("query");
+                if key.is_empty() || search.chars().count() > 100 {
+                    return Err(Error::Invalid);
+                }
+                let client = self.db.get().await?;
+                let definitions = self.company.custom_definitions(scope).await?;
+                let masked = bilibi_authz::restrictions(&**client, scope).await?;
+                let definition = definitions
+                    .iter()
+                    .find(|definition| {
+                        definition.key == key && definition.field_type == FieldType::Reference
+                    })
+                    .ok_or(Error::Invalid)?;
+                if masked.contains(&format!("cf_{}", definition.key)) {
+                    return Err(Error::Forbidden);
+                }
+                self.reference_search
+                    .insert(key.to_owned(), search.to_owned());
+            }
             "grid" if self.operation == "list" => {
                 let values = value
                     .as_object()
