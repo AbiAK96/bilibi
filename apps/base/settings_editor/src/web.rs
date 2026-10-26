@@ -174,7 +174,11 @@ impl Editor {
             flash: None,
             pending_restore: None,
             events: Vec::new(),
-            picked: if tenant_limits { Picked::Tenant } else { Picked::Global },
+            picked: if tenant_limits {
+                Picked::Tenant
+            } else {
+                Picked::Global
+            },
             tenant_limits,
             list: list(values)?,
             columns: ListColumns::mount(
@@ -413,7 +417,8 @@ impl Editor {
                     );
                 }
                 Some(GLOBAL) => self.pick(Picked::Global),
-                Some(TENANT) => self.pick(Picked::Tenant),                Some(id) => self.switch(scope, id).await?,
+                Some(TENANT) => self.pick(Picked::Tenant),
+                Some(id) => self.switch(scope, id).await?,
                 None => self.flash(StatusKind::Error, "Choose an available settings scope."),
             },
             "request_secret_reveal" => {
@@ -495,10 +500,11 @@ impl Editor {
         if !steps.is_empty() {
             let target = self.target();
             let action = if self.tenant_limits {
-                "settings.tenant.custom_field_limits.save"
+                "settings.tenant.custom_field_limits.save".to_owned()
             } else {
                 format!("settings.{}.save", self.picked.audit_name())
-            };            let mut client = self.core.db.get().await?;
+            };
+            let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
                 .boundary
@@ -566,10 +572,11 @@ impl Editor {
         if !fields.is_empty() {
             let target = self.target();
             let action = if self.tenant_limits {
-                "settings.tenant.custom_field_limits.restore"
+                "settings.tenant.custom_field_limits.restore".to_owned()
             } else {
                 format!("settings.{}.restore", self.picked.audit_name())
-            };            let mut client = self.core.db.get().await?;
+            };
+            let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
                 .boundary
@@ -638,7 +645,7 @@ impl Editor {
             Error::Unauthorized => return Err(Error::Unauthorized),
             Error::Forbidden if self.picked.company().is_some() => COMPANY_ARCHIVED.to_owned(),
             Error::Forbidden if self.tenant_limits => {
-            "You do not have permission to manage tenant custom-field limits.".to_owned()
+                "You do not have permission to manage tenant custom-field limits.".to_owned()
             }
             Error::Forbidden => PLATFORM_DENIED.to_owned(),
             Error::NotFound if self.picked.company().is_some() => {
