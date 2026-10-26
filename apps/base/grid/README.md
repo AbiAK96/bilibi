@@ -48,6 +48,7 @@ For example, Contacts calls its email **Personal email** in both places. Work em
 
 - Declare the vocabulary once with `bilibi_ui::record_fields!`. Use its named fields or `get` for detail labels and `RecordField::fact` for a complete fact.
 - Add `RecordFields { table, fields: fields::ALL }` to the owning `GridContribution.record_fields`. A panel may contribute fields to the table at its link's start. `PageColumns` collects them automatically.
+- An Extension that owns a scalar Company field contributes its own Grid table and a `One` link starting at `companies`, then contributes `RecordFields` on `companies` with a path through that link. Company reads the value through the Extension facade for its own page slots; Grid resolves the path for optional list columns. The Extension remains the only owner of its table and tenant predicate.
 - Use `.path("parent.name")` for a related readable value. Grid resolves the path against the reader's fresh catalog before offering or loading it.
 - For a list whose owner already returns all values, use `ListColumns::with_record_fields` or `PageColumns::with_record_slots`. Fill its slots from the same authorized read model. Refresh restrictions with `ListColumns::set_available`, including on empty pages.
 - Keep existing default columns. Fields added to this vocabulary appear in the picker; they do not change the default arrangement. New projected columns are display-only.

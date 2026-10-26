@@ -1,12 +1,14 @@
 //! Companies: the Organisation of the approved party model, its reference
 //! catalogs (legal entity types, department types), departments, the tenant's
 //! primary company and provisioning, plus shared-UI list/create/detail pages
-//! and audited inline facts. See `README.md` for the contracts.
+//! and audited inline facts. It mirrors Bilimbi `Bilimbi.Core.Company`.
+//! See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;
 mod departments;
 mod duplicates;
 mod eligibility;
+mod field_contributions;
 mod files;
 mod hierarchy;
 mod lifecycle;
@@ -35,6 +37,10 @@ pub use departments::{
 pub use eligibility::{
     account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
     AccountEligibility,
+};
+pub use field_contributions::{
+    CompanyField, CompanyFieldContribution, CompanyFieldKind, CompanyFieldReadFuture,
+    CompanyFieldValues, CompanyFieldWrite, CompanyFieldWriteFuture, COMPANY_FIELDS,
 };
 pub use files::{CompanyFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 // A transition on another owner's transaction, and what it offers or refuses.
@@ -451,12 +457,22 @@ impl CompanyService {
     }
     /// `create_company/3`: a refused create rolls back and reports its fields.
     pub async fn create_company(&self, scope: &Scope, new: &NewCompany) -> Result<CreateOutcome> {
+        self.create_company_with_fields(scope, new, &CompanyFieldValues::new())
+            .await
+    }
+    /// Creates a Company with Extension-owned fields in the same audited transaction.
+    pub async fn create_company_with_fields(
+        &self,
+        scope: &Scope,
+        new: &NewCompany,
+        fields: &CompanyFieldValues,
+    ) -> Result<CreateOutcome> {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
             .begin(&mut client, scope.mutation_context("company.create"))
             .await?;
-        let outcome = organisation::create(&mut tx, scope, new).await?;
+        let outcome = organisation::create_with_fields(&mut tx, scope, new, fields).await?;
         match &outcome {
             CreateOutcome::Created(_) => tx.commit().await?,
             CreateOutcome::Refused(_) => tx.rollback().await?,

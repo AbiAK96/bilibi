@@ -696,8 +696,27 @@ pub async fn create(
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<CreateOutcome> {
+    create_with_fields(tx, scope, new, &crate::CompanyFieldValues::new()).await
+}
+
+/// Creates a company and its statically contributed Extension fields in the
+/// same audited transaction (Bilimbi `create_company/3`).
+pub async fn create_with_fields(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    new: &NewCompany,
+    fields: &crate::CompanyFieldValues,
+) -> Result<CreateOutcome> {
     authorize_key(tx.sql(), scope, CREATE).await?;
     let restricted = restrictions(tx.sql(), scope).await?;
+    let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors.extend(crate::field_contributions::validate_restrictions(
+        fields,
+        &restricted,
+    ));
+    if !field_errors.is_empty() {
+        return Ok(CreateOutcome::Refused(field_errors));
+    }
     let company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
@@ -744,6 +763,7 @@ pub async fn create(
             })
         })
         .await?;
+    crate::field_contributions::create(tx, scope, created.id, fields).await?;
     Ok(CreateOutcome::Created(Box::new(created)))
 }
 
@@ -755,8 +775,26 @@ pub async fn preview(
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
+    preview_with_fields(client, scope, new, &crate::CompanyFieldValues::new()).await
+}
+
+/// Validates the Company and contributed Extension fields for a reviewed create.
+pub async fn preview_with_fields(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    new: &NewCompany,
+    fields: &crate::CompanyFieldValues,
+) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
     authorize_key(client, scope, CREATE).await?;
     let restricted = restrictions(client, scope).await?;
+    let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors.extend(crate::field_contributions::validate_restrictions(
+        fields,
+        &restricted,
+    ));
+    if !field_errors.is_empty() {
+        return Ok(Err(field_errors));
+    }
     let company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),

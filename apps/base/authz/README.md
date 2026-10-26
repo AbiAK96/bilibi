@@ -1,5 +1,7 @@
 # Authorization owner contract
 
+The field restriction catalog combines owner contributions for the same table. Sources must agree on the table label and audit record types, and field IDs must be unique across the composition. This lets a record owner expose restrictions for an Extension-owned field without Authz depending on that Extension.
+
 Authz owns capability vocabulary, decisions, grants and field withholding.
 Party relationship roles are unrelated to authorization roles. Base never queries
 Core account/company tables: Tenancy's account verifier supplies live account

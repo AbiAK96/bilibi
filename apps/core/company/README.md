@@ -131,6 +131,37 @@ through the plan's transaction) plus the `core.company` guide. A restricted
 field arrives as `{"restricted": true}`. The handlers read through a pool
 bound once by the service factory.
 
+## Static Extension-owned fields
+
+Company accepts build-time `CompanyFieldContribution` entries on
+`core/company.company_fields`. An Extension depends on Company and contributes
+stable, globally unique lowercase field IDs and labels; Company never depends
+on the Extension. Discovery rejects duplicate IDs, built-in collisions and
+unsupported lengths before the app starts. This first slice supports optional
+text fields.
+
+The Extension owns its field table and migration. Its Grid contribution declares
+the tenant-scoped source and a `One` link from `companies`; its
+`RecordFields` contribution supplies the Grid path and detail label. Company
+uses the static field declaration for create and detail controls, and calls the
+owner's scoped read callback for Company pages and agent reads. The owner must
+bind the sealed scope's tenant in every read and write.
+
+Create and update callbacks run inside Company's mutation transaction through a
+borrowed SQL transaction and return field values before and after their write. Company
+captures those values as a `company` audit change; an inline update also
+increments the Company record version. Callbacks do not open or commit a
+transaction and do not record audit rows themselves. Company rechecks reach
+and current field restrictions before invoking a write. Authz merges the
+Extension field identities into the `companies` restriction catalog, so reads
+and audit history use the same field IDs.
+
+The same fields appear in the reviewed `core.company.create` schema and are
+accepted by its preview and commit handlers. List and detail agent output uses
+the same field IDs, with restricted values replaced by the shared restricted
+marker. Runtime tenant-defined fields, JSON storage, reference fields and
+governed choices are not part of this static contract.
+
 ## Provisioning
 
 ```sh
