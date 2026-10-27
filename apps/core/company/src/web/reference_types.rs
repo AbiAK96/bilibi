@@ -44,7 +44,6 @@ pub(super) struct Spec {
     edit_title: &'static str,
     code_placeholder: &'static str,
     name_placeholder: &'static str,
-    description_placeholder: &'static str,
     not_found: &'static str,
     created: &'static str,
     updated: &'static str,
@@ -82,10 +81,9 @@ pub(super) static DEPARTMENT_TYPES: Spec = Spec {
     edit_title: "Edit Department Type",
     code_placeholder: "e.g. ENG, HR, FIN",
     name_placeholder: "e.g. Engineering",
-    description_placeholder: "Optional description of this department type",
     not_found: "Department type not found.",
-    created: "Department type created successfully.",
-    updated: "Department type updated successfully.",
+    created: "Department type created.",
+    updated: "Department type updated.",
     deleted: "Department type deleted.",
     confirm_noun: "Department type",
     confirm_detail: "It can no longer be chosen for a department. This cannot be undone.",
@@ -107,7 +105,7 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     kind: Kind::LegalEntityType,
     form_as: "legal_entity_type",
     page_title: "Legal Entity Types",
-    subtitle: "The legal form a company is registered as. For example, a Private Limited Company (Sdn Bhd), a Partnership, or a Branch Office of a foreign company.",
+    subtitle: "Set the legal entity types a company can choose from.",
     add_label: "Legal Entity Type",
     caption: "Legal Entity Types",
     empty: "No legal entity types defined yet.",
@@ -115,10 +113,9 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     edit_title: "Edit Legal Entity Type",
     code_placeholder: "e.g. LLC, CORP, PT",
     name_placeholder: "e.g. Limited Liability Company",
-    description_placeholder: "Optional description of this legal entity type",
     not_found: "Legal entity type not found.",
-    created: "Legal entity type created successfully.",
-    updated: "Legal entity type updated successfully.",
+    created: "Legal entity type created.",
+    updated: "Legal entity type updated.",
     deleted: "Legal entity type deleted.",
     confirm_noun: "Legal entity type",
     confirm_detail: "It can no longer be chosen for a company. This cannot be undone.",
@@ -525,9 +522,7 @@ impl ReferenceTypes {
                 .map(|_| ()),
         };
         match result {
-            Ok(()) => self
-                .flash
-                .put(StatusKind::Success, "Status updated successfully."),
+            Ok(()) => self.flash.put(StatusKind::Success, "Status updated."),
             Err(WriteError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
             Err(WriteError::Access(Error::Forbidden)) => self.write_forbidden(),
             Err(WriteError::Access(error)) => return Err(error),
@@ -616,8 +611,7 @@ impl ReferenceTypes {
         });
         let description = field("description")
             .kind(InputKind::Textarea)
-            .label("Description")
-            .placeholder(spec.description_placeholder);
+            .label("Description");
         let active = (!editing).then(|| {
             Field::in_form(spec.form_as, "is_active")
                 .id(format!("{}-active", spec.dom_field))

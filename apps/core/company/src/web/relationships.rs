@@ -443,10 +443,20 @@ fn get<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 fn errors_for(errors: &[FieldError], field: &str) -> Vec<String> {
+    let label = match field {
+        "code" => "Code",
+        "name" => "Name",
+        "inverse_name" => "Inverse name",
+        "target" => "Related party",
+        "role_id" => "Relationship role",
+        "effective_from" => "Effective from",
+        "effective_to" => "Effective to",
+        _ => "",
+    };
     errors
         .iter()
         .filter(|e| e.field == field)
-        .map(|e| e.message.clone())
+        .map(|e| bilibi_ui::error_sentence(label, &e.message))
         .collect()
 }
 fn page(id: &str, variant: PageVariant, body: Html) -> Result<String> {
@@ -721,7 +731,7 @@ impl RolesPage {
             html.push(&render(&ConfirmDialog {
                 id: "retire-relationship-role-confirm",
                 consequence: &format!("Relationship role “{}” will be retired.", role.name),
-                detail: "No new relationship can use it. Every existing relationship keeps it and stays visible as history.",
+                detail: "New relationships cannot use this role. Existing relationships keep it in their history.",
                 confirm: "Retire",
                 working: "Retiring…",
                 confirm_event: "retire",
@@ -872,7 +882,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship role updated successfully.");
+                                self.flash.success("Relationship role updated.");
                             }
                             Err(WriteError::Stale) => self.flash.error(
                                 "The role changed since it was opened. Close the dialog and try again.",
@@ -901,8 +911,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash
-                                    .success("Relationship role created successfully.");
+                                self.flash.success("Relationship role created.");
                             }
                             Err(WriteError::Invalid(errors)) => modal.errors = errors,
                             Err(WriteError::Access(e)) => return access(e, &mut self.flash),
@@ -1433,7 +1442,7 @@ impl LinksPage {
                     .errors(target_errors)
                     .required();
                 if !modal.options.persons_readable {
-                    field = field.hint("You do not have permission to list persons.");
+                    field = field.hint("You do not have permission to list people.");
                 } else if modal.options.persons.is_empty() {
                     field = field.hint("No people have been added yet.");
                 }
@@ -1699,7 +1708,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship updated successfully.");
+                                self.flash.success("Relationship updated.");
                             }
                             Err(error) => self.write_error(error, true),
                         }
@@ -1753,7 +1762,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship established successfully.");
+                                self.flash.success("Relationship established.");
                             }
                             Err(error) => self.write_error(error, false),
                         }
