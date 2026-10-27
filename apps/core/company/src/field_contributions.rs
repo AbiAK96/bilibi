@@ -537,7 +537,7 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
     errors
 }
 
-fn valid_date(value: &str) -> bool {
+pub(crate) fn valid_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 10
         && bytes[4] == b'-'
@@ -699,4 +699,8 @@ inventory::submit! {
         bilibi_module_registry::Provenance { module: "core/company", source: file!(), line: line!() },
         &CatalogSource { snapshot: catalog_snapshot },
     )
+}
+
+pub(crate) fn picklists() -> Result<&'static bilibi_picklists::PickLists> {
+    PICKLISTS.get().map(AsRef::as_ref).ok_or(Error::Internal)
 }

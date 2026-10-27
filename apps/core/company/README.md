@@ -207,7 +207,7 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are not included. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are described below. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage and reference fields are
 not part of this static contract.
@@ -230,6 +230,16 @@ struct literal must initialize `display_value` and `input_type`; prefer
 `InlineField::new` with its builder methods. Contributed field IDs must not use Company
 form transport keys or Company agent request/response envelope keys; discovery
 rejects those names before the app starts.
+
+## Contributed field sorting and filters
+
+The Company list sorts contributed text, date and governed choice fields from their headings. Choice order uses stable codes, while cells retain current labels; missing values sort last and Company ID breaks ties. Only declared Company scalar contributions are eligible, not arbitrary linked or aggregate columns.
+
+Add up to ten field filters, combined with AND and the existing search/status filters. Text offers contains (case-insensitive, literal text) and equals; dates offer on, before, on or before, after, and on or after; choices offer equality against a current active code. Retired stored choices remain readable but cannot be selected for a new filter. Date operands must be canonical `YYYY-MM-DD` in years 1–9999. Text operands are limited to 256 bytes. The `field_filters` URL parameter is a JSON array of `{field, operator, value}` conditions, bounded to 8 KiB; `field` is the contribution ID and operators are `contains`, `eq`, `lt`, `lte`, `gt`, `gte` as supported by its type.
+
+Each request resolves current restrictions on both Company and Extension field identities and a fresh Grid catalog. Unavailable fields are omitted from the query with a generic notice, and an unavailable sort returns to name ascending. Invalid drafts remain visible with feedback and are not executed. Count and row statements each pass Grid's cost admission and run under its two-second statement and 500 ms lock limits, with a bounded refusal rather than a server error on exhaustion.
+
+API upgrade: `list` now takes `&mut tokio_postgres::Client` to own its read-only transaction. `Params` adds `field_filters` (empty by default); `Page` adds filter feedback, effective sort and the limit-refusal flag. Callers constructing `Params` explicitly must supply the new field or use its default. Contributor storage and field declaration interfaces are unchanged.
 
 ## Provisioning
 

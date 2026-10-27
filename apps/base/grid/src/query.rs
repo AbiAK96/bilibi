@@ -470,6 +470,24 @@ pub const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock
 fn ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
+
+/// A scalar path resolved under the caller's fresh scoped catalog. The owner
+/// executes this expression with its root row aliased `r`, binding the same
+/// tenant/user to $1/$2 as every catalog source. No caller SQL is accepted.
+/// Mirrors Bilimbi Base Grid's scoped column expressions.
+pub fn scalar_expression(catalog: &Catalog, root: &str, path: &str) -> Result<String, QueryError> {
+    let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
+    let column = catalog
+        .resolve(root, path)
+        .map_err(|error| QueryError::Column(path.into(), error))?;
+    if column.kind != crate::ColumnKind::Field || column.many.is_some() || column.agg.is_some() {
+        return Err(QueryError::Unsupported(
+            path.into(),
+            "a scalar field is required",
+        ));
+    }
+    Ok(cell(catalog, root, &column))
+}
 pub(crate) fn field(alias: &str, table: &Table, id: &str) -> String {
     format!(
         "{alias}.{}",

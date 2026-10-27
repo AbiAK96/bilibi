@@ -90,6 +90,12 @@ number, `min`/`max` an ordered value, `latest` a table with a time field.
 reachable columns (paths up to three links, 50 results at most, 4096 candidates
 at most).
 
+### Owner scalar sorting
+
+`scalar_expression(&catalog, root, path)` resolves a scalar path under a fresh scoped catalog and returns its expression, using Grid's existing owner sources and one-link cardinality rules. The caller aliases its root row `r`, binds the same tenant/user to `$1`/`$2`, and executes immediately in that scope's bounded transaction. Rollups and many-links are refused; SQL identifiers come only from validated catalog declarations. Company uses this for its declared Extension field filters and sorts, with the same cost admission and timeouts as projections.
+
+`PageColumns::with_scalar_sorts` opts in a map from supported Grid paths to the owner's list sort keys. Eligible headings carry those keys and sort events recheck the scoped path; owners must also revalidate before querying. Other projected columns remain display-only.
+
 ## Reference tables
 
 `reference_groups`, `reference_items` and `reference_movements` (tables
