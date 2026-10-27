@@ -52,6 +52,9 @@ pub struct CompanyFieldContribution {
 
 /// The Company-owned registry contract for static Extension fields.
 pub const COMPANY_FIELDS: &str = "core/company.company_fields";
+/// Keep every valid field value inside the live event frame, including JSON
+/// escaping and the surrounding Company form payload.
+pub const MAX_TEXT_FIELD_LENGTH: usize = 10_000;
 
 /// Validate static definitions before Company starts serving pages or writes.
 pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
@@ -99,10 +102,10 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
                 )));
             }
             let CompanyFieldKind::Text { max_length } = field.kind;
-            if max_length > 100_000 {
+            if max_length > MAX_TEXT_FIELD_LENGTH {
                 return Err(RegistryError::Contribution(format!(
-                    "Company text field {} from {} exceeds the 100000 character bound",
-                    field.id, entry.provenance.module
+                    "Company text field {} from {} exceeds the {MAX_TEXT_FIELD_LENGTH} character live-input bound",
+                    field.id, entry.provenance.module,
                 )));
             }
         }

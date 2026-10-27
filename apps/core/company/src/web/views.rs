@@ -1,3 +1,4 @@
+//! Company pages mirror Bilimbi's Core Company list and record detail screens.
 use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
@@ -55,7 +56,7 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         record_fields.extend(additions);
     }
     PageColumns::mount(views, "companies", columns)
-        .map(|columns| columns.with_record_slots(&record_fields))
+        .and_then(|columns| columns.with_record_slots(&record_fields))
         .map_err(|_| Error::Internal)
 }
 pub(super) fn badge(status: &str) -> Result<Html> {
@@ -264,14 +265,23 @@ pub(super) async fn list(
             for (_, definition) in
                 crate::field_contributions::definitions().map_err(|_| Error::Internal)?
             {
-                if columns
-                    .columns
+                let slot = fields::ALL
                     .iter()
-                    .any(|column| column.id == definition.id)
-                {
+                    .chain(
+                        bilibi_grid::installed()
+                            .map_err(|_| Error::Internal)?
+                            .table("companies")
+                            .ok_or(Error::Internal)?
+                            .record_fields()
+                            .iter(),
+                    )
+                    .find(|field| field.id == definition.id)
+                    .and_then(|field| field.slot_id())
+                    .ok_or(Error::Internal)?;
+                if columns.columns.iter().any(|column| column.id == slot) {
                     let value = fields.get(definition.id).and_then(Value::as_str);
                     row.slots.insert(
-                        definition.id.into(),
+                        slot,
                         if extension_fields.masked.contains(definition.id) {
                             restricted(&format!("company-{}-restricted", definition.id))?
                         } else {
@@ -727,7 +737,7 @@ pub(super) async fn detail(
         };
         facts.push(Fact {
             title: definition.label,
-            id: "company-extension-fields",
+            id: definition.id,
             value: value_html,
         });
     }
@@ -1187,7 +1197,12 @@ pub(super) async fn create(
             .kind(InputKind::Text)
             .label(definition.label)
             .value(values.get(definition.id).cloned().unwrap_or_default())
-            .attr("maxlength", &max_length.to_string())
+            .attr(
+                "maxlength",
+                &max_length
+                    .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
+                    .to_string(),
+            )
             .errors(
                 errors
                     .iter()

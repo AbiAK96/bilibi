@@ -138,7 +138,8 @@ Company accepts build-time `CompanyFieldContribution` entries on
 stable, globally unique lowercase field IDs and labels; Company never depends
 on the Extension. Discovery rejects duplicate IDs, built-in collisions and
 unsupported lengths before the app starts. This first slice supports optional
-text fields.
+text fields up to 10,000 characters so JSON-escaped values fit in a Company
+live-form event frame.
 
 The Extension owns its field table and migration. Its Grid contribution declares
 the tenant-scoped source and a `One` link from `companies`; its

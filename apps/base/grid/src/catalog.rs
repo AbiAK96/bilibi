@@ -171,14 +171,7 @@ impl Catalog {
                 .map(String::as_str)
                 .filter(|field| !table.is_protected(field))
                 .collect();
-            hidden.extend(
-                contributed_hidden
-                    .get(*id)
-                    .into_iter()
-                    .flatten()
-                    .copied()
-                    .filter(|field| !table.is_protected(field)),
-            );
+            hidden.extend(contributed_hidden.get(*id).into_iter().flatten().copied());
             tables.insert(*id, table.without(&hidden));
         }
         let visible: BTreeSet<&str> = tables.keys().copied().collect();
