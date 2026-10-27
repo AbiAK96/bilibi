@@ -165,6 +165,19 @@ the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage, reference fields and
 governed choices are not part of this static contract.
 
+### Upgrade notes for field contributors
+
+Existing callers of `CompanyService::create_with_context` must pass the new
+`CompanyFieldValues` argument between `new` and `activities` (use an empty map
+when no contributed values are supplied). Owners constructing Authz
+`CatalogField` values must also populate `restriction_aliases` with the actual
+target table and field identity; for linked Grid paths, resolve the path instead
+of treating its first segment as a table ID. Callers of Grid's
+`PageColumns::with_record_slots` must handle its `Result` and propagate or map
+invalid and duplicate slot errors. Contributed field IDs must not use Company
+form transport keys or Company agent request/response envelope keys; discovery
+rejects those names before the app starts.
+
 ## Provisioning
 
 ```sh

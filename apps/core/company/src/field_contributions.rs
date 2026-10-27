@@ -79,6 +79,18 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
             "scope_activities",
             "metadata",
             "version",
+            // Live-page transport and form control keys (Bilimbi Base UI forms).
+            "type",
+            "intent",
+            "outcome",
+            "latitude",
+            "longitude",
+            "accuracy",
+            // Company agent request and response envelope keys.
+            "create_anyway",
+            "primary",
+            "parent_name",
+            "path",
         ])
         .collect();
     let mut ids = builtins;
@@ -97,7 +109,7 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
                 || matches!(field.kind, CompanyFieldKind::Text { max_length: 0 })
             {
                 return Err(RegistryError::Contribution(format!(
-                    "invalid, required, duplicate, or built-in-colliding Company field {} from {}",
+                    "invalid, required, duplicate, or reserved Company page/agent field {} from {}",
                     field.id, entry.provenance.module
                 )));
             }
@@ -132,7 +144,7 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
         .iter()
         .flat_map(|(_, contribution)| contribution.fields)
         .map(|field| {
-            let (table, target) = grid_alias(field.grid_column)?;
+            let (table, target) = resolved_grid_alias(field.grid_column)?;
             Ok(CatalogField {
                 id: field.id,
                 label: field.label,
@@ -151,18 +163,25 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
     }])
 }
 
-fn grid_alias(path: &'static str) -> std::result::Result<(&'static str, &'static str), String> {
-    let Some((table, field)) = path.split_once('.') else {
+fn resolved_grid_alias(path: &str) -> std::result::Result<(&'static str, &'static str), String> {
+    let installed = bilibi_grid::installed().map_err(|error| error.to_string())?;
+    let root = installed
+        .table("companies")
+        .ok_or_else(|| "Company's Grid table is not installed".to_owned())?;
+    let column = bilibi_grid::column::resolve(path, root, &|id| installed.table(id))
+        .map_err(|error| format!("invalid Company Extension field Grid path {path:?}: {error}"))?;
+    if column.kind != bilibi_grid::ColumnKind::Field
+        || column.many.is_some()
+        || column.agg.is_some()
+    {
         return Err(format!(
-            "Company Extension field Grid path {path:?} must name table.field"
-        ));
-    };
-    if table.is_empty() || field.is_empty() || field.contains('.') {
-        return Err(format!(
-            "Company Extension field Grid path {path:?} must name table.field"
+            "Company Extension field Grid path {path:?} must resolve to a scalar field"
         ));
     }
-    Ok((table, field))
+    let field = column
+        .field
+        .ok_or_else(|| format!("Company Extension field Grid path {path:?} has no field"))?;
+    Ok((column.table, field.id))
 }
 
 /// Company field restrictions include the Extension table identity that stores
@@ -175,7 +194,8 @@ pub(crate) async fn effective_restrictions(
     let restrictions = bilibi_authz::fields::restricted(client, scope).await?;
     let mut company = restrictions.get("companies").cloned().unwrap_or_default();
     for (_, field) in definitions()? {
-        let (table, target) = grid_alias(field.grid_column).map_err(|_| Error::Internal)?;
+        let (table, target) =
+            resolved_grid_alias(field.grid_column).map_err(|_| Error::Internal)?;
         if restrictions
             .get(table)
             .is_some_and(|fields| fields.contains(target))
@@ -239,15 +259,9 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
     let root = installed.table("companies").ok_or_else(|| {
         RegistryError::Contribution("Company's Grid table is not installed".into())
     })?;
-    for (_, field) in definitions().map_err(|error| {
+    for (module, field) in definitions().map_err(|error| {
         RegistryError::Contribution(format!("Company field catalog unavailable: {error}"))
     })? {
-        if grid_alias(field.grid_column).is_err() {
-            return Err(RegistryError::Contribution(format!(
-                "Company Extension field {} must use a direct table.field Grid path",
-                field.id
-            )));
-        }
         let record = root
             .record_fields()
             .iter()
@@ -273,11 +287,25 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
                     ))
                 })?;
         if column.kind != bilibi_grid::ColumnKind::Field
+            || column.many.is_some()
+            || column.agg.is_some()
             || column.ty != bilibi_grid::FieldType::String
         {
             return Err(RegistryError::Contribution(format!(
                 "Company text field {} must resolve to a scalar Grid string field",
                 field.id
+            )));
+        }
+        let target_owner = installed.table(column.table).ok_or_else(|| {
+            RegistryError::Contribution(format!(
+                "Company field {} resolves to an unavailable Grid table",
+                field.id
+            ))
+        })?;
+        if column.hops.is_empty() || target_owner.owner != module {
+            return Err(RegistryError::Contribution(format!(
+                "Company field {} must resolve through a link to a scalar field owned by its contributing module {}",
+                field.id, module
             )));
         }
     }
