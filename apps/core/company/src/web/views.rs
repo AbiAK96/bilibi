@@ -143,7 +143,7 @@ struct CompanyName<'a> {
     legal: Option<&'a str>,
 }
 pub(super) async fn list(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     data: &crate::Page,
     params: &Params,
@@ -312,7 +312,7 @@ pub(super) async fn list(
                         (_, None) => String::new(),
                     };
                     row.slots.insert(
-                        slot,
+                        slot.clone(),
                         if extension_fields.masked.contains(definition.id) {
                             restricted(&format!("company-{}-restricted", definition.id))?
                         } else {
@@ -323,6 +323,24 @@ pub(super) async fn list(
                             })?
                         },
                     );
+                    if !extension_fields.masked.contains(definition.id) {
+                        if let (crate::CompanyFieldKind::Choice { picklist }, Some(code)) =
+                            (definition.kind, value)
+                        {
+                            if let Some(label) = extension_fields
+                                .picklists
+                                .label(client, scope, picklist, code)
+                                .await?
+                            {
+                                let text = if label.retired {
+                                    format!("{} (Retired)", label.text)
+                                } else {
+                                    label.text
+                                };
+                                row.slots.insert(slot, Html::text(&text));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -398,6 +416,7 @@ pub(super) struct ExtensionListFields<'a> {
     pub masked: &'a HashSet<String>,
     pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
     pub display: &'a bilibi_datetime::DisplayContext,
+    pub picklists: &'a bilibi_picklists::PickLists,
 }
 #[derive(Template)]
 #[template(
@@ -544,6 +563,7 @@ pub(super) async fn detail(
     client: &Client,
     scope: &Scope,
     id: i64,
+    picklists: &bilibi_picklists::PickLists,
     state: DetailState<'_>,
 ) -> Result<String> {
     let DetailState {
@@ -757,6 +777,41 @@ pub(super) async fn detail(
         let id_attr = format!("company-{}", definition.id.replace('_', "-"));
         let value_html = if masked.contains(definition.id) {
             restricted(&id_attr)?
+        } else if let crate::CompanyFieldKind::Choice { picklist } = definition.kind {
+            let label = if value.is_empty() {
+                None
+            } else {
+                picklists.label(client, scope, picklist, value).await?
+            };
+            let display_text = label
+                .map(|label| {
+                    if label.retired {
+                        format!("{} (Retired)", label.text)
+                    } else {
+                        label.text
+                    }
+                })
+                .unwrap_or_else(|| "—".into());
+            let mut field = InlineField::new(
+                id_attr,
+                definition.id,
+                format!("Edit {}", definition.label),
+                value,
+            )
+            .version(company.version)
+            .allow_empty()
+            .status(statuses.get(definition.id));
+            field.id_value = id.to_string();
+            field.editable = editable;
+            let editor = Combobox::new(format!("{}-input", definition.id), definition.id)
+                .value(value)
+                .options(picklists.choices(client, scope, picklist, None).await?)
+                .wrapper_class("mb-0");
+            render(&InlineChoice {
+                field,
+                display: Html::text(&display_text),
+                editor: render(&editor)?,
+            })?
         } else {
             let (input_type, display_value) = match definition.kind {
                 crate::CompanyFieldKind::Text { .. } => ("text", None),
@@ -770,6 +825,7 @@ pub(super) async fn detail(
                             .unwrap_or_else(|| value.to_owned())
                     }),
                 ),
+                crate::CompanyFieldKind::Choice { .. } => unreachable!("handled above"),
             };
             let mut field = InlineField::new(
                 id_attr,
@@ -1147,6 +1203,7 @@ pub(super) fn duplicate_builtins() -> Vec<BuiltinColumn> {
 pub(super) async fn create(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
+    picklists: &bilibi_picklists::PickLists,
     state: CreateState<'_>,
 ) -> Result<String> {
     let CreateState {
@@ -1265,6 +1322,30 @@ pub(super) async fn create(
                 );
             }
             crate::CompanyFieldKind::Date => field = field.kind(InputKind::Date),
+            crate::CompanyFieldKind::Choice { picklist } => {
+                let choices = picklists.choices(client, scope, picklist, None).await?;
+                let value = match values.get(definition.id) {
+                    Some(value) => value.clone(),
+                    None => picklists
+                        .default(client, scope, picklist)
+                        .await?
+                        .unwrap_or_default(),
+                };
+                extension_fields.push(render(
+                    &Combobox::new(format!("company-{}", definition.id), definition.id)
+                        .label(definition.label)
+                        .value(value)
+                        .options(choices)
+                        .errors(
+                            errors
+                                .iter()
+                                .filter(|error| error.field == definition.id)
+                                .map(|error| error.message.clone())
+                                .collect(),
+                        ),
+                )?);
+                continue;
+            }
         }
         extension_fields.push(render(&field)?);
     }
