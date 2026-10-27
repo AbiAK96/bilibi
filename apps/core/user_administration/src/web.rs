@@ -740,7 +740,8 @@ impl Index {
     async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<()> {
         match event(value)? {
             "filters" => {
-                let filters = params::form_values(value, FILTERS_FORM);
+                let filters = params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 self.list.apply_filters(&filters);
                 self.list.search = bounded_search(&self.list.search);
                 // The multi-select posts a hidden `""` beside its checked
@@ -763,7 +764,11 @@ impl Index {
             "grid" => {
                 if let Outcome::Sort(key) = self
                     .columns
-                    .handle(scope, &params::string_values(value))
+                    .handle(
+                        scope,
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    )
                     .await?
                 {
                     self.list.next_sort(&key);

@@ -792,8 +792,14 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                         Some("cancel") => self.pending = None,
                         Some("save_field") => self.save_setting(scope, value).await?,
                         Some("filters") => {
-                            self.state
-                                .apply_filters(&params::form_values(value, FILTERS_FORM));
+                            self.state.apply_filters(
+                                &params::form_values_checked(
+                                    value,
+                                    FILTERS_FORM,
+                                    params::FIELD_LIMIT,
+                                )
+                                .map_err(Error::refused)?,
+                            );
                         }
                         Some("sort") => {
                             if !self.state.next_sort(get("sort").unwrap_or_default()) {
@@ -801,9 +807,10 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                             }
                         }
                         Some("grid") => {
-                            if let ColumnsOutcome::Sort(key) =
-                                self.columns.handle(&params::string_values(value))
-                            {
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            ) {
                                 if !self.state.next_sort(&key) {
                                     return Err(Error::Invalid);
                                 }

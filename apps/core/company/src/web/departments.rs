@@ -792,7 +792,10 @@ impl LiveState<Scope, Error> for Departments {
                     }
                     match kind {
                         "grid" => {
-                            self.columns.handle(&params::string_values(event));
+                            self.columns.handle(
+                                &params::string_values_checked(event, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            );
                             requery = false;
                         }
                         "new" => {
@@ -800,12 +803,19 @@ impl LiveState<Scope, Error> for Departments {
                             requery = false;
                         }
                         "validate" => {
-                            self.validate(params::form_values(event, FORM));
+                            self.validate(
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            );
                             requery = false;
                         }
                         "save" => {
-                            self.save(request.scope, params::form_values(event, FORM))
-                                .await?
+                            self.save(
+                                request.scope,
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            )
+                            .await?
                         }
                         "activate" => {
                             self.update_status(request.scope, get("id"), "active")
@@ -833,8 +843,12 @@ impl LiveState<Scope, Error> for Departments {
                             requery = false;
                         }
                         "save_head" => {
-                            self.save_head(request.scope, params::form_values(event, HEAD_FORM))
-                                .await?
+                            self.save_head(
+                                request.scope,
+                                params::form_values_checked(event, HEAD_FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            )
+                            .await?
                         }
                         "close_modal" => {
                             self.dialog = None;
