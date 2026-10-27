@@ -767,9 +767,11 @@ pub(super) async fn detail(
             )
             .version(company.version)
             .allow_empty()
-            .status(statuses.get(definition.id));
-            field.input_type = input_type;
-            field.display_value = display_value;
+            .status(statuses.get(definition.id))
+            .input_type(input_type);
+            if let Some(display_value) = display_value {
+                field = field.display_value(display_value);
+            }
             field.id_value = id.to_string();
             field.editable = editable;
             render(&InlineEdit { field })?

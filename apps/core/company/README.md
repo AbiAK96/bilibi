@@ -160,7 +160,7 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. Date fields use native date controls on create and detail, while the detail fact displays the account's configured date format. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage, reference fields and
 governed choices are not part of this static contract.
@@ -176,7 +176,9 @@ paths, resolve the path instead of treating its first segment as a table ID.
 Write callbacks must return exactly the values supplied by Company; callbacks
 that normalize a reviewed value are refused and rolled back. Callers of Grid's
 `PageColumns::with_record_slots` must handle its `Result` and propagate or map
-invalid and duplicate slot errors. Contributed field IDs must not use Company
+invalid and duplicate slot errors. Callers that construct `InlineField` with a
+struct literal must initialize `display_value` and `input_type`; prefer
+`InlineField::new` with its builder methods. Contributed field IDs must not use Company
 form transport keys or Company agent request/response envelope keys; discovery
 rejects those names before the app starts.
 
