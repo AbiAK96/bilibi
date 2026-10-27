@@ -767,18 +767,9 @@ pub async fn create_with_fields(
     Ok(CreateOutcome::Created(Box::new(created)))
 }
 
-/// Validates a prospective company, including generated defaults, field
-/// access and current code uniqueness, without writing or reserving the code
-/// (Bilimbi `preview_create_company/2`).
-pub async fn preview(
-    client: &(impl GenericClient + Sync),
-    scope: &Scope,
-    new: &NewCompany,
-) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
-    preview_with_fields(client, scope, new, &crate::CompanyFieldValues::new()).await
-}
-
-/// Validates the Company and contributed Extension fields for a reviewed create.
+/// Validates the Company and contributed Extension fields for a reviewed
+/// create without writing or reserving generated values (Bilimbi
+/// `preview_create_company/2`).
 pub async fn preview_with_fields(
     client: &(impl GenericClient + Sync),
     scope: &Scope,

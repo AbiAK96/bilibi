@@ -788,13 +788,7 @@ impl CompanyPage {
                     if anyway || !matches.likely {
                         match self
                             .company
-                            .create_with_context(
-                                scope,
-                                &new,
-                                &company_fields,
-                                activities,
-                                metadata,
-                            )
+                            .create_with_context(scope, &new, &company_fields, activities, metadata)
                             .await?
                         {
                             CreateOutcome::Created(company) => {
