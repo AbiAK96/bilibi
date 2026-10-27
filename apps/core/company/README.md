@@ -137,9 +137,7 @@ Company accepts build-time `CompanyFieldContribution` entries on
 `core/company.company_fields`. An Extension depends on Company and contributes
 stable, globally unique lowercase field IDs and labels; Company never depends
 on the Extension. Discovery rejects duplicate IDs, built-in collisions and
-unsupported lengths before the app starts. This first slice supports optional
-text fields up to 10,000 characters so JSON-escaped values fit in a Company
-live-form event frame.
+unsupported lengths before the app starts. The contract supports optional text fields up to 10,000 characters so JSON-escaped values fit in a Company live-form event frame, and optional calendar dates stored by the contributing Extension as PostgreSQL `DATE` values and passed as canonical `YYYY-MM-DD` strings.
 
 The Extension owns its field table and migration. Its Grid contribution declares
 the tenant-scoped source and a `One` link from `companies`; its
@@ -162,8 +160,7 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema and are
-accepted by its preview and commit handlers. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. Date fields use native date controls on create and detail, while the detail fact displays the account's configured date format. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage, reference fields and
 governed choices are not part of this static contract.

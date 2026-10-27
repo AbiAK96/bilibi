@@ -524,6 +524,7 @@ pub(super) struct DetailState<'a> {
     pub departments_columns: &'a mut ListColumns,
     pub children_columns: &'a ListColumns,
     pub workspace: bool,
+    pub display: &'a bilibi_datetime::DisplayContext,
     /// Anchors of the contributed record panels the reader may mount.
     pub panels: &'a [String],
 }
@@ -541,6 +542,7 @@ pub(super) async fn detail(
         departments_columns,
         children_columns,
         workspace,
+        display,
         panels,
     } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
@@ -744,6 +746,19 @@ pub(super) async fn detail(
         let value_html = if masked.contains(definition.id) {
             restricted(&id_attr)?
         } else {
+            let (input_type, display_value) = match definition.kind {
+                crate::CompanyFieldKind::Text { .. } => ("text", None),
+                crate::CompanyFieldKind::Date => (
+                    "date",
+                    (!value.is_empty()).then(|| {
+                        value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned())
+                    }),
+                ),
+            };
             let mut field = InlineField::new(
                 id_attr,
                 definition.id,
@@ -753,6 +768,8 @@ pub(super) async fn detail(
             .version(company.version)
             .allow_empty()
             .status(statuses.get(definition.id));
+            field.input_type = input_type;
+            field.display_value = display_value;
             field.id_value = id.to_string();
             field.editable = editable;
             render(&InlineEdit { field })?
@@ -1213,18 +1230,10 @@ pub(super) async fn create(
             ))?);
             continue;
         }
-        let crate::CompanyFieldKind::Text { max_length } = definition.kind;
-        let field = Field::named(definition.id)
+        let mut field = Field::named(definition.id)
             .id(format!("company-{}", definition.id))
-            .kind(InputKind::Text)
             .label(definition.label)
             .value(values.get(definition.id).cloned().unwrap_or_default())
-            .attr(
-                "maxlength",
-                &max_length
-                    .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
-                    .to_string(),
-            )
             .errors(
                 errors
                     .iter()
@@ -1232,6 +1241,17 @@ pub(super) async fn create(
                     .map(|error| error.message.clone())
                     .collect(),
             );
+        match definition.kind {
+            crate::CompanyFieldKind::Text { max_length } => {
+                field = field.kind(InputKind::Text).attr(
+                    "maxlength",
+                    &max_length
+                        .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
+                        .to_string(),
+                );
+            }
+            crate::CompanyFieldKind::Date => field = field.kind(InputKind::Date),
+        }
         extension_fields.push(render(&field)?);
     }
     let mut additional_fields = Html::EMPTY;
