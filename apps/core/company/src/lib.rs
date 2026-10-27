@@ -312,7 +312,7 @@ pub async fn detail(
     id: i64,
 ) -> Result<(Company, HashSet<String>)> {
     bilibi_authz::authorize_key(client, scope, VIEW).await?;
-    let masked = restrictions(client, scope).await?;
+    let masked = field_contributions::effective_restrictions(client, scope).await?;
     let row = client.query_opt(&format!("SELECT {COLUMNS} FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"), &[&scope.tenant(),&id]).await?.ok_or(Error::NotFound)?;
     Ok((Company::from_row(&row, &masked), masked))
 }
