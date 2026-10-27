@@ -193,7 +193,8 @@ impl CompanyService {
             .await?;
         let current_scope = guard(tx.sql(), credential, &self.sessions).await?;
         organisation::authorize_target(tx.sql(), &current_scope, edit.id, UPDATE).await?;
-        let restricted = bilibi_authz::restrictions(tx.sql(), &current_scope).await?;
+        let restricted =
+            crate::field_contributions::effective_restrictions(tx.sql(), &current_scope).await?;
         if restricted.contains(&edit.field) {
             return Err(Error::Forbidden);
         }

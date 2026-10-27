@@ -155,7 +155,7 @@ impl Pages {
             _ => return Err(Error::NotFound),
         };
         let client = self.db.get().await?;
-        let masked = bilibi_authz::restrictions(&**client, scope).await?;
+        let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
         let mut columns = views::columns(self.views.clone(), &masked)?;
         columns.from_params(scope, request.query).await?;
         Ok(CompanyPage {
@@ -399,7 +399,7 @@ impl CompanyPage {
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
         let client = self.db.get().await?;
-        let masked = bilibi_authz::restrictions(&**client, scope).await?;
+        let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
         let html = match self.operation {
             "list" => {
                 if self
@@ -441,6 +441,13 @@ impl CompanyPage {
                         &display,
                     )
                     .await?;
+                let loaded_columns = std::mem::replace(
+                    &mut self.columns,
+                    views::columns(self.views.clone(), &masked)?,
+                );
+                self.columns = loaded_columns
+                    .with_record_slots(&views::record_slots(&masked)?)
+                    .map_err(|_| Error::Internal)?;
                 let company_ids = page
                     .rows
                     .iter()

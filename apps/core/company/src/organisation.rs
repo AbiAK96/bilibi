@@ -708,7 +708,7 @@ pub async fn create_with_fields(
     fields: &crate::CompanyFieldValues,
 ) -> Result<CreateOutcome> {
     authorize_key(tx.sql(), scope, CREATE).await?;
-    let restricted = restrictions(tx.sql(), scope).await?;
+    let restricted = crate::field_contributions::effective_restrictions(tx.sql(), scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
     field_errors.extend(crate::field_contributions::validate_restrictions(
         fields,
@@ -786,7 +786,7 @@ pub async fn preview_with_fields(
     fields: &crate::CompanyFieldValues,
 ) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
     authorize_key(client, scope, CREATE).await?;
-    let restricted = restrictions(client, scope).await?;
+    let restricted = crate::field_contributions::effective_restrictions(client, scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
     field_errors.extend(crate::field_contributions::validate_restrictions(
         fields,

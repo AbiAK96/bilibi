@@ -100,6 +100,12 @@ applies to it, and it never sees or writes a role-restricted field. P8 owns the
 protected-field catalog contract and restriction administration; Grid supplies
 that catalog as data, with no Authz→Grid dependency.
 
+A `CatalogField` may declare alternate restriction identities for the same
+record value. `withheld_by_record_type` maps a restriction on any declared
+identity to the owning field ID in audit old/new values. The record owner still
+resolves those aliases for its own reads and writes; Authz does not depend on
+Grid or the record owner.
+
 ## Step-up on grant changes
 
 Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md`). These operations are declared on by default, and each tenant may change them:

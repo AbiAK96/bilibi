@@ -131,17 +131,59 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
     let fields = contributions
         .iter()
         .flat_map(|(_, contribution)| contribution.fields)
-        .map(|field| CatalogField {
-            id: field.id,
-            label: field.label,
+        .map(|field| {
+            let (table, target) = grid_alias(field.grid_column)?;
+            Ok(CatalogField {
+                id: field.id,
+                label: field.label,
+                restriction_aliases: vec![bilibi_authz::field_catalog::RestrictionAlias {
+                    table,
+                    field: target,
+                }],
+            })
         })
-        .collect();
+        .collect::<std::result::Result<_, String>>()?;
     Ok(vec![CatalogTable {
         id: "companies",
         label: "Companies",
         record_types: &["company"],
         fields,
     }])
+}
+
+fn grid_alias(path: &'static str) -> std::result::Result<(&'static str, &'static str), String> {
+    let Some((table, field)) = path.split_once('.') else {
+        return Err(format!(
+            "Company Extension field Grid path {path:?} must name table.field"
+        ));
+    };
+    if table.is_empty() || field.is_empty() || field.contains('.') {
+        return Err(format!(
+            "Company Extension field Grid path {path:?} must name table.field"
+        ));
+    }
+    Ok((table, field))
+}
+
+/// Company field restrictions include the Extension table identity that stores
+/// each contributed value. Resolve them from current role grants on every read
+/// and mutation (Bilimbi Core Company field policy).
+pub(crate) async fn effective_restrictions(
+    client: &impl tokio_postgres::GenericClient,
+    scope: &Scope,
+) -> Result<std::collections::HashSet<String>> {
+    let restrictions = bilibi_authz::fields::restricted(client, scope).await?;
+    let mut company = restrictions.get("companies").cloned().unwrap_or_default();
+    for (_, field) in definitions()? {
+        let (table, target) = grid_alias(field.grid_column).map_err(|_| Error::Internal)?;
+        if restrictions
+            .get(table)
+            .is_some_and(|fields| fields.contains(target))
+        {
+            company.insert(field.id.to_owned());
+        }
+    }
+    Ok(company)
 }
 
 pub(crate) async fn read(
@@ -200,6 +242,12 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
     for (_, field) in definitions().map_err(|error| {
         RegistryError::Contribution(format!("Company field catalog unavailable: {error}"))
     })? {
+        if grid_alias(field.grid_column).is_err() {
+            return Err(RegistryError::Contribution(format!(
+                "Company Extension field {} must use a direct table.field Grid path",
+                field.id
+            )));
+        }
         let record = root
             .record_fields()
             .iter()

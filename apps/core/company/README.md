@@ -143,7 +143,8 @@ live-form event frame.
 
 The Extension owns its field table and migration. Its Grid contribution declares
 the tenant-scoped source and a `One` link from `companies`; its
-`RecordFields` contribution supplies the Grid path and detail label. Company
+`RecordFields` contribution supplies the direct `extension_table.field` Grid
+path and detail label. Company
 uses the static field declaration for create and detail controls, and calls the
 owner's scoped read callback for Company pages and agent reads. The owner must
 bind the sealed scope's tenant in every read and write.
@@ -153,9 +154,10 @@ borrowed SQL transaction and return field values before and after their write. C
 captures those values as a `company` audit change; an inline update also
 increments the Company record version. Callbacks do not open or commit a
 transaction and do not record audit rows themselves. Company rechecks reach
-and current field restrictions before invoking a write. Authz merges the
-Extension field identities into the `companies` restriction catalog, so reads
-and audit history use the same field IDs.
+and current field restrictions before invoking a write. A restriction on either
+the Company field ID or its Extension table field ID masks the Company value and
+refuses writes. Authz carries that alias into Company audit withholding, and
+Grid prunes the corresponding dotted path from each fresh scoped catalog.
 
 The same fields appear in the reviewed `core.company.create` schema and are
 accepted by its preview and commit handlers. List and detail agent output uses

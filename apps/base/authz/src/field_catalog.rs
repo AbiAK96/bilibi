@@ -25,6 +25,16 @@ pub const FIELD_CATALOG: &str = "base/authz.field_catalog";
 pub struct CatalogField {
     pub id: &'static str,
     pub label: &'static str,
+    /// Other restriction identities that protect this record field. A Company
+    /// field can be stored in an Extension table while its audit value is
+    /// recorded under the Company field id (Bilimbi Authz field withholding).
+    pub restriction_aliases: Vec<RestrictionAlias>,
+}
+/// A second table and field identity that withholds the catalog field above.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct RestrictionAlias {
+    pub table: &'static str,
+    pub field: &'static str,
 }
 /// One table with the fields an operator may restrict. `record_types` are the
 /// audit record types its rows use, so a restriction reaches their audit views.
@@ -99,6 +109,18 @@ impl FieldCatalog {
                             "field catalog field {}.{} is invalid or repeated",
                             table.id, field.id
                         ));
+                    }
+                    let mut aliases = BTreeSet::new();
+                    for alias in &field.restriction_aliases {
+                        if !valid_id(alias.table)
+                            || !valid_id(alias.field)
+                            || !aliases.insert(alias)
+                        {
+                            return Err(format!(
+                                "field catalog field {}.{} has an invalid or repeated restriction alias",
+                                table.id, field.id
+                            ));
+                        }
                     }
                 }
                 let target = grouped.entry(table.id).or_insert_with(|| CatalogTable {

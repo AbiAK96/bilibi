@@ -50,20 +50,25 @@ pub async fn withheld_by_record_type(
         return Ok(result);
     }
     for table in crate::field_catalog::field_catalog()?.tables() {
-        let Some(fields) = restricted.get(table.id).filter(|fields| !fields.is_empty()) else {
-            continue;
-        };
         for kind in table
             .record_types
             .iter()
             .filter(|kind| types.contains(kind))
         {
-            result
-                .entry((*kind).to_owned())
-                .or_default()
-                .extend(fields.iter().cloned());
+            let withheld = result.entry((*kind).to_owned()).or_default();
+            withheld.extend(restricted.get(table.id).into_iter().flatten().cloned());
+            for field in &table.fields {
+                if field.restriction_aliases.iter().any(|alias| {
+                    restricted
+                        .get(alias.table)
+                        .is_some_and(|fields| fields.contains(alias.field))
+                }) {
+                    withheld.insert(field.id.to_owned());
+                }
+            }
         }
     }
+    result.retain(|_, fields| !fields.is_empty());
     Ok(result)
 }
 /// Remove withheld fields before serializing a record, array of records, audit

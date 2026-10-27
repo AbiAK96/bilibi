@@ -90,7 +90,8 @@ impl ReadHandler for List {
                 .map(|entry| entry.company.id)
                 .collect::<Vec<_>>();
             let extension_values = crate::field_contributions::read(&client, scope, &ids).await?;
-            let restricted = bilibi_authz::restrictions(&**client, scope).await?;
+            let restricted =
+                crate::field_contributions::effective_restrictions(&**client, scope).await?;
             let entries = page
                 .entries
                 .into_iter()
@@ -270,7 +271,9 @@ impl WriteHandler for Create {
             match organisation::create_with_fields(tx, scope, &new, &fields).await? {
                 organisation::CreateOutcome::Created(company) => {
                     let mut masked = company.masked_fields();
-                    masked.extend(bilibi_authz::restrictions(tx.sql(), scope).await?);
+                    masked.extend(
+                        crate::field_contributions::effective_restrictions(tx.sql(), scope).await?,
+                    );
                     let mut record = company.to_json();
                     for (field, value) in &fields {
                         value_map_insert(&mut record, field, value.clone());

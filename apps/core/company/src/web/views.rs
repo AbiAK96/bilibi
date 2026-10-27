@@ -43,21 +43,43 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         }
     })
     .collect();
-    let mut record_fields = fields::ALL.to_vec();
+    let record_fields = record_slots(masked)?;
+    PageColumns::mount(views, "companies", columns)
+        .and_then(|columns| columns.with_record_slots(&record_fields))
+        .map_err(|_| Error::Internal)
+}
+
+/// Facts the Company page actually fills into its own row slots. Keep other
+/// Company Grid fields as projections (Bilimbi Core Company list columns).
+pub(super) fn record_slots(masked: &HashSet<String>) -> Result<Vec<bilibi_ui::RecordField>> {
+    let filled_slots = ["name", "code", "parent_name", "status", "jurisdiction"];
+    let mut record_fields = fields::ALL
+        .iter()
+        .filter(|field| {
+            field
+                .slot_id()
+                .is_some_and(|slot| filled_slots.contains(&slot.as_str()))
+        })
+        .copied()
+        .collect::<Vec<_>>();
     let installed = bilibi_grid::installed().map_err(|_| Error::Internal)?;
     if let Some(table) = installed.table("companies") {
+        let contributed_ids = crate::field_contributions::definitions()
+            .map_err(|_| Error::Internal)?
+            .into_iter()
+            .map(|(_, field)| field.id)
+            .collect::<HashSet<_>>();
         let additions = table
             .record_fields()
             .iter()
+            .filter(|field| contributed_ids.contains(field.id))
             .filter(|field| !record_fields.iter().any(|existing| existing.id == field.id))
             .filter(|field| !masked.contains(field.id))
             .copied()
             .collect::<Vec<_>>();
         record_fields.extend(additions);
     }
-    PageColumns::mount(views, "companies", columns)
-        .and_then(|columns| columns.with_record_slots(&record_fields))
-        .map_err(|_| Error::Internal)
+    Ok(record_fields)
 }
 pub(super) fn badge(status: &str) -> Result<Html> {
     render(&Badge::status(
@@ -1106,7 +1128,7 @@ pub(super) async fn create(
         reason,
     } = state;
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
-    let masked = bilibi_authz::restrictions(client, scope).await?;
+    let masked = crate::field_contributions::effective_restrictions(client, scope).await?;
     let opts = options(client, scope, None, true).await?;
     let mut fields = Vec::new();
     for (name, label, kind, placeholder) in [

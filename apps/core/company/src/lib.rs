@@ -258,7 +258,7 @@ use organisation::COLUMNS;
 pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
     params.validate()?;
     bilibi_authz::authorize_key(client, scope, LIST).await?;
-    let masked = restrictions(client, scope).await?;
+    let masked = field_contributions::effective_restrictions(client, scope).await?;
     let query = format!("%{}%", organisation::escape_like(&params.q));
     let searchable = ["name", "code", "legal_name", "email", "jurisdiction"]
         .into_iter()
