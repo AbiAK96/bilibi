@@ -465,6 +465,7 @@ impl CompanyPage {
                     views::ExtensionListFields {
                         masked: &masked,
                         values: &extension_values,
+                        display: &display,
                     },
                 )
                 .await?

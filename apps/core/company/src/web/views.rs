@@ -302,13 +302,24 @@ pub(super) async fn list(
                     .ok_or(Error::Internal)?;
                 if columns.columns.iter().any(|column| column.id == slot) {
                     let value = fields.get(definition.id).and_then(Value::as_str);
+                    let display_value = match (definition.kind, value) {
+                        (crate::CompanyFieldKind::Date, Some(value)) => value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| extension_fields.display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned()),
+                        (_, Some(value)) => value.to_owned(),
+                        (_, None) => String::new(),
+                    };
                     row.slots.insert(
                         slot,
                         if extension_fields.masked.contains(definition.id) {
                             restricted(&format!("company-{}-restricted", definition.id))?
                         } else {
                             render(&ReadValue {
-                                value, empty: "—"
+                                value: (!display_value.is_empty())
+                                    .then_some(display_value.as_str()),
+                                empty: "—",
                             })?
                         },
                     );
@@ -386,6 +397,7 @@ pub(super) async fn list(
 pub(super) struct ExtensionListFields<'a> {
     pub masked: &'a HashSet<String>,
     pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
+    pub display: &'a bilibi_datetime::DisplayContext,
 }
 #[derive(Template)]
 #[template(

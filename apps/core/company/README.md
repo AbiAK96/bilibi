@@ -167,6 +167,10 @@ governed choices are not part of this static contract.
 
 ### Upgrade notes for field contributors
 
+`CompanyFieldKind` now includes `Date`; update exhaustive matches and declare
+date values as canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL
+`DATE` columns.
+
 Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map
 when no contributed values are supplied). Owners constructing Authz
