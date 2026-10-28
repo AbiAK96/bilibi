@@ -369,6 +369,9 @@ fn create_schema() -> Value {
                 crate::CompanyFieldKind::Date => {
                     json!({"type":"string","format":"date","description":field.label})
                 }
+                crate::CompanyFieldKind::Choice { picklist } => {
+                    json!({"type":"string","description":format!("{}; stable code from pick-list {}", field.label, picklist)})
+                }
             };
         }
     }
