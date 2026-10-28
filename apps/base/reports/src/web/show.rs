@@ -15,9 +15,9 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     choices,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, ActionLink, Alert, Badge, BadgeKind, Button, ButtonVariant, Card, ColumnsOutcome,
-    ConfirmDialog, Fact, Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind,
-    ListColumns, MultiSelect, StatusKind, Tab, Tabs,
+    params, ActionLink, Alert, Button, ButtonVariant, Card, ColumnsOutcome, ConfirmDialog, Fact,
+    Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind, ListColumns,
+    MultiSelect, StatusKind, Tab, Tabs,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -65,8 +65,10 @@ enum Confirm {
 }
 
 /// A drill-down: a group's own value, shown as `label: value`. It travels
-/// in the address as `d<n>` (the column) and `v<n>` (its value as JSON; no
-/// `v<n>` is the empty group), so a link and the CSV repeat it.
+/// in the address as `d<n>` (the column) and `v<n>` (its value as JSON, or
+/// a date bucket's `{"min","max"}` days; no `v<n>` is the empty group), with
+/// `rows=1` when the page shows the records behind it, so a link and the CSV
+/// repeat it.
 #[derive(Clone)]
 struct Drill {
     filter: FilterDef,
@@ -77,26 +79,36 @@ struct Drill {
 /// Drill-downs one page holds at most (one per grouping).
 const MAX_DRILL: usize = 2;
 
-/// The drill-downs an address carries: a column and one scalar value, or
-/// none for the empty group. The run still resolves each column against the
-/// reader's own catalog and checks the value, so nothing here is trusted.
+/// The drill-downs an address carries: a column and one scalar value, a
+/// bucket's day range, or none for the empty group. The run still resolves
+/// each column against the reader's own catalog and checks the value, so
+/// nothing here is trusted.
 pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
     (0..MAX_DRILL)
         .map_while(|n| {
             let column = query
                 .get(&format!("d{n}"))
                 .filter(|c| !c.is_empty() && c.len() <= 256)?;
-            let value = match query.get(&format!("v{n}")) {
-                None => Value::Null,
+            let day =
+                |v: Option<&Value>| v.is_some_and(|v| v.as_str().is_some_and(|s| s.len() <= 32));
+            let (test, value) = match query.get(&format!("v{n}")) {
+                None => ("empty", Value::Null),
                 Some(text) if text.len() <= 512 => match serde_json::from_str::<Value>(text) {
-                    Ok(value @ (Value::String(_) | Value::Number(_) | Value::Bool(_))) => value,
+                    Ok(value @ (Value::String(_) | Value::Number(_) | Value::Bool(_))) => {
+                        ("equals", value)
+                    }
+                    Ok(Value::Object(range))
+                        if range.len() == 2 && day(range.get("min")) && day(range.get("max")) =>
+                    {
+                        ("range", Value::Object(range))
+                    }
                     _ => return None,
                 },
                 Some(_) => return None,
             };
             Some(FilterDef {
                 column: column.clone(),
-                test: if value.is_null() { "empty" } else { "equals" }.into(),
+                test: test.into(),
                 value,
                 ask: false,
             })
@@ -117,8 +129,10 @@ pub(crate) struct Show {
     sharing: Option<Sharing>,
     hosts: BTreeMap<&'static str, (Vec<String>, ListColumns)>,
     drillable: Vec<result::Drillable>,
-    /// The drawn summary's groupings, as `(spec, label, bucketed)`.
-    grouped: Vec<(String, String, bool)>,
+    /// The drawn summary's groupings, as `(spec, label, bucket)`.
+    grouped: Vec<(String, String, Option<&'static str>)>,
+    /// A summary shown as the records behind it (a drill-down).
+    as_rows: bool,
     confirm: Option<Confirm>,
     flash: Option<(StatusKind, String)>,
 }
@@ -229,6 +243,7 @@ impl Show {
             hosts: BTreeMap::new(),
             drillable: Vec::new(),
             grouped: Vec::new(),
+            as_rows: false,
             confirm: None,
             flash: None,
         };
@@ -260,6 +275,7 @@ impl Show {
                 p.saturating_sub(1).min(bilibi_grid::MAX_OFFSET as u64) as usize
             });
         self.answers = answer_keys(query);
+        self.as_rows = query.get("rows").is_some_and(|v| v == "1");
         self.drill = drill_keys(query)
             .into_iter()
             .map(|filter| Drill {
@@ -280,6 +296,9 @@ impl Show {
         }
         if self.page > 0 {
             query.insert("page".into(), (self.page + 1).to_string());
+        }
+        if self.as_rows {
+            query.insert("rows".into(), "1".into());
         }
         for (n, drill) in self.drill.iter().enumerate() {
             query.insert(format!("d{n}"), drill.filter.column.clone());
@@ -341,8 +360,9 @@ impl Show {
             }
             // The pager's page-size form: a report's page size is a setting.
             "filters" => {}
+            // The table on screen: a summary's records once drilled into.
             "grid" => {
-                let tab = if report.kind == Kind::Rows {
+                let tab = if report.kind == Kind::Rows || self.as_rows {
                     "rows"
                 } else {
                     "summary"
@@ -359,7 +379,10 @@ impl Show {
                     Some(n) if (n as usize) <= self.drill.len() => {
                         self.drill.remove(n as usize - 1);
                     }
-                    _ => self.drill.clear(),
+                    _ => {
+                        self.drill.clear();
+                        self.as_rows = false;
+                    }
                 }
                 self.page = 0;
             }
@@ -463,9 +486,15 @@ impl Show {
         self.flash = Some((StatusKind::Error, message));
     }
 
-    /// Narrows the run to a drawn summary line's own groups. Bucketed
-    /// groups (a month, a quarter) are not drill targets.
+    /// Shows the records behind a drawn line (or, for `total`, behind the
+    /// whole result), narrowed by that line's own groups: equals for a value,
+    /// the period's first and last day for a date bucket.
     fn drill_line(&mut self, line: Option<&str>) {
+        if line == Some("total") {
+            self.as_rows = true;
+            self.page = 0;
+            return;
+        }
         let Some(line) = line
             .and_then(|l| l.parse::<usize>().ok())
             .and_then(|n| self.drillable.get(n))
@@ -477,28 +506,40 @@ impl Show {
         } else {
             line.keys.len()
         };
-        for (key, (spec, _, bucketed)) in line.keys.iter().zip(&self.grouped).take(depth) {
-            if *bucketed
-                || self.drill.iter().any(|d| &d.filter.column == spec)
-                || self.drill.len() >= MAX_DRILL
-            {
+        let mut added = Vec::new();
+        for (key, (spec, label, bucket)) in line.keys.iter().zip(&self.grouped).take(depth) {
+            if self.drill.iter().any(|d| &d.filter.column == spec) {
                 continue;
             }
-            let (test, value) = if key.is_null() {
-                ("empty", Value::Null)
-            } else {
-                ("equals", key.clone())
+            let shown = result::key_text(key, *bucket);
+            let (test, value) = match bucket {
+                _ if key.is_null() => ("empty", Value::Null),
+                Some(bucket) => match result::bucket_days(key, bucket) {
+                    Some((min, max)) => ("range", json!({"min": min, "max": max})),
+                    None => continue,
+                },
+                None => ("equals", key.clone()),
             };
-            self.drill.push(Drill {
+            added.push(Drill {
                 filter: FilterDef {
                     column: spec.clone(),
                     test: test.into(),
                     value,
                     ask: false,
                 },
-                label: String::new(),
+                label: format!(
+                    "{label}: {}",
+                    if key.is_null() {
+                        "(none)".into()
+                    } else {
+                        shown
+                    }
+                ),
             });
         }
+        self.drill.extend(added);
+        self.drill.truncate(MAX_DRILL);
+        self.as_rows = true;
         self.page = 0;
     }
 
@@ -674,7 +715,7 @@ impl Show {
         if can.export {
             // The answers and drill-downs, so the file is the result shown.
             let mut query = self.query();
-            query.retain(|k, _| k.starts_with(['a', 'd', 'v']));
+            query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
             let href = params::address(&format!("{}/export", report_path(report.id)), &query);
             actions.push(&render(ActionLink {
                 id: "report-export",
@@ -782,25 +823,32 @@ impl Show {
         if !asks.is_empty() {
             out.push(&self.ask_form(&asks, &offered)?);
         }
-        for drill in self.drill.iter_mut() {
+        // A drill-down read from the address is named here, from the
+        // reader's own columns; one drilled on this page keeps its label.
+        for drill in self.drill.iter_mut().filter(|d| d.label.is_empty()) {
             let column = offered
                 .iter()
                 .find(|c| c.spec == drill.filter.column)
                 .map_or(drill.filter.column.as_str(), |c| c.label.as_str());
-            let value = if drill.filter.value.is_null() {
-                "(none)".into()
-            } else {
-                result::cell(&drill.filter.value)
+            let value = match &drill.filter.value {
+                Value::Null => "(none)".into(),
+                Value::Object(range) => format!(
+                    "{} to {}",
+                    range.get("min").map_or_else(String::new, result::cell),
+                    range.get("max").map_or_else(String::new, result::cell)
+                ),
+                value => result::cell(value),
             };
             drill.label = format!("{column}: {value}");
         }
-        if !self.drill.is_empty() {
+        if self.as_rows && report.kind != Kind::Rows {
             out.push(&self.breadcrumb()?);
         }
         let input = RunInput {
             answers: answers(report, &self.answers),
             drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
             page: self.page,
+            as_rows: self.as_rows,
         };
         let run = match self.pages.reports.run(scope, report.id, &input).await {
             Ok(run) => run,
@@ -836,11 +884,13 @@ impl Show {
             RunResult::Rows {
                 columns,
                 rows,
+                pages,
                 total,
                 page,
                 page_size,
+                totals,
             } => {
-                if can.export {
+                if can.export && !self.as_rows {
                     let cap = self
                         .pages
                         .reports
@@ -855,12 +905,20 @@ impl Show {
                 let builtins = result::row_columns(columns);
                 let host = self.host("rows", &builtins)?;
                 let sizes = [*page_size as u64];
-                result::rows(host, rows, *total, *page, *page_size, &sizes)?
+                let list = result::RowsPage {
+                    rows,
+                    pages,
+                    total: *total,
+                    page: *page,
+                    page_size: *page_size,
+                    totals: totals.as_deref(),
+                };
+                result::rows(host, &list, &sizes)?
             }
             summary @ RunResult::Summary { groupings, .. } => {
                 self.grouped = groupings
                     .iter()
-                    .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), bucket.is_some()))
+                    .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), *bucket))
                     .collect();
                 let builtins = result::summary_columns(summary);
                 let host = self.host("summary", &builtins)?;
@@ -869,9 +927,10 @@ impl Show {
                 html
             }
         };
+        let flat = matches!(run.result, RunResult::Rows { .. });
         out.push(&render(Card {
             id: "report-result",
-            inner_class: if report.kind == Kind::Rows { "p-0" } else { "" },
+            inner_class: if flat { "p-0" } else { "" },
             body,
             ..Card::default()
         })?);
@@ -989,27 +1048,39 @@ impl Show {
         })
     }
 
+    /// Where a drill-down stands: the groups it narrows to, each removable,
+    /// and the way back to the summary or matrix it came from.
     fn breadcrumb(&self) -> Result<Html> {
         let mut parts = Html::EMPTY;
+        if self.drill.is_empty() {
+            parts.push(&render(Narrowed {
+                label: "everything in the total",
+                button: Html::EMPTY,
+            })?);
+        }
         for (n, drill) in self.drill.iter().enumerate() {
-            parts.push(&render(Badge::status(BadgeKind::Plain, &drill.label))?);
             let id = format!("report-undrill-{}", n + 1);
             let index = (n + 1).to_string();
-            let label = format!("Stop showing only {}", drill.label);
-            parts.push(&render(IconButton {
+            let label = format!("Stop narrowing to {}", drill.label);
+            // Data values keep their own spelling: a badge would capitalise them.
+            let button = render(IconButton {
                 id: &id,
                 kind: IconKind::Neutral,
                 event: "undrill",
                 name: "index",
                 value: &index,
                 ..IconButton::new("close", &label)
+            })?;
+            parts.push(&render(Narrowed {
+                label: &drill.label,
+                button,
             })?);
         }
         parts.push(&render(Button {
             id: "report-undrill-all",
             button_type: "button",
             event: "undrill",
-            body: Html::text("Show all"),
+            body: Html::text("Back to the summary"),
             ..Button::default()
         })?);
         render(Breadcrumb { parts: vec![parts] })
@@ -1139,9 +1210,20 @@ struct Row {
     parts: Vec<Html>,
 }
 
+/// One group a drill-down narrows to, with its remove button.
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::narrowing(id="report-drill", label="Narrowed to", lead="Showing only", parts=parts) %}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::removable(label=label, button=button, strong=true) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct Narrowed<'a> {
+    label: &'a str,
+    button: Html,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::narrowing(id="report-drill", label="Narrowed to", lead="Records behind", parts=parts) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Breadcrumb {

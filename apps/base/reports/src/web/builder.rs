@@ -85,6 +85,7 @@ pub(crate) struct Builder {
     columns: Vec<String>,
     /// `(column, descending)`; a blank row follows the last, up to Grid's bound.
     sorts: Vec<(String, bool)>,
+    totals: bool,
     groupings: [(String, String); 2],
     measures: Vec<(String, String)>,
     chart: String,
@@ -199,6 +200,7 @@ impl Builder {
                 .iter()
                 .map(|s| (s.column.clone(), s.descending))
                 .collect(),
+            totals: d.totals,
             groupings,
             measures,
             chart: d.chart.clone().unwrap_or_default(),
@@ -260,6 +262,7 @@ impl Builder {
         for (i, slot) in self.sorts.iter_mut().enumerate() {
             *slot = (get(&format!("s{i}")), get(&format!("d{i}")) == "desc");
         }
+        self.totals = get("totals") == "true";
         for (i, slot) in self.groupings.iter_mut().enumerate() {
             *slot = (get(&format!("g{i}")), get(&format!("b{i}")));
         }
@@ -342,6 +345,9 @@ impl Builder {
                     .collect();
                 if !sorts.is_empty() {
                     definition["sort"] = json!(sorts);
+                }
+                if self.totals {
+                    definition["totals"] = json!(true);
                 }
             }
             Kind::Summary => {
@@ -497,6 +503,12 @@ impl Builder {
                         .value(if *descending { "desc" } else { "asc" }),
                 )?);
             }
+            shape.push(render(
+                field("totals", "Totals line")
+                    .kind(InputKind::Checkbox)
+                    .checked(self.totals)
+                    .hint("Adds a line summing each number column over every row."),
+            )?);
         } else {
             for (i, (column, bucket)) in self.groupings.iter().enumerate() {
                 let label = if i == 0 { "Group by" } else { "Then by" };

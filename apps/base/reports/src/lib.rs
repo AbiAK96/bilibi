@@ -84,6 +84,9 @@ pub struct RunInput {
     pub drill: Vec<FilterDef>,
     /// Rows reports: the page, from 0.
     pub page: usize,
+    /// A summary read as the rows behind it (a drill-down): its label
+    /// field, groupings and measured columns, page by page.
+    pub as_rows: bool,
 }
 
 /// One column of a result, as the reader's catalog names it.
@@ -112,9 +115,14 @@ pub enum RunResult {
         columns: Vec<ColumnInfo>,
         /// Each row: its key, then one cell per column.
         rows: Vec<(Value, Vec<Value>)>,
+        /// Each row's own record page, where its module declares one.
+        pages: Vec<Option<String>>,
         total: i64,
         page: usize,
         page_size: usize,
+        /// The definition's totals line: one sum per number column over
+        /// every row, `null` for any other column.
+        totals: Option<Vec<Value>>,
     },
     Summary {
         groupings: Vec<(ColumnInfo, Option<&'static str>)>,
@@ -138,6 +146,7 @@ pub struct Reports {
     db: Db,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
+    records: Arc<bilibi_records::Records>,
 }
 
 fn field_errors(field: &str, message: impl Into<String>) -> FieldErrors {
@@ -187,6 +196,27 @@ fn typed(value: &Value, ty: FieldType) -> Value {
         },
         _ => value.clone(),
     }
+}
+
+/// The columns a summary's drill-down lists: the record's name, then each
+/// grouping and measured column once, within the rows bound.
+fn behind(root: &bilibi_grid::Table, definition: &Definition) -> Vec<String> {
+    let mut specs: Vec<String> = Vec::new();
+    let candidates = root
+        .label_field()
+        .map(str::to_owned)
+        .into_iter()
+        .chain(definition.groupings.iter().map(|g| g.column.clone()))
+        .chain(definition.measures.iter().map(|m| m.column.clone()));
+    for spec in candidates {
+        if !specs.contains(&spec) && specs.len() < MAX_COLUMNS {
+            specs.push(spec);
+        }
+    }
+    if specs.is_empty() {
+        specs.push(root.key().to_owned());
+    }
+    specs
 }
 
 /// One saved or drill filter as a Grid filter on `column`, with the reader's
@@ -500,6 +530,25 @@ impl Reports {
         Ok(format!("{}:{seen}", report.version))
     }
 
+    /// Each row's own page, through Base Records: a kind its owner registers
+    /// for this table names the record only when the reader may open it.
+    async fn record_pages(
+        &self,
+        scope: &Scope,
+        table: &bilibi_grid::Table,
+        rows: &[(Value, Vec<Value>)],
+    ) -> Outcome<Vec<Option<String>>> {
+        let Some(kind) = self.records.kinds().find(|k| k.table == table.id()) else {
+            return Ok(vec![None; rows.len()]);
+        };
+        let references: Vec<_> = rows
+            .iter()
+            .map(|(key, _)| bilibi_records::Reference::new(kind.key, cell(key)))
+            .collect();
+        let resolved = self.records.resolve(scope, &references).await?;
+        Ok(resolved.into_iter().map(|r| r.path).collect())
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used
@@ -547,15 +596,48 @@ impl Reports {
             })?;
             filters.extend(typed);
         }
+        let as_rows = report.kind == Kind::Rows || input.as_rows;
         let result = match report.kind {
-            Kind::Rows => {
-                let columns: Vec<Column> =
-                    definition.columns.iter().filter_map(|s| keep(s)).collect();
-                let sorts = definition
-                    .sorts()
-                    .into_iter()
-                    .filter(|s| keep(&s.column).is_some())
+            _ if as_rows => {
+                let specs: Vec<String> = if report.kind == Kind::Rows {
+                    definition.columns.clone()
+                } else {
+                    behind(root, definition)
+                };
+                // Each column once, as the projection draws it, so a totals
+                // cell always sits under its own column (a definition saved
+                // before duplicates were refused may still hold one).
+                let mut once = std::collections::HashSet::new();
+                let columns: Vec<Column> = specs
+                    .iter()
+                    .filter(|s| once.insert(s.as_str()))
+                    .filter_map(|s| keep(s))
                     .collect();
+                let sorts = if report.kind == Kind::Rows {
+                    definition
+                        .sorts()
+                        .into_iter()
+                        .filter(|s| keep(&s.column).is_some())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let totals_of: Vec<Option<bilibi_grid::Measure>> = if report.kind == Kind::Rows
+                    && definition.totals
+                {
+                    columns
+                        .iter()
+                        .map(|c| {
+                            (c.ty.number() && c.spec != root.key()).then(|| bilibi_grid::Measure {
+                                column: c.spec.clone(),
+                                agg: bilibi_grid::Agg::Sum,
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let totals_filters = filters.clone();
                 // A value saved before the setting's bound was 100 still runs.
                 let page_size = self
                     .setting(&**client, scope, contributions::PAGE_SIZE_KEY)
@@ -581,7 +663,7 @@ impl Reports {
                     bilibi_grid::project(&self.db, scope, &report.record_type, &page.keys, &specs)
                         .await
                         .map_err(grid)?;
-                let rows = projection
+                let rows: Vec<(Value, Vec<Value>)> = projection
                     .rows
                     .into_iter()
                     .map(|row| {
@@ -593,15 +675,56 @@ impl Reports {
                         (row.key, cells)
                     })
                     .collect();
+                let pages = self.record_pages(scope, root, &rows).await?;
+                let totals = if totals_of.iter().any(Option::is_some) {
+                    // Grid totals up to 8 measures a read; a wider list
+                    // (up to 32 columns) takes one read per eight.
+                    let measures: Vec<_> = totals_of.iter().flatten().cloned().collect();
+                    let mut values = Vec::with_capacity(measures.len());
+                    for chunk in measures.chunks(bilibi_grid::MAX_MEASURES) {
+                        let summary = bilibi_grid::summarize(
+                            &self.db,
+                            scope,
+                            &report.record_type,
+                            &SummarySpec {
+                                filters: totals_filters.clone(),
+                                groupings: Vec::new(),
+                                measures: chunk.to_vec(),
+                                timezone: timezone.clone(),
+                                max_groups: 1,
+                            },
+                        )
+                        .await
+                        .map_err(grid)?;
+                        values.extend(summary.total.values);
+                    }
+                    let mut sums = values.into_iter();
+                    Some(
+                        totals_of
+                            .iter()
+                            .map(|m| {
+                                if m.is_some() {
+                                    sums.next().unwrap_or(Value::Null)
+                                } else {
+                                    Value::Null
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
                 RunResult::Rows {
                     columns: projection.columns.iter().map(info).collect(),
                     rows,
+                    pages,
                     total: page.total,
                     page: input.page,
                     page_size,
+                    totals,
                 }
             }
-            Kind::Summary => {
+            Kind::Rows | Kind::Summary => {
                 let groupings: Vec<_> = definition
                     .groupings()
                     .into_iter()
@@ -661,15 +784,10 @@ impl Reports {
 
     /// The whole result as CSV, up to the export cap: every page of a Rows
     /// report, or every line of a Summary, narrowed by the same answers and
-    /// drill-downs as the page. Audited with the report, the reader
+    /// drill-downs as the page (and as its records when the page shows a
+    /// summary's records). Audited with the report, the reader
     /// and the row count, never the data. Needs `reports.export`.
-    pub async fn csv(
-        &self,
-        scope: &Scope,
-        id: i64,
-        answers: &BTreeMap<usize, Value>,
-        drill: &[FilterDef],
-    ) -> Outcome<Csv> {
+    pub async fn csv(&self, scope: &Scope, id: i64, input: &RunInput) -> Outcome<Csv> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
         let cap = self
@@ -677,9 +795,8 @@ impl Reports {
             .await?;
         drop(client);
         let mut input = RunInput {
-            answers: answers.clone(),
-            drill: drill.to_vec(),
-            ..RunInput::default()
+            page: 0,
+            ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
         let mut out = String::new();
@@ -690,8 +807,10 @@ impl Reports {
                 columns,
                 total,
                 page_size,
+                totals,
                 ..
             } => {
+                let totals = totals.clone();
                 if *total as usize > cap {
                     return Err(ReportError::Refused(format!("This report has {total} rows; an export holds at most {cap}. Add a filter and try again.")));
                 }
@@ -715,6 +834,18 @@ impl Reports {
                             rows += 1;
                         }
                     }
+                }
+                if let Some(totals) = totals {
+                    line(
+                        &mut out,
+                        totals.iter().enumerate().map(|(i, v)| {
+                            if i == 0 && v.is_null() {
+                                "Total".to_owned()
+                            } else {
+                                cell(v)
+                            }
+                        }),
+                    );
                 }
             }
             RunResult::Summary {
@@ -1077,13 +1208,14 @@ fn line(out: &mut String, fields: impl IntoIterator<Item = String>) {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/reports", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard", "base/records"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
+                records: services.get(bilibi_records::SERVICE)?,
             });
             agent_operations::bind(reports.clone())?;
             Ok(reports)

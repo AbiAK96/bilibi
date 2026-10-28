@@ -69,6 +69,9 @@ pub struct Definition {
     /// Summary: one of [`CHARTS`], or none.
     #[serde(default)]
     pub chart: Option<String>,
+    /// Rows: a totals line summing each number column over every row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub totals: bool,
 }
 
 /// One filter. `value` depends on `test`: a scalar for `equals`, an array
@@ -137,7 +140,8 @@ pub fn schema() -> Value {
             "column":column,
             "descending":{"type":"boolean"}
         }}},
-        "chart":{"type":"string","enum":CHARTS}
+        "chart":{"type":"string","enum":CHARTS},
+        "totals":{"type":"boolean","description":"Rows reports: add a line summing each number column over every row."}
     }})
 }
 
@@ -189,6 +193,14 @@ impl Definition {
         let mut errors = FieldErrors::new();
         match kind {
             Kind::Rows => {
+                let mut once = std::collections::HashSet::new();
+                if !self.columns.iter().all(|c| once.insert(c)) {
+                    err(
+                        &mut errors,
+                        "definition.columns",
+                        "each column can appear once",
+                    );
+                }
                 if self.columns.is_empty() || self.columns.len() > MAX_COLUMNS {
                     err(
                         &mut errors,
@@ -208,7 +220,7 @@ impl Definition {
                 }
             }
             Kind::Summary => {
-                if !self.columns.is_empty() || !self.sort.is_empty() {
+                if !self.columns.is_empty() || !self.sort.is_empty() || self.totals {
                     err(
                         &mut errors,
                         "definition",

@@ -1134,6 +1134,7 @@ dependencies = [
  "bilibi-locale",
  "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-records",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",

@@ -402,9 +402,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{total} rows, first {first}"),
         );
     }
-    let csv = reports
-        .csv(&manager, rows_id, &BTreeMap::new(), &[])
-        .await?;
+    let csv = reports.csv(&manager, rows_id, &RunInput::default()).await?;
     let lines_out: Vec<&str> = csv.text.split("\r\n").filter(|l| !l.is_empty()).collect();
     checks.check(
         "the CSV holds a header and every row",
@@ -424,17 +422,216 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             && !exported.to_string().contains("Bench"),
         exported.to_string(),
     );
-    let refused = reports.csv(&viewer, id, &BTreeMap::new(), &[]).await;
+    let refused = reports.csv(&viewer, id, &RunInput::default()).await;
     checks.check(
         "a reader without reports.export cannot download",
         matches!(refused, Err(ReportError::Forbidden)),
         format!("{refused:?}").chars().take(60).collect::<String>(),
     );
 
+    println!("== Totals and drilling into records");
+    let totals = Draft {
+        name: "Quantities".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec!["name".into(), "quantity".into()],
+            totals: true,
+            ..Definition::default()
+        },
+    };
+    let totals_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &totals).await
+    })
+    .await?;
+    let run = reports
+        .run(&manager, totals_id, &RunInput::default())
+        .await?;
+    let want: f64 = client
+        .query_one(
+            "SELECT sum(quantity)::float8 FROM base_grid_ref_items WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    if let RunResult::Rows { totals, .. } = &run.result {
+        let got = totals
+            .as_ref()
+            .and_then(|t| t.get(1))
+            .map(number)
+            .unwrap_or_default();
+        checks.check(
+            "a totals line sums the number column over every row",
+            got == format!("{want:.2}") && totals.as_ref().is_some_and(|t| t[0].is_null()),
+            format!("{got} against {want}"),
+        );
+    }
+    let csv = reports
+        .csv(&manager, totals_id, &RunInput::default())
+        .await?;
+    checks.check(
+        "the CSV ends with the totals line",
+        csv.text.trim_end().ends_with(&format!("Total,{want}")),
+        csv.text.lines().last().unwrap_or_default().to_owned(),
+    );
+    let drill = RunInput {
+        drill: vec![filter("category", "equals", json!("parts"), false)],
+        as_rows: true,
+        ..RunInput::default()
+    };
+    let run = reports.run(&manager, id, &drill).await;
+    let parts: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_items WHERE tenant_id=1 AND category='parts'",
+            &[],
+        )
+        .await?
+        .get(0);
+    checks.check(
+        "a summary drills into the records behind one group",
+        matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { total, .. } if *total == parts)),
+        format!("{parts} parts expected"),
+    );
+
+    println!("== Totals over every column once, wider than one Grid read, and agent date drills (review of #172)");
+    let mut doubled = totals.clone();
+    doubled.definition.columns = vec!["name".into(), "quantity".into(), "quantity".into()];
+    let refused = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &doubled).await
+    })
+    .await;
+    checks.check(
+        "a column listed twice is refused when saved",
+        matches!(&refused, Err(ReportError::Invalid(fields)) if fields.contains_key("definition.columns")),
+        format!("{refused:?}").chars().take(80).collect::<String>(),
+    );
+    let numbers = [
+        "quantity",
+        "reorder_level",
+        "unit_cost",
+        "movements:count",
+        "movements.delta:sum",
+        "movements.delta:min",
+        "movements.delta:max",
+        "movements.delta:avg",
+        "group.id",
+    ];
+    let mut wide = totals.clone();
+    wide.name = "Nine totals".into();
+    wide.definition.columns = std::iter::once("name")
+        .chain(numbers)
+        .map(String::from)
+        .collect();
+    let wide_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &wide).await
+    })
+    .await?;
+    let run = reports.run(&manager, wide_id, &RunInput::default()).await?;
+    let want: (f64, f64) = {
+        let row = client
+            .query_one(
+                "SELECT sum(quantity)::float8, (SELECT sum(delta) FROM base_grid_ref_movements WHERE tenant_id=1)::float8 FROM base_grid_ref_items WHERE tenant_id=1",
+                &[],
+            )
+            .await?;
+        (row.get(0), row.get(1))
+    };
+    let got = match &run.result {
+        RunResult::Rows {
+            columns, totals, ..
+        } => totals
+            .as_ref()
+            .filter(|t| t.len() == columns.len() && columns.len() == 10)
+            .map(|t| (number(&t[1]), number(&t[5]))),
+        _ => None,
+    };
+    checks.check(
+        "nine number columns total in one line, each under its own column",
+        got == Some((format!("{:.2}", want.0), format!("{:.2}", want.1))),
+        format!("{got:?} against {want:?}"),
+    );
+    let by_month = Draft {
+        name: "Movements by month".into(),
+        description: String::new(),
+        record_type: "reference_movements".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            groupings: vec![GroupingDef {
+                column: "recorded_at".into(),
+                bucket: Some("month".into()),
+            }],
+            ..Definition::default()
+        },
+    };
+    let month_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &by_month).await
+    })
+    .await?;
+    let first: String = client
+        .query_one(
+            "SELECT to_char(date_trunc('month', min(recorded_at) AT TIME ZONE 'UTC'), 'YYYY-MM-DD') FROM base_grid_ref_movements WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    let last = {
+        let day: jiff::civil::Date = first.parse()?;
+        day.last_of_month().to_string()
+    };
+    let page_drill = RunInput {
+        drill: vec![filter(
+            "recorded_at",
+            "range",
+            json!({"min": first, "max": last}),
+            false,
+        )],
+        as_rows: true,
+        ..RunInput::default()
+    };
+    let page_total = match reports.run(&manager, month_id, &page_drill).await?.result {
+        RunResult::Rows { total, .. } => total,
+        _ => -1,
+    };
+    let registry = app
+        .services
+        .get::<bilibi_base::agent_api::Registry>("base/agent_api.registry")?;
+    let agent = registry
+        .call(
+            client,
+            &manager,
+            "base.reports.run",
+            &json!({"id": month_id, "as_rows": true, "drill": [{"column": "recorded_at", "test": "range", "min": first, "max": last}]}),
+        )
+        .await;
+    let agent_total = agent
+        .as_ref()
+        .ok()
+        .and_then(|v| {
+            v.pointer("/data/result/total")
+                .or_else(|| v.pointer("/result/total"))
+        })
+        .and_then(Value::as_i64);
+    checks.check(
+        "an agent drills into a month as the page does",
+        page_total > 0 && agent_total == Some(page_total),
+        format!(
+            "agent {agent_total:?}, page {page_total} ({:?})",
+            agent.as_ref().err()
+        ),
+    );
+
     println!("== Drill-downs in the file, and search past 500 reports (review of #168)");
     let drill = vec![filter("category", "equals", json!("tools"), false)];
     let drilled = reports
-        .csv(&manager, rows_id, &BTreeMap::new(), &drill)
+        .csv(
+            &manager,
+            rows_id,
+            &RunInput {
+                drill: drill.clone(),
+                ..RunInput::default()
+            },
+        )
         .await?;
     let tools: i64 = client
         .query_one(
