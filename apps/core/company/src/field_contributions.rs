@@ -386,12 +386,14 @@ fn validate_picklists(
         let declared = declarations.iter().any(|entry| {
             entry.provenance.module == owner
                 && entry.get::<bilibi_picklists::PickList>().is_ok_and(|list| {
-                    list.key == picklist && list.reach == bilibi_picklists::Reach::Tenant
+                    list.key == picklist
+                        && list.reach == bilibi_picklists::Reach::Tenant
+                        && list.parent.is_none()
                 })
         });
         if !declared {
             return Err(RegistryError::Contribution(format!(
-                "Company choice field {} from {owner} must name a tenant pick-list declared by that Extension: {picklist}",
+                "Company choice field {} from {owner} must name a standalone tenant pick-list declared by that Extension: {picklist}",
                 field.id
             )));
         }

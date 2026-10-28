@@ -160,16 +160,14 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a pick-list declared by that same Extension; Company verifies that declaration during discovery, stores only the stable code, and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are not included. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are not included. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage and reference fields are
 not part of this static contract.
 
 ### Upgrade notes for field contributors
 
-`CompanyFieldKind` now includes `Date`; update exhaustive matches and declare
-date values as canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL
-`DATE` columns.
+`CompanyFieldKind` now includes `Date` and `Choice`. Update exhaustive matches. Date contributions use canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL `DATE` columns. A choice contribution names a standalone tenant pick-list declared by the same Extension; add the `base/picklists` dependency, declare the list with stable codes, and contribute its Production reconcile seed. Company stores those codes and resolves their current labels through the PickLists facade; do not add a field-owned options table or freeze tenant codes into the agent schema.
 
 Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map
