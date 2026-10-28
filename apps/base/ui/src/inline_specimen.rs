@@ -59,6 +59,15 @@ impl InlineSpecimen {
             field.editable = !readonly;
             field
         };
+        // The specimen's date display is day/month/year, derived from the
+        // saved `YYYY-MM-DD` value so an edit shows what was stored.
+        let renewal_display = match values.get("renewal_date").map(String::as_str) {
+            Some(date) => match date.split('-').collect::<Vec<_>>()[..] {
+                [year, month, day] => format!("{day}/{month}/{year}"),
+                _ => date.to_string(),
+            },
+            None => String::new(),
+        };
         let kind_field = field("kind", "Edit relationship");
         let kind_editor = Field::named("kind")
             .id("inline-kind-input")
@@ -101,7 +110,7 @@ impl InlineSpecimen {
             renewal_date: InlineEdit {
                 field: field("renewal_date", "Edit renewal date")
                     .input_type("date")
-                    .display_value("31/12/2026"),
+                    .display_value(renewal_display),
             },
             optional: InlineEdit {
                 field: field("optional", "Edit reference").allow_empty(),
