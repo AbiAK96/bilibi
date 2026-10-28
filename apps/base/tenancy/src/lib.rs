@@ -146,6 +146,9 @@ pub enum Channel {
     Api,
     /// The agent edge `/mcp`.
     Mcp,
+    /// A queued job calling a write contract for the person who started it
+    /// (`bilibi_agent_api::job`, ADR 10).
+    Job,
 }
 impl Channel {
     pub fn as_str(self) -> &'static str {
@@ -153,6 +156,7 @@ impl Channel {
             Self::Web => "web",
             Self::Api => "api",
             Self::Mcp => "mcp",
+            Self::Job => "job",
         }
     }
 }
@@ -297,6 +301,8 @@ pub struct Scope {
     impersonator: Option<Impersonator>,
     /// Re-read identity and grant standing on the caller's connection.
     authentication: Authentication,
+    /// Set by `in_job`: the request is a queued job, not the browser.
+    job: bool,
     /// A step-up code presented with this request, if any.
     step_up: Option<Box<PresentedCode>>,
     /// The company the session chose to work in, kept only while the
@@ -381,11 +387,22 @@ impl Scope {
         }
         self
     }
-    /// Web for a browser session; the agent edge it came through otherwise.
+    /// Web for a browser session; the agent edge it came through otherwise,
+    /// and `Job` for a queued job's call (`in_job`).
     pub fn channel(&self) -> Channel {
+        if self.job {
+            return Channel::Job;
+        }
         self.agent
             .as_ref()
             .map_or(Channel::Web, |agent| agent.channel)
+    }
+    /// Marks the scope a queued job re-sealed for its person as the job
+    /// door, so a contract that names its channels sees the job, not a
+    /// browser. Descriptive only; it adds and removes no authority.
+    pub fn in_job(mut self) -> Self {
+        self.job = true;
+        self
     }
     /// Marks an agent scope as arriving over `/mcp` rather than `/api/v1`.
     /// Descriptive only; a browser scope is left as it is.
@@ -558,6 +575,7 @@ impl Authentication {
             agent: None,
             impersonator,
             authentication: self.clone(),
+            job: false,
             step_up: None,
             company: None,
             tenant_name: row.get(0),
@@ -611,6 +629,7 @@ impl Authentication {
             agent: None,
             impersonator: None,
             authentication: self.clone(),
+            job: false,
             step_up: None,
             company: None,
             tenant_name: row.get(0),
