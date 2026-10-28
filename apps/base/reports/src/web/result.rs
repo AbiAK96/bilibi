@@ -1,7 +1,8 @@
 //! A run drawn for the Result tab: a list report's page of rows in the
 //! shared flex table (each row opening its record's page where Base Records
-//! has a kind for it, and an optional totals line), or a summary's chart
-//! and its lines with subtotals and the total. A group, a total or a chart bar drills into the records
+//! has a kind for it, and an optional totals line), a summary's chart and
+//! its lines with subtotals and the total, or a matrix (one grouping down,
+//! one across). A group, a total or a chart bar drills into the records
 //! behind it: the page names a line it drew, never a value from the browser.
 use super::render;
 use crate::{ColumnInfo, RunResult};
@@ -15,6 +16,9 @@ use serde_json::Value;
 /// One line of a summary as a run carries it: keys, subtotal flag, record
 /// count, one value per measure.
 type SummaryLine = (Vec<Value>, bool, i64, Vec<Value>);
+
+/// Values across a matrix at most; more reads better as a summary.
+pub(crate) const MAX_ACROSS: usize = 24;
 
 /// A cell's text: numbers as they come, yes/no for booleans, blank for none.
 pub(crate) fn cell(value: &Value) -> String {
@@ -311,6 +315,218 @@ pub(crate) fn summary(
     table.framed = false;
     out.push(&render(table)?);
     Ok((render(Stack { parts: vec![out] })?, drillables(lines)))
+}
+
+/// What a matrix lays out: the values down (first grouping) and across
+/// (second), in the order the read returned them.
+struct Axes {
+    down: Vec<Value>,
+    across: Vec<Value>,
+}
+fn axes(lines: &[SummaryLine]) -> Axes {
+    let mut axes = Axes {
+        down: Vec::new(),
+        across: Vec::new(),
+    };
+    for (keys, subtotal, _, _) in lines {
+        if *subtotal || keys.len() != 2 {
+            continue;
+        }
+        if !axes.down.contains(&keys[0]) {
+            axes.down.push(keys[0].clone());
+        }
+        if !axes.across.contains(&keys[1]) {
+            axes.across.push(keys[1].clone());
+        }
+    }
+    axes
+}
+
+/// The table columns of a matrix: the down grouping, one per value across,
+/// then the row total. `None` when too many values run across.
+pub(crate) fn matrix_columns(result: &RunResult) -> Option<Vec<BuiltinColumn>> {
+    let RunResult::Summary {
+        groupings, lines, ..
+    } = result
+    else {
+        return None;
+    };
+    let (down, across) = (groupings.first()?, groupings.get(1)?);
+    let axes = axes(lines);
+    if axes.across.len() > MAX_ACROSS {
+        return None;
+    }
+    let mut columns = vec![builtin("down", &down.0.label, "string")];
+    columns.extend(axes.across.iter().enumerate().map(|(i, value)| {
+        let label = key_text(value, across.1);
+        builtin(
+            &format!("a{i}"),
+            if label.is_empty() { "(none)" } else { &label },
+            "decimal",
+        )
+    }));
+    columns.push(builtin("total", "Total", "decimal"));
+    Some(columns)
+}
+
+/// A matrix laid out once, for the page and the file alike: a row per value
+/// down, a column per value across, the measure (or the record count) in
+/// each cell, a row total, column totals where the measure adds up across
+/// rows (count, sum, lowest, highest; blank otherwise) and the grand total.
+pub(crate) struct Pivot {
+    pub down: Vec<Value>,
+    pub across: Vec<Value>,
+    /// Per row down: one cell per value across.
+    pub cells: Vec<Vec<Option<Value>>>,
+    /// Per row down: its subtotal line (the row total), the drill target.
+    pub subtotals: Vec<Option<usize>>,
+    pub row_totals: Vec<Option<Value>>,
+    pub column_totals: Vec<String>,
+    pub grand: Value,
+}
+
+pub(crate) fn pivot(
+    measures: &[(ColumnInfo, &'static str)],
+    lines: &[SummaryLine],
+    total: &(i64, Vec<Value>),
+) -> Pivot {
+    let agg = measures.first().map(|(_, agg)| *agg);
+    let value = |count: i64, values: &[Value]| -> Value {
+        if measures.is_empty() {
+            Value::from(count)
+        } else {
+            values.first().cloned().unwrap_or(Value::Null)
+        }
+    };
+    let Axes { down, across } = axes(lines);
+    let mut sums: Vec<Option<f64>> = vec![None; across.len()];
+    let (mut cells, mut subtotals, mut row_totals) = (Vec::new(), Vec::new(), Vec::new());
+    for d in &down {
+        let mut row = Vec::with_capacity(across.len());
+        for (c, a) in across.iter().enumerate() {
+            let shown = lines
+                .iter()
+                .find(|(keys, sub, _, _)| {
+                    !*sub && keys.first() == Some(d) && keys.get(1) == Some(a)
+                })
+                .map(|(_, _, count, values)| value(*count, values));
+            if let Some(v) = shown.as_ref().and_then(number) {
+                let slot = &mut sums[c];
+                *slot = Some(match (agg, *slot) {
+                    (_, None) => v,
+                    (Some("min"), Some(t)) => t.min(v),
+                    (Some("max"), Some(t)) => t.max(v),
+                    (_, Some(t)) => t + v,
+                });
+            }
+            row.push(shown);
+        }
+        let subtotal = lines
+            .iter()
+            .position(|(keys, sub, _, _)| *sub && keys.first() == Some(d));
+        row_totals.push(subtotal.map(|line| value(lines[line].2, &lines[line].3)));
+        subtotals.push(subtotal);
+        cells.push(row);
+    }
+    let adds_up = matches!(agg, None | Some("count" | "sum" | "min" | "max"));
+    let column_totals = sums
+        .iter()
+        .map(|sum| match sum {
+            Some(v) if adds_up => format_total(*v),
+            _ => String::new(),
+        })
+        .collect();
+    Pivot {
+        down,
+        across,
+        cells,
+        subtotals,
+        row_totals,
+        column_totals,
+        grand: value(total.0, &total.1),
+    }
+}
+
+/// A matrix on the page ([`Pivot`]). Each row's label drills into its
+/// records.
+pub(crate) fn matrix(
+    title: &str,
+    host: &ListColumns,
+    result: &RunResult,
+) -> Result<(Html, Vec<Drillable>)> {
+    let RunResult::Summary {
+        groupings,
+        measures,
+        lines,
+        total,
+        chart,
+    } = result
+    else {
+        return Err(Error::Internal);
+    };
+    let mut out = Html::EMPTY;
+    if let Some(kind) = chart.as_deref().and_then(ChartKind::from_key) {
+        out.push(&render(figure(
+            "report-chart",
+            title,
+            kind,
+            groupings,
+            measures,
+            lines,
+            total,
+            true,
+        ))?);
+    }
+    let pivot = pivot(measures, lines, total);
+    let mut flex = Vec::new();
+    for (r, down) in pivot.down.iter().enumerate() {
+        let mut row = FlexRow::new(format!("down-{r}"));
+        let label = key_text(down, groupings[0].1);
+        let label = if label.is_empty() {
+            "(none)".to_owned()
+        } else {
+            label
+        };
+        row = row.slot(
+            "down",
+            match pivot.subtotals[r] {
+                Some(line) => drill_cell(&label, &line.to_string())?,
+                None => Html::text(&label),
+            },
+        );
+        for (c, shown) in pivot.cells[r].iter().enumerate() {
+            row = row.slot(
+                &format!("a{c}"),
+                Html::text(&shown.as_ref().map(cell).unwrap_or_default()),
+            );
+        }
+        if let Some(total) = &pivot.row_totals[r] {
+            row = row.slot("total", Html::text(&cell(total)));
+        }
+        row.dom_id = Some(format!("report-down-{r}"));
+        flex.push(row);
+    }
+    let mut last = FlexRow::new("total").slot("down", drill_cell("Total", "total")?);
+    for (c, text) in pivot.column_totals.iter().enumerate() {
+        last = last.slot(&format!("a{c}"), Html::text(text));
+    }
+    last = last.slot("total", Html::text(&cell(&pivot.grand)));
+    last.dom_id = Some("report-line-total".into());
+    flex.push(last);
+    let mut table = FlexTable::new("report-matrix", host.flex_columns(), flex);
+    table.zoom = host.zoom;
+    table.caption = "Report matrix";
+    table.framed = false;
+    out.push(&render(table)?);
+    Ok((render(Stack { parts: vec![out] })?, drillables(lines)))
+}
+
+fn format_total(v: f64) -> String {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v:.2}")
+    }
 }
 
 #[derive(askama::Template)]

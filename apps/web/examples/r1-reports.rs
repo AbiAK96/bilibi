@@ -9,8 +9,8 @@ use bilibi_base::{
     authz::grants::Grants,
     grid,
     reports::{
-        Definition, Draft, FilterDef, GroupingDef, Kind, MeasureDef, ReportError, Reports,
-        RunInput, RunResult, SortDef,
+        Definition, Draft, FilterDef, Format, Frequency, GroupingDef, Kind, MeasureDef, Plan,
+        ReportError, Reports, RunInput, RunResult, SortDef,
     },
     tenancy::{Authentication, Scope},
 };
@@ -26,7 +26,7 @@ bilibi_walkthrough_fixture::inventory::submit! { bilibi_walkthrough_fixture::reg
     verbs: &[],
     capabilities: &[],
     roles: &[
-        bilibi_walkthrough_fixture::authz::RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view", "reports.author", "reports.share", "reports.export"] },
+        bilibi_walkthrough_fixture::authz::RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view", "reports.author", "reports.share", "reports.export", "reports.schedule"] },
         bilibi_walkthrough_fixture::authz::RoleDefinition { code: "viewer", name: "viewer", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view"] },
     ],
     system_principals: &[],
@@ -402,8 +402,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{total} rows, first {first}"),
         );
     }
-    let csv = reports.csv(&manager, rows_id, &RunInput::default()).await?;
-    let lines_out: Vec<&str> = csv.text.split("\r\n").filter(|l| !l.is_empty()).collect();
+    let csv = reports
+        .export(&manager, rows_id, &RunInput::default(), Format::Csv)
+        .await?;
+    let text = String::from_utf8(csv.bytes.clone()).unwrap_or_default();
+    let lines_out: Vec<&str> = text.split("\r\n").filter(|l| !l.is_empty()).collect();
     checks.check(
         "the CSV holds a header and every row",
         lines_out.len() == 13 && csv.rows == 12,
@@ -422,14 +425,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             && !exported.to_string().contains("Bench"),
         exported.to_string(),
     );
-    let refused = reports.csv(&viewer, id, &RunInput::default()).await;
+    let refused = reports
+        .export(&viewer, id, &RunInput::default(), Format::Csv)
+        .await;
     checks.check(
         "a reader without reports.export cannot download",
         matches!(refused, Err(ReportError::Forbidden)),
         format!("{refused:?}").chars().take(60).collect::<String>(),
     );
+    let pdf = reports
+        .export(&manager, rows_id, &RunInput::default(), Format::Pdf)
+        .await?;
+    checks.check(
+        "the same result renders as a PDF",
+        pdf.bytes.starts_with(b"%PDF-") && pdf.filename == "items-by-cost.pdf",
+        format!("{} bytes, {}", pdf.bytes.len(), pdf.filename),
+    );
 
-    println!("== Totals and drilling into records");
+    println!("== Phase 2: totals, drill into records, matrix");
     let totals = Draft {
         name: "Quantities".into(),
         description: String::new(),
@@ -467,14 +480,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{got} against {want}"),
         );
     }
-    let csv = reports
-        .csv(&manager, totals_id, &RunInput::default())
-        .await?;
-    checks.check(
-        "the CSV ends with the totals line",
-        csv.text.trim_end().ends_with(&format!("Total,{want}")),
-        csv.text.lines().last().unwrap_or_default().to_owned(),
-    );
     let drill = RunInput {
         drill: vec![filter("category", "equals", json!("parts"), false)],
         as_rows: true,
@@ -492,6 +497,270 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "a summary drills into the records behind one group",
         matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { total, .. } if *total == parts)),
         format!("{parts} parts expected"),
+    );
+    let matrix = Draft {
+        name: "Stock across groups".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Matrix,
+        definition: Definition {
+            groupings: vec![
+                GroupingDef {
+                    column: "category".into(),
+                    bucket: None,
+                },
+                GroupingDef {
+                    column: "group.name".into(),
+                    bucket: None,
+                },
+            ],
+            measures: vec![MeasureDef {
+                column: "quantity".into(),
+                agg: "sum".into(),
+            }],
+            ..Definition::default()
+        },
+    };
+    let matrix_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &matrix).await
+    })
+    .await?;
+    let run = reports
+        .run(&manager, matrix_id, &RunInput::default())
+        .await?;
+    let cells: i64 = client.query_one("SELECT count(*) FROM (SELECT DISTINCT i.category, g.name FROM base_grid_ref_items i JOIN base_grid_ref_groups g ON g.id=i.group_id WHERE i.tenant_id=1) c", &[]).await?.get(0);
+    if let RunResult::Summary { lines, .. } = &run.result {
+        let detail = lines.iter().filter(|l| !l.1).count() as i64;
+        checks.check(
+            "a matrix reads one cell per pair down and across",
+            detail == cells,
+            format!("{detail} cells, {cells} in SQL"),
+        );
+    }
+    let file = reports
+        .export(&manager, matrix_id, &RunInput::default(), Format::Csv)
+        .await?;
+    let csv = String::from_utf8_lossy(&file.bytes).into_owned();
+    let last: Vec<f64> = csv
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .split(',')
+        .skip(1)
+        .map(|v| v.parse().unwrap_or(f64::NAN))
+        .collect();
+    let (columns, grand) = last.split_at(last.len().saturating_sub(1));
+    checks.check(
+        "a matrix file carries the page's column totals, adding up to the grand total",
+        !columns.is_empty()
+            && columns.iter().all(|v| v.is_finite())
+            && grand
+                .first()
+                .is_some_and(|g| (columns.iter().sum::<f64>() - g).abs() < 1e-6),
+        csv.lines().last().unwrap_or_default().to_owned(),
+    );
+    let ungrouped = Draft {
+        name: "Stock in all".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            measures: vec![MeasureDef {
+                column: "quantity".into(),
+                agg: "sum".into(),
+            }],
+            ..Definition::default()
+        },
+    };
+    let ungrouped_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &ungrouped).await
+    })
+    .await?;
+    let file = reports
+        .export(&manager, ungrouped_id, &RunInput::default(), Format::Csv)
+        .await?;
+    checks.check(
+        "an ungrouped summary's file is one line and not empty",
+        file.rows == 1 && !file.empty,
+        format!("rows {}, empty {}", file.rows, file.empty),
+    );
+    let mut lopsided = matrix.clone();
+    lopsided.definition.groupings.pop();
+    let refused = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &lopsided).await
+    })
+    .await;
+    checks.check(
+        "a matrix needs two groupings",
+        matches!(refused, Err(ReportError::Invalid(_))),
+        format!("{refused:?}").chars().take(100).collect::<String>(),
+    );
+
+    println!("== Phase 2: built-in reports");
+    let builtins = reports.builtins(&manager).await?;
+    checks.check(
+        "a module's built-in report is offered to a reader of its records",
+        builtins
+            .iter()
+            .any(|r| r.builtin == Some("companies-by-status") && !r.owned),
+        format!(
+            "{:?}",
+            builtins.iter().map(|r| r.builtin).collect::<Vec<_>>()
+        ),
+    );
+    let run = reports
+        .run_builtin(&manager, "companies-by-status", &RunInput::default())
+        .await;
+    checks.check(
+        "a built-in runs as the reader",
+        run.is_ok(),
+        format!(
+            "{:?}",
+            run.as_ref()
+                .map(|r| r.report.name.clone())
+                .map_err(|e| e.to_string())
+        ),
+    );
+    let copy = write(&boundary, &db, &manager, "reports.copy", async |tx| {
+        reports
+            .copy_builtin(tx, &manager, "companies-by-status", None)
+            .await
+    })
+    .await?;
+    let copied = reports.get(&manager, copy).await?;
+    checks.check(
+        "a built-in copies into the reader's own report",
+        copied.owned && copied.name == "Copy of Companies by status",
+        copied.name.clone(),
+    );
+    let missing = reports.builtin(&manager, "no-such-report").await;
+    checks.check(
+        "an unknown built-in key is refused",
+        matches!(missing, Err(ReportError::NotFound)),
+        format!("{missing:?}").chars().take(60).collect::<String>(),
+    );
+
+    println!("== Phase 2: prepared exports and schedules");
+    let prepared = write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.prepare_export",
+        async |tx| {
+            reports
+                .prepare_export(tx, &manager, rows_id, &BTreeMap::new(), Format::Csv)
+                .await
+        },
+    )
+    .await;
+    match &prepared {
+        Ok(export) => {
+            let jobs: i64 = client.query_one("SELECT count(*) FROM base_queue_jobs WHERE worker_id='base/reports-export' AND args->>'export'=$1", &[&export.to_string()]).await?.get(0);
+            checks.check(
+                "a prepared export commits its request with its queue job",
+                jobs == 1,
+                format!("export {export}, {jobs} job(s)"),
+            );
+            // Queue ends the job before it runs (as when it refuses the
+            // requester): the request shows as failed, not preparing.
+            client.execute("UPDATE base_queue_jobs SET state='cancelled', cancelled_at=now(), failure_code='actor_refused' WHERE id=(SELECT job_id FROM base_report_exports WHERE id=$1)", &[export]).await?;
+            let listed = reports.exports(&manager, Some(rows_id)).await?;
+            let shown = listed.iter().find(|e| e.id == *export);
+            checks.check(
+                "a request whose job ended unrun shows as failed with why",
+                shown.is_some_and(|e| e.state == "failed" && e.message.is_some()),
+                format!("{:?}", shown.map(|e| (e.state, e.message.clone()))),
+            );
+            // A file made under other access than the requester has now
+            // is refused before any byte is read.
+            client.execute("UPDATE base_report_exports SET state='ready', artifact_id='none', filename='stale.csv', access='0:stale' WHERE id=$1", &[export]).await?;
+            let stale = reports.exported(&manager, *export).await;
+            checks.check(
+                "a stored file is refused once what its requester may see has changed",
+                matches!(&stale, Err(ReportError::Refused(m)) if m.contains("changed")),
+                format!("{:?}", stale.map(|f| f.rows)),
+            );
+        }
+        Err(ReportError::Refused(message)) => checks.check(
+            "an account with no company is told why it cannot prepare an export",
+            message.contains("company"),
+            message.clone(),
+        ),
+        Err(error) => checks.check("a prepared export is accepted", false, error.to_string()),
+    }
+    let plan = Plan {
+        frequency: Frequency::Weekly,
+        at_minute: 8 * 60,
+        weekday: Some(1),
+        monthday: None,
+        format: Format::Csv,
+        include_owner: true,
+        skip_empty: true,
+        roles: Vec::new(),
+    };
+    let refused = write(&boundary, &db, &viewer, "reports.subscribe", async |tx| {
+        reports.subscribe(tx, &viewer, rows_id, &plan).await
+    })
+    .await;
+    checks.check(
+        "a reader without reports.schedule cannot subscribe",
+        matches!(refused, Err(ReportError::Forbidden)),
+        format!("{refused:?}").chars().take(60).collect::<String>(),
+    );
+    let subscription = write(&boundary, &db, &manager, "reports.subscribe", async |tx| {
+        reports.subscribe(tx, &manager, rows_id, &plan).await
+    })
+    .await?;
+    let held = reports.subscriptions(&manager, rows_id).await?;
+    let next = held
+        .first()
+        .map(|s| s.next_run_at.clone())
+        .unwrap_or_default();
+    let weekday: Option<f64> = client.query_one("SELECT extract(isodow FROM next_run_at AT TIME ZONE timezone)::float8 FROM base_report_subscriptions WHERE id=$1", &[&subscription]).await?.get(0);
+    checks.check(
+        "a weekly schedule next runs on its weekday, in the future",
+        held.len() == 1 && weekday == Some(1.0) && next.as_str() > "2000",
+        format!("next {next}, weekday {weekday:?}"),
+    );
+    write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.pause_subscription",
+        async |tx| reports.pause(tx, &manager, subscription, 1, true).await,
+    )
+    .await?;
+    let held = reports.subscriptions(&manager, rows_id).await?;
+    checks.check(
+        "pausing holds the schedule",
+        held.first().is_some_and(|s| s.paused && s.version == 2),
+        format!("{:?}", held.first().map(|s| (s.paused, s.version))),
+    );
+    let stale = write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.unsubscribe",
+        async |tx| reports.unsubscribe(tx, &manager, subscription, 1).await,
+    )
+    .await;
+    checks.check(
+        "a stale schedule version is refused",
+        matches!(stale, Err(ReportError::Conflict)),
+        format!("{stale:?}"),
+    );
+    write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.unsubscribe",
+        async |tx| reports.unsubscribe(tx, &manager, subscription, 2).await,
+    )
+    .await?;
+    checks.check(
+        "unsubscribing removes it",
+        reports.subscriptions(&manager, rows_id).await?.is_empty(),
+        "",
     );
 
     println!("== Totals over every column once, wider than one Grid read, and agent date drills (review of #172)");
@@ -624,13 +893,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("== Drill-downs in the file, and search past 500 reports (review of #168)");
     let drill = vec![filter("category", "equals", json!("tools"), false)];
     let drilled = reports
-        .csv(
+        .export(
             &manager,
             rows_id,
             &RunInput {
                 drill: drill.clone(),
                 ..RunInput::default()
             },
+            Format::Csv,
         )
         .await?;
     let tools: i64 = client

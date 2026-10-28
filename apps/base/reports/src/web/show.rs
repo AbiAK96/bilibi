@@ -6,7 +6,7 @@
 //! the address, so a link and the CSV download repeat the same question.
 use super::{
     builder::Builder, clear_flash, flash_map, index::kind_label, page_error, refusal, render,
-    report_path, result, Can, Pages, Refusal,
+    report_path, result, schedule, Can, Pages, Refusal,
 };
 use crate::{ColumnInfo, FilterDef, Kind, Report, ReportError, RunInput, RunResult};
 use askama::Template;
@@ -15,16 +15,17 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     choices,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, ActionLink, Alert, Button, ButtonVariant, Card, ColumnsOutcome, ConfirmDialog, Fact,
-    Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind, ListColumns,
-    MultiSelect, StatusKind, Tab, Tabs,
+    params, ActionLink, Alert, Badge, BadgeKind, Button, ButtonVariant, Card, ColumnsOutcome,
+    ConfirmDialog, Fact, Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind,
+    ListColumns, MultiSelect, StatusKind, Tab, Tabs,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
-const TABS: [(&str, &str); 3] = [
+const TABS: [(&str, &str); 4] = [
     ("result", "Result"),
     ("definition", "Definition"),
+    ("schedule", "Schedule"),
     ("sharing", "Sharing"),
 ];
 const DENIED_AUTHOR: &str = "You do not have permission to change this report.";
@@ -62,6 +63,8 @@ impl Sharing {
 enum Confirm {
     Copy,
     Delete(i64),
+    /// A schedule of the reader's, by id and version.
+    Unsubscribe(i64, i64),
 }
 
 /// A drill-down: a group's own value, shown as `label: value`. It travels
@@ -119,6 +122,8 @@ pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
 pub(crate) struct Show {
     pages: Pages,
     id: i64,
+    /// A built-in report's key, read-only and copyable; `None` for a stored one.
+    builtin: Option<String>,
     tab: String,
     /// `a<i>` (and `a<i>_to` for a range) by filter position, as typed.
     answers: BTreeMap<String, String>,
@@ -131,10 +136,11 @@ pub(crate) struct Show {
     drillable: Vec<result::Drillable>,
     /// The drawn summary's groupings, as `(spec, label, bucket)`.
     grouped: Vec<(String, String, Option<&'static str>)>,
-    /// A summary shown as the records behind it (a drill-down).
+    /// A summary or matrix shown as the records behind it (a drill-down).
     as_rows: bool,
     confirm: Option<Confirm>,
     flash: Option<(StatusKind, String)>,
+    schedule: schedule::Draft,
 }
 
 #[derive(Template)]
@@ -229,10 +235,18 @@ pub(crate) fn answer_keys(query: &HashMap<String, String>) -> BTreeMap<String, S
 }
 
 impl Show {
+    /// A built-in report, at `/built-in-reports/{key}`.
+    pub fn builtin(pages: Pages, key: String, query: &HashMap<String, String>) -> Self {
+        let mut show = Self::new(pages, 0, query);
+        show.builtin = Some(key);
+        show
+    }
+
     pub fn new(pages: Pages, id: i64, query: &HashMap<String, String>) -> Self {
         let mut show = Self {
             pages,
             id,
+            builtin: None,
             tab: "result".into(),
             answers: BTreeMap::new(),
             page: 0,
@@ -246,6 +260,7 @@ impl Show {
             as_rows: false,
             confirm: None,
             flash: None,
+            schedule: schedule::Draft::default(),
         };
         show.params(query);
         show
@@ -314,12 +329,11 @@ impl Show {
     /// when someone saves a newer one, it keeps its base version (changed or
     /// not), so its save is refused as a conflict, never applied over theirs.
     async fn load(&mut self, scope: &Scope) -> Result<Report> {
-        let report = self
-            .pages
-            .reports
-            .get(scope, self.id)
-            .await
-            .map_err(page_error)?;
+        let report = match &self.builtin {
+            Some(key) => self.pages.reports.builtin(scope, key).await,
+            None => self.pages.reports.get(scope, self.id).await,
+        }
+        .map_err(page_error)?;
         let fresh = self
             .report
             .as_ref()
@@ -343,7 +357,7 @@ impl Show {
         scope: &Scope,
         credential: &str,
         value: &Value,
-    ) -> Result<Option<(String, String)>> {
+    ) -> Result<Option<(String, Option<String>)>> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         let shown = self.report.as_ref().map(|r| r.version);
         let report = self.load(scope).await?;
@@ -413,6 +427,152 @@ impl Show {
             "save_sharing" if get("discard").is_some() => {
                 self.sharing = Some(Sharing::from_report(&report))
             }
+            "edit_schedule" => self.schedule.read(value),
+            "subscribe" => {
+                self.schedule.errors.clear();
+                let input = self.schedule.input(report.id);
+                match self
+                    .pages
+                    .submit(
+                        scope,
+                        credential,
+                        "subscribe",
+                        "base.reports.subscribe",
+                        input,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        self.schedule = schedule::Draft::default();
+                        self.flash = Some((
+                            StatusKind::Success,
+                            "Scheduled. The bell and an email tell you each time it is delivered."
+                                .into(),
+                        ));
+                    }
+                    Err(error) => {
+                        match refusal(error, "You do not have permission to schedule reports.")? {
+                            Refusal::Fields(fields) => self.schedule.errors = fields,
+                            Refusal::Message(message) => {
+                                self.flash = Some((StatusKind::Error, message))
+                            }
+                        }
+                    }
+                }
+            }
+            "pause_schedule" => {
+                if let Some((id, version, Some(paused))) = schedule::parse(get("schedule")) {
+                    let input = json!({"subscription": id, "version": version, "paused": paused});
+                    match self
+                        .pages
+                        .submit(
+                            scope,
+                            credential,
+                            "pause_schedule",
+                            "base.reports.pause_subscription",
+                            input,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            self.flash = Some((
+                                StatusKind::Success,
+                                if paused {
+                                    "Schedule paused."
+                                } else {
+                                    "Schedule resumed."
+                                }
+                                .into(),
+                            ))
+                        }
+                        Err(error) => self.refused(refusal(
+                            error,
+                            "You do not have permission to schedule reports.",
+                        )?),
+                    }
+                }
+            }
+            "request_unsubscribe" => {
+                if let Some((id, version, _)) = schedule::parse(get("schedule")) {
+                    self.confirm = Some(Confirm::Unsubscribe(id, version));
+                }
+            }
+            "unsubscribe" => {
+                if let Some(Confirm::Unsubscribe(id, version)) = self.confirm.take() {
+                    let input = json!({"subscription": id, "version": version});
+                    match self
+                        .pages
+                        .submit(
+                            scope,
+                            credential,
+                            "unsubscribe",
+                            "base.reports.unsubscribe",
+                            input,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            self.flash = Some((StatusKind::Success, "Schedule deleted.".into()))
+                        }
+                        Err(error) => self.refused(refusal(
+                            error,
+                            "You do not have permission to schedule reports.",
+                        )?),
+                    }
+                }
+            }
+            // Checked before the browser is sent to the file, so a PDF this
+            // result cannot make is refused here in words, not as a 403.
+            "download_pdf" if report.builtin.is_none() => {
+                let input = RunInput {
+                    answers: answers(&report, &self.answers),
+                    drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
+                    page: 0,
+                    as_rows: self.as_rows,
+                };
+                match self
+                    .pages
+                    .reports
+                    .exportable(scope, report.id, &input, crate::Format::Pdf)
+                    .await
+                {
+                    Ok(()) => return Ok(Some((self.export_href(&report, true), None))),
+                    Err(ReportError::Database(error)) => return Err(error),
+                    Err(ReportError::Forbidden) => self.refused(Refusal::Message(
+                        "You do not have permission to export reports.".into(),
+                    )),
+                    Err(refused) => self.refused(Refusal::Message(refused.to_string())),
+                }
+            }
+            "prepare_export" => {
+                let format = match get("format") {
+                    Some("pdf") => "pdf",
+                    _ => "csv",
+                };
+                let input = json!({"id": report.id, "format": format, "answers": agent_answers(&answers(&report, &self.answers))});
+                match self
+                    .pages
+                    .submit(
+                        scope,
+                        credential,
+                        "prepare_export",
+                        "base.reports.prepare_export",
+                        input,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        self.flash = Some((
+                            StatusKind::Success,
+                            "Preparing your export. The bell tells you when it is ready.".into(),
+                        ))
+                    }
+                    Err(error) => self.refused(refusal(
+                        error,
+                        "You do not have permission to export reports.",
+                    )?),
+                }
+            }
             "save_sharing" if report.owned => self.save_sharing(scope, credential, value).await?,
             "request_copy" => self.confirm = Some(Confirm::Copy),
             "request_delete" if report.owned => {
@@ -428,7 +588,10 @@ impl Show {
                         credential,
                         "copy",
                         "base.reports.copy",
-                        json!({"id": report.id}),
+                        match report.builtin {
+                            Some(key) => json!({"builtin": key}),
+                            None => json!({"id": report.id}),
+                        },
                     )
                     .await
                 {
@@ -436,7 +599,7 @@ impl Show {
                         let id = result["id"].as_i64().ok_or(Error::Internal)?;
                         return Ok(Some((
                             format!("{}?tab=definition", report_path(id)),
-                            "Your copy is saved. Change it as you like.".into(),
+                            Some("Your copy is saved. Change it as you like.".into()),
                         )));
                     }
                     Err(error) => self.refused(refusal(
@@ -463,7 +626,7 @@ impl Show {
                     Ok(_) => {
                         return Ok(Some((
                             super::INDEX.into(),
-                            format!("{} was deleted.", report.name),
+                            Some(format!("{} was deleted.", report.name)),
                         )))
                     }
                     Err(error) => self.refused(refusal(error, DENIED_AUTHOR)?),
@@ -486,6 +649,8 @@ impl Show {
         self.flash = Some((StatusKind::Error, message));
     }
 
+    /// Narrows the run to a drawn summary line's own groups. Bucketed
+    /// groups (a month, a quarter) are not drill targets.
     /// Shows the records behind a drawn line (or, for `total`, behind the
     /// whole result), narrowed by that line's own groups: equals for a value,
     /// the period's first and last day for a date bucket.
@@ -637,15 +802,20 @@ impl Show {
     pub async fn render(&mut self, scope: &Scope) -> Result<String> {
         let report = self.load(scope).await?;
         let can = self.pages.can(scope).await?;
-        if self.tab == "sharing" && !report.owned {
+        if (self.tab == "sharing" && !report.owned)
+            || (self.tab == "schedule" && !schedule::offered(&report, can))
+        {
             self.tab = "result".into();
         }
         let header = self.header(&report, can)?;
         let facts = self.facts(scope, &report).await?;
-        let path = report_path(report.id);
+        let path = page_path(&report);
         let hrefs: Vec<(String, &str, bool)> = TABS
             .iter()
-            .filter(|(key, _)| *key != "sharing" || report.owned)
+            .filter(|(key, _)| {
+                (*key != "sharing" || report.owned)
+                    && (*key != "schedule" || schedule::offered(&report, can))
+            })
             .map(|(key, label)| {
                 let mut query = self.query();
                 query.remove("page");
@@ -669,6 +839,7 @@ impl Show {
         let body = match self.tab.as_str() {
             "definition" => self.definition(scope, &report, can).await?,
             "sharing" => self.sharing(scope, &report, can).await?,
+            "schedule" => self.schedules(scope, &report, can).await?,
             _ => self.result(scope, &report, can).await?,
         };
         let dialog = match self.confirm {
@@ -684,6 +855,16 @@ impl Show {
                     cancel_event: "cancel_confirm",
                 })?
             }
+            Some(Confirm::Unsubscribe(..)) => render(ConfirmDialog {
+                id: "report-unsubscribe-confirm",
+                consequence: "Delete this schedule?",
+                detail:
+                    "Its deliveries stop, for everyone it reached, and its history goes with it.",
+                confirm: "Delete",
+                working: "Deleting…",
+                confirm_event: "unsubscribe",
+                cancel_event: "cancel_confirm",
+            })?,
             Some(Confirm::Delete(_)) => {
                 let consequence = format!("Delete {}?", report.name);
                 render(ConfirmDialog {
@@ -710,20 +891,35 @@ impl Show {
         .map_err(|_| Error::Internal)
     }
 
+    /// The file of the result shown: its answers, drill-downs and records
+    /// view in the address.
+    fn export_href(&self, report: &Report, pdf: bool) -> String {
+        let mut query = self.query();
+        query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
+        if pdf {
+            query.insert("format".into(), "pdf".into());
+        }
+        params::address(&format!("{}/export", report_path(report.id)), &query)
+    }
+
     fn header(&self, report: &Report, can: Can) -> Result<Html> {
         let mut actions = Html::EMPTY;
-        if can.export {
-            // The answers and drill-downs, so the file is the result shown.
-            let mut query = self.query();
-            query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
-            let href = params::address(&format!("{}/export", report_path(report.id)), &query);
+        if can.export && report.builtin.is_none() {
             actions.push(&render(ActionLink {
                 id: "report-export",
                 icon: "export",
                 title: "Download the whole result as CSV",
-                href: &href,
+                href: &self.export_href(report, false),
                 body: Html::text("Download CSV"),
                 ..ActionLink::default()
+            })?);
+            actions.push(&render(Button {
+                id: "report-export-pdf",
+                button_type: "button",
+                event: "download_pdf",
+                working: "Checking…",
+                body: Html::text("Download PDF"),
+                ..Button::default()
             })?);
         }
         if can.author {
@@ -842,7 +1038,7 @@ impl Show {
             drill.label = format!("{column}: {value}");
         }
         if self.as_rows && report.kind != Kind::Rows {
-            out.push(&self.breadcrumb()?);
+            out.push(&self.breadcrumb(report.kind)?);
         }
         let input = RunInput {
             answers: answers(report, &self.answers),
@@ -850,7 +1046,10 @@ impl Show {
             page: self.page,
             as_rows: self.as_rows,
         };
-        let run = match self.pages.reports.run(scope, report.id, &input).await {
+        let run = match match report.builtin {
+            Some(key) => self.pages.reports.run_builtin(scope, key, &input).await,
+            None => self.pages.reports.run(scope, report.id, &input).await,
+        } {
             Ok(run) => run,
             Err(
                 error @ (ReportError::NotFound | ReportError::Forbidden | ReportError::Database(_)),
@@ -898,7 +1097,7 @@ impl Show {
                         .await
                         .map_err(page_error)?;
                     if *total as usize > cap {
-                        let message = format!("{total} rows is more than a download holds ({cap}). Narrow it with a filter to download it.");
+                        let message = format!("{total} rows is more than a download holds ({cap}). Prepare it as an export instead; you get a notice when it is ready.");
                         out.push(&alert("report-export-cap", StatusKind::Info, &message)?);
                     }
                 }
@@ -920,9 +1119,24 @@ impl Show {
                     .iter()
                     .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), *bucket))
                     .collect();
-                let builtins = result::summary_columns(summary);
-                let host = self.host("summary", &builtins)?;
-                let (html, drillable) = result::summary(&report.name, host, summary)?;
+                let matrix = (report.kind == Kind::Matrix)
+                    .then(|| result::matrix_columns(summary))
+                    .flatten();
+                if report.kind == Kind::Matrix && matrix.is_none() {
+                    let message = format!("More than {} values run across, so this matrix is shown as a summary. Filter it, or group across a field with fewer values.", result::MAX_ACROSS);
+                    out.push(&alert("report-matrix-wide", StatusKind::Info, &message)?);
+                }
+                let (html, drillable) = match matrix {
+                    Some(builtins) => {
+                        let host = self.host("matrix", &builtins)?;
+                        result::matrix(&report.name, host, summary)?
+                    }
+                    None => {
+                        let builtins = result::summary_columns(summary);
+                        let host = self.host("summary", &builtins)?;
+                        result::summary(&report.name, host, summary)?
+                    }
+                };
                 self.drillable = drillable;
                 html
             }
@@ -934,7 +1148,128 @@ impl Show {
             body,
             ..Card::default()
         })?);
+        if can.export && !self.as_rows && report.builtin.is_none() {
+            out.push(&self.exports(scope, report).await?);
+        }
         Ok(out)
+    }
+
+    async fn schedules(&mut self, scope: &Scope, report: &Report, can: Can) -> Result<Html> {
+        let display = self.pages.display(scope).await?;
+        let subscriptions = self
+            .pages
+            .reports
+            .subscriptions(scope, report.id)
+            .await
+            .map_err(page_error)?;
+        let roles = if can.share {
+            self.pages
+                .reports
+                .share_roles(scope)
+                .await
+                .map_err(page_error)?
+        } else {
+            Vec::new()
+        };
+        self.host("schedules", &schedule::columns())?;
+        let host = &self.hosts["schedules"].1;
+        schedule::tab(host, &display, &self.schedule, &subscriptions, &roles, can)
+    }
+
+    /// The reader's prepared exports of this report, and the buttons that
+    /// ask for one.
+    async fn exports(&mut self, scope: &Scope, report: &Report) -> Result<Html> {
+        let display = self.pages.display(scope).await?;
+        let list = self
+            .pages
+            .reports
+            .exports(scope, Some(report.id))
+            .await
+            .map_err(page_error)?;
+        let mut rows = Vec::new();
+        for export in &list {
+            let id = export.id.to_string();
+            let when = match super::instant(&display, &export.created_at) {
+                Some(i) => {
+                    let cell = format!("report-export-at-{id}");
+                    render(super::index::UpdatedCell { id: &cell, i })?
+                }
+                None => Html::text(&export.created_at),
+            };
+            let state = match export.state {
+                "ready" => render(Badge::status(BadgeKind::Success, "Ready"))?,
+                "failed" => render(Badge::status(BadgeKind::Danger, "Failed"))?,
+                "expired" => render(Badge::status(BadgeKind::Neutral, "Expired"))?,
+                _ => render(Badge::status(BadgeKind::Warning, "Preparing"))?,
+            };
+            let file = match (&export.path, &export.filename) {
+                (Some(path), Some(name)) => render(ActionLink {
+                    id: &format!("report-export-file-{id}"),
+                    icon: "export",
+                    title: "Download this export",
+                    href: path,
+                    body: Html::text(name),
+                    ..ActionLink::default()
+                })?,
+                _ => Html::text(export.message.as_deref().unwrap_or("")),
+            };
+            let mut row = bilibi_ui::FlexRow::new(id.clone())
+                .slot("asked", when)
+                .slot("format", Html::text(&export.format.to_uppercase()))
+                .slot("state", state)
+                .slot(
+                    "rows",
+                    Html::text(&export.rows.map(|r| r.to_string()).unwrap_or_default()),
+                )
+                .slot("file", file);
+            row.dom_id = Some(format!("report-export-{id}"));
+            rows.push(row);
+        }
+        let builtins = vec![
+            bilibi_ui::BuiltinColumn::new("asked", "Asked"),
+            bilibi_ui::BuiltinColumn::new("format", "Format"),
+            bilibi_ui::BuiltinColumn::new("state", "State"),
+            bilibi_ui::BuiltinColumn::new("rows", "Rows").right(),
+            bilibi_ui::BuiltinColumn::new("file", "File"),
+        ];
+        let host = self.host("exports", &builtins)?;
+        let mut table = bilibi_ui::FlexTable::new("report-exports", host.flex_columns(), rows);
+        table.zoom = host.zoom;
+        table.caption = "Your exports of this report";
+        table.framed = false;
+        table.empty = Some(bilibi_ui::TableEmpty::Content(Html::text(
+            "Prepare the whole result in the background when it is too large to download at once. It is kept for a few days.",
+        )));
+        let mut actions = render(Button {
+            id: "report-prepare-csv",
+            button_type: "button",
+            event: "prepare_export",
+            name: "format",
+            value: "csv",
+            working: "Asking…",
+            body: Html::text("Prepare CSV"),
+            ..Button::default()
+        })?;
+        actions.push(&render(Button {
+            id: "report-prepare-pdf",
+            button_type: "button",
+            event: "prepare_export",
+            name: "format",
+            value: "pdf",
+            working: "Asking…",
+            body: Html::text("Prepare PDF"),
+            ..Button::default()
+        })?);
+        let mut body = render(Row {
+            parts: vec![actions],
+        })?;
+        body.push(&render(table)?);
+        render(Card {
+            id: "report-exports-card",
+            title: "Exports",
+            body,
+            ..Card::default()
+        })
     }
 
     /// The column host of a result table, kept while its columns stay the
@@ -1050,7 +1385,7 @@ impl Show {
 
     /// Where a drill-down stands: the groups it narrows to, each removable,
     /// and the way back to the summary or matrix it came from.
-    fn breadcrumb(&self) -> Result<Html> {
+    fn breadcrumb(&self, kind: Kind) -> Result<Html> {
         let mut parts = Html::EMPTY;
         if self.drill.is_empty() {
             parts.push(&render(Narrowed {
@@ -1080,7 +1415,11 @@ impl Show {
             id: "report-undrill-all",
             button_type: "button",
             event: "undrill",
-            body: Html::text("Back to the summary"),
+            body: Html::text(if kind == Kind::Matrix {
+                "Back to the matrix"
+            } else {
+                "Back to the summary"
+            }),
             ..Button::default()
         })?);
         render(Breadcrumb { parts: vec![parts] })
@@ -1192,6 +1531,36 @@ impl Show {
     }
 }
 
+/// Run answers in the agent dialect (`definition::schema`'s run input).
+fn agent_answers(answers: &std::collections::BTreeMap<usize, Value>) -> Value {
+    Value::Array(
+        answers
+            .iter()
+            .map(|(i, value)| match value {
+                Value::Array(values) => json!({"filter": i, "values": values}),
+                Value::Object(range) => {
+                    let mut answer = json!({"filter": i});
+                    for key in ["min", "max"] {
+                        if let Some(Value::String(bound)) = range.get(key) {
+                            answer[key] = json!(bound);
+                        }
+                    }
+                    answer
+                }
+                other => json!({"filter": i, "value": crate::cell(other)}),
+            })
+            .collect(),
+    )
+}
+
+/// The page's own address: a stored report's, or a built-in's.
+fn page_path(report: &Report) -> String {
+    match report.builtin {
+        Some(key) => format!("{}/{key}", super::BUILTIN_BASE),
+        None => report_path(report.id),
+    }
+}
+
 fn alert(id: &str, kind: StatusKind, message: &str) -> Result<Html> {
     render(Alert {
         kind,
@@ -1242,7 +1611,7 @@ impl LiveState<Scope, Error> for Show {
                     {
                         return Ok(LiveBody {
                             redirect: Some(path),
-                            flash: Some((StatusKind::Success, message)),
+                            flash: message.map(|message| (StatusKind::Success, message)),
                             ..LiveBody::default()
                         });
                     }
