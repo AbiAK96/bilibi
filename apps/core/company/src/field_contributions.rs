@@ -59,6 +59,31 @@ pub const COMPANY_FIELDS: &str = "core/company.company_fields";
 /// escaping and the surrounding Company form payload.
 pub const MAX_TEXT_FIELD_LENGTH: usize = 10_000;
 
+/// Names a browser exposes as properties or methods of a form element. A control
+/// named like one shadows it on `form.<name>` (`attributes`, `elements`,
+/// `submit` ...), which breaks the form object, so no field may use them.
+const FORM_ELEMENT_NAMES: &[&str] = &[
+    "action",
+    "attributes",
+    "autocomplete",
+    "children",
+    "click",
+    "elements",
+    "encoding",
+    "enctype",
+    "focus",
+    "form",
+    "id",
+    "length",
+    "method",
+    "name",
+    "reset",
+    "style",
+    "submit",
+    "target",
+    "title",
+];
+
 /// Validate static definitions before Company starts serving pages or writes.
 pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
     let builtins: BTreeSet<&str> = crate::RESTRICTABLE
@@ -108,11 +133,12 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
         for field in contribution.fields {
             if !valid_id(field.id)
                 || field.label.trim().is_empty()
+                || FORM_ELEMENT_NAMES.contains(&field.id)
                 || !ids.insert(field.id)
                 || matches!(field.kind, CompanyFieldKind::Text { max_length: 0 })
             {
                 return Err(RegistryError::Contribution(format!(
-                    "invalid, required, duplicate, or reserved Company page/agent field {} from {}",
+                    "invalid, required, duplicate, or reserved Company page/agent field {} (reserved: Company's own keys and browser form-element property names such as attributes, elements, submit) from {}",
                     field.id, entry.provenance.module
                 )));
             }
