@@ -43,6 +43,9 @@ pub type CompanyFieldWrite = for<'a, 'tx> fn(
 /// One Extension's static field set and owner callbacks. Callbacks receive the
 /// caller's sealed scope and, for writes, the same mutation transaction as
 /// Company. The contributor owns the tables and SQL behind each callback.
+/// Write callbacks must store and report the submitted field values unchanged;
+/// Company refuses and rolls back a callback that normalizes them, so reviewed
+/// agent input and stored/audited values cannot diverge.
 pub struct CompanyFieldContribution {
     pub fields: &'static [CompanyField],
     pub read: for<'a> fn(&'a Client, &'a Scope, &'a [i64]) -> CompanyFieldReadFuture<'a>,
@@ -144,13 +147,14 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
         .iter()
         .flat_map(|(_, contribution)| contribution.fields)
         .map(|field| {
-            let (table, target) = resolved_grid_alias(field.grid_column)?;
+            let (table, target, record_types) = resolved_grid_alias(field.grid_column)?;
             Ok(CatalogField {
                 id: field.id,
                 label: field.label,
                 restriction_aliases: vec![bilibi_authz::field_catalog::RestrictionAlias {
                     table,
                     field: target,
+                    record_types,
                 }],
             })
         })
@@ -163,7 +167,9 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
     }])
 }
 
-fn resolved_grid_alias(path: &str) -> std::result::Result<(&'static str, &'static str), String> {
+fn resolved_grid_alias(
+    path: &str,
+) -> std::result::Result<(&'static str, &'static str, &'static [&'static str]), String> {
     let installed = bilibi_grid::installed().map_err(|error| error.to_string())?;
     let root = installed
         .table("companies")
@@ -181,7 +187,10 @@ fn resolved_grid_alias(path: &str) -> std::result::Result<(&'static str, &'stati
     let field = column
         .field
         .ok_or_else(|| format!("Company Extension field Grid path {path:?} has no field"))?;
-    Ok((column.table, field.id))
+    let target = installed
+        .table(column.table)
+        .ok_or_else(|| format!("Company Extension field Grid path {path:?} has no target table"))?;
+    Ok((column.table, field.id, target.decl.record_types))
 }
 
 /// Company field restrictions include the Extension table identity that stores
@@ -194,7 +203,7 @@ pub(crate) async fn effective_restrictions(
     let restrictions = bilibi_authz::fields::restricted(client, scope).await?;
     let mut company = restrictions.get("companies").cloned().unwrap_or_default();
     for (_, field) in definitions()? {
-        let (table, target) =
+        let (table, target, _) =
             resolved_grid_alias(field.grid_column).map_err(|_| Error::Internal)?;
         if restrictions
             .get(table)
@@ -384,7 +393,7 @@ pub(crate) async fn create(
         tx.mutate(move |sql| {
             Box::pin(async move {
                 let (_, new) = callback(sql, &scope, company_id, &fields).await?;
-                if !change_has_only_fields(&new, &fields) {
+                if !change_matches_values(&new, &fields) {
                     return Err(Error::Internal);
                 }
                 Ok((
@@ -440,7 +449,7 @@ pub(crate) async fn update(
                 let before = before.as_object().ok_or(Error::Internal)?;
                 let after = after.as_object().ok_or(Error::Internal)?;
                 if before.keys().any(|key| !fields.contains_key(key))
-                    || after.keys().any(|key| !fields.contains_key(key))
+                    || !change_matches_values(&Value::Object(after.clone()), &fields)
                 {
                     return Err(Error::Internal);
                 }
@@ -455,10 +464,14 @@ pub(crate) async fn update(
     Ok(())
 }
 
-fn change_has_only_fields(change: &Value, fields: &CompanyFieldValues) -> bool {
-    change
-        .as_object()
-        .is_some_and(|object| object.keys().all(|key| fields.contains_key(key)))
+fn change_matches_values(change: &Value, fields: &CompanyFieldValues) -> bool {
+    let Some(object) = change.as_object() else {
+        return false;
+    };
+    object.len() == fields.len()
+        && fields
+            .iter()
+            .all(|(field, value)| object.get(field) == Some(value))
 }
 
 fn only_fields(values: &CompanyFieldValues, fields: &[CompanyField]) -> CompanyFieldValues {

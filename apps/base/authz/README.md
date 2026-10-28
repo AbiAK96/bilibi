@@ -101,10 +101,12 @@ protected-field catalog contract and restriction administration; Grid supplies
 that catalog as data, with no Authz→Grid dependency.
 
 A `CatalogField` may declare alternate restriction identities for the same
-record value. `withheld_by_record_type` maps a restriction on any declared
-identity to the owning field ID in audit old/new values. The record owner still
-resolves those aliases for its own reads and writes; Authz does not depend on
-Grid or the record owner.
+record value. Each alias names its target table, field and that table's audit
+record types. `withheld_by_record_type` maps a restriction on either identity
+to both field names under both owners' audit record types, including a
+protected target field that cannot itself receive a new restriction. The
+record owner still resolves those aliases for its own reads and writes; Authz
+does not depend on Grid or the record owner.
 
 ## Step-up on grant changes
 

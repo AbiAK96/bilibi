@@ -35,10 +35,10 @@ pub async fn restricted(
 }
 /// The fields of each audit record type the scope may not see, keyed by the
 /// names a recorded value uses (Bilimbi `Authz.withheld_fields_by_type/2`). A
-/// restriction is declared on a catalog table; the table's `record_types` are
-/// the audit kinds its rows are recorded under, so the audit screens withhold
-/// what the record's own page withholds. A type with nothing withheld is
-/// absent; a table outside the catalog reaches no audit kind.
+/// restriction on either identity of one catalog field withholds both names
+/// under every audit record type declared by those identities. A type with
+/// nothing withheld is absent; an identity outside the catalog reaches no
+/// audit kind.
 pub async fn withheld_by_record_type(
     client: &impl GenericClient,
     scope: &Scope,
@@ -49,7 +49,8 @@ pub async fn withheld_by_record_type(
     if restricted.is_empty() || types.is_empty() {
         return Ok(result);
     }
-    for table in crate::field_catalog::field_catalog()?.tables() {
+    let catalog = crate::field_catalog::field_catalog()?;
+    for table in catalog.tables() {
         for kind in table
             .record_types
             .iter()
@@ -57,13 +58,39 @@ pub async fn withheld_by_record_type(
         {
             let withheld = result.entry((*kind).to_owned()).or_default();
             withheld.extend(restricted.get(table.id).into_iter().flatten().cloned());
-            for field in &table.fields {
-                if field.restriction_aliases.iter().any(|alias| {
-                    restricted
-                        .get(alias.table)
-                        .is_some_and(|fields| fields.contains(alias.field))
-                }) {
-                    withheld.insert(field.id.to_owned());
+        }
+        for field in &table.fields {
+            let owner_restricted = restricted
+                .get(table.id)
+                .is_some_and(|fields| fields.contains(field.id));
+            let alias_restricted = field.restriction_aliases.iter().any(|alias| {
+                restricted
+                    .get(alias.table)
+                    .is_some_and(|fields| fields.contains(alias.field))
+            });
+            if !owner_restricted && !alias_restricted {
+                continue;
+            }
+            for kind in table
+                .record_types
+                .iter()
+                .filter(|kind| types.contains(kind))
+            {
+                result
+                    .entry((*kind).to_owned())
+                    .or_default()
+                    .insert(field.id.to_owned());
+            }
+            for alias in &field.restriction_aliases {
+                for kind in alias
+                    .record_types
+                    .iter()
+                    .filter(|kind| types.contains(kind))
+                {
+                    result
+                        .entry((*kind).to_owned())
+                        .or_default()
+                        .insert(alias.field.to_owned());
                 }
             }
         }

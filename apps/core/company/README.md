@@ -156,8 +156,11 @@ increments the Company record version. Callbacks do not open or commit a
 transaction and do not record audit rows themselves. Company rechecks reach
 and current field restrictions before invoking a write. A restriction on either
 the Company field ID or its Extension table field ID masks the Company value and
-refuses writes. Authz carries that alias into Company audit withholding, and
-Grid prunes the corresponding dotted path from each fresh scoped catalog.
+refuses writes. Authz maps both identities to the Company's audit kind and the
+Extension table's declared audit kinds, so the same value is withheld under
+either record identity, including when the target field is protected from new
+restrictions. Grid prunes the corresponding dotted path from each fresh scoped
+catalog.
 
 The same fields appear in the reviewed `core.company.create` schema and are
 accepted by its preview and commit handlers. List and detail agent output uses
@@ -171,8 +174,10 @@ Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map
 when no contributed values are supplied). Owners constructing Authz
 `CatalogField` values must also populate `restriction_aliases` with the actual
-target table and field identity; for linked Grid paths, resolve the path instead
-of treating its first segment as a table ID. Callers of Grid's
+target table, field identity and that table's `record_types`; for linked Grid
+paths, resolve the path instead of treating its first segment as a table ID.
+Write callbacks must return exactly the values supplied by Company; callbacks
+that normalize a reviewed value are refused and rolled back. Callers of Grid's
 `PageColumns::with_record_slots` must handle its `Result` and propagate or map
 invalid and duplicate slot errors. Contributed field IDs must not use Company
 form transport keys or Company agent request/response envelope keys; discovery
