@@ -94,6 +94,10 @@ pub enum ReportError {
     /// does not fit): the message is the reader's to see.
     #[error("{0}")]
     Refused(String),
+    /// Over the read's cost or time bound: a prepared export, which runs in
+    /// the background under the larger bounds, may still produce it.
+    #[error("This report is too heavy to show here ({0}). Prepare it as an export instead; it runs in the background and the bell says when it is ready.")]
+    TooHeavy(&'static str),
     #[error(transparent)]
     Database(#[from] Error),
 }
@@ -120,6 +124,9 @@ pub struct RunInput {
     /// A summary or matrix read as the rows behind it (a drill-down): its
     /// label field, groupings and measured columns, page by page.
     pub as_rows: bool,
+    /// A prepared export or scheduled delivery: the background bounds apply
+    /// instead of the interactive ones.
+    pub background: bool,
 }
 
 /// One column of a result, as the reader's catalog names it.
@@ -277,6 +284,10 @@ fn grid(error: QueryError) -> ReportError {
         QueryError::ForbiddenRoot => ReportError::Unreadable,
         QueryError::Database(error) => ReportError::Database(error),
         QueryError::Catalog(error) => ReportError::Database(error.into()),
+        QueryError::Limit(
+            why @ ("the estimated cost of the read exceeds its bound"
+            | "the read took longer than its time bound"),
+        ) => ReportError::TooHeavy(why),
         QueryError::Limit(why) => ReportError::Refused(format!(
             "This report is too large to run ({why}). Add a filter or group more coarsely."
         )),
@@ -301,6 +312,25 @@ impl Reports {
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
             .ok_or(Error::Internal)
+    }
+
+    /// The read bounds for the reader's company: interactive, or the larger
+    /// background pair.
+    async fn bounds(&self, scope: &Scope, background: bool) -> Result<bilibi_grid::Bounds, Error> {
+        let client = self.db.get().await?;
+        let (ms, cost) = if background {
+            (
+                contributions::QUEUED_STATEMENT_MS_KEY,
+                contributions::QUEUED_MAX_COST_KEY,
+            )
+        } else {
+            (contributions::STATEMENT_MS_KEY, contributions::MAX_COST_KEY)
+        };
+        Ok(bilibi_grid::Bounds {
+            statement_ms: u32::try_from(self.setting(&**client, scope, ms).await?)
+                .map_err(|_| Error::Internal)?,
+            max_cost: self.setting(&**client, scope, cost).await? as f64,
+        })
     }
 
     /// One page of the reports the reader may run, searched by name and
@@ -394,7 +424,8 @@ impl Reports {
             return Err(ReportError::Invalid(errors));
         }
         drop(client);
-        let probe = self.probe(scope, draft, filters).await;
+        let bounds = self.bounds(scope, false).await?;
+        let probe = self.probe(scope, draft, filters, bounds).await;
         match probe {
             Ok(()) => Ok(()),
             Err(QueryError::Column(spec, error)) => Err(ReportError::Invalid(field_errors(
@@ -420,15 +451,17 @@ impl Reports {
         scope: &Scope,
         draft: &Draft,
         filters: Vec<Filter>,
+        bounds: bilibi_grid::Bounds,
     ) -> Result<(), QueryError> {
         match draft.kind {
             Kind::Rows => {
-                bilibi_grid::project(
+                bilibi_grid::project_within(
                     &self.db,
                     scope,
                     &draft.record_type,
                     &[],
                     &draft.definition.columns,
+                    bounds,
                 )
                 .await?;
                 bilibi_grid::page_keys(
@@ -436,6 +469,7 @@ impl Reports {
                     scope,
                     &draft.record_type,
                     &PageSpec {
+                        bounds,
                         filters,
                         sorts: draft.definition.sorts(),
                         timezone: "UTC".into(),
@@ -451,6 +485,7 @@ impl Reports {
                     scope,
                     &draft.record_type,
                     &SummarySpec {
+                        bounds,
                         filters,
                         groupings: draft.definition.groupings(),
                         measures: draft.definition.measures(),
@@ -642,6 +677,7 @@ impl Reports {
     }
 
     async fn run_report(&self, scope: &Scope, report: Report, input: &RunInput) -> Outcome<Run> {
+        let bounds = self.bounds(scope, input.background).await?;
         let client = self.db.get().await.map_err(Error::from)?;
         let timezone = self
             .display
@@ -732,6 +768,7 @@ impl Reports {
                     scope,
                     &report.record_type,
                     &PageSpec {
+                        bounds,
                         filters,
                         sorts,
                         timezone: timezone.clone(),
@@ -742,10 +779,17 @@ impl Reports {
                 .await
                 .map_err(grid)?;
                 let specs: Vec<&str> = columns.iter().map(|c| c.spec.as_str()).collect();
-                let projection =
-                    bilibi_grid::project(&self.db, scope, &report.record_type, &page.keys, &specs)
-                        .await
-                        .map_err(grid)?;
+                // Filled under the same bounds the keys were read under.
+                let projection = bilibi_grid::project_within(
+                    &self.db,
+                    scope,
+                    &report.record_type,
+                    &page.keys,
+                    &specs,
+                    bounds,
+                )
+                .await
+                .map_err(grid)?;
                 let rows: Vec<(Value, Vec<Value>)> = projection
                     .rows
                     .into_iter()
@@ -770,6 +814,7 @@ impl Reports {
                             scope,
                             &report.record_type,
                             &SummarySpec {
+                                bounds,
                                 filters: totals_filters.clone(),
                                 groupings: Vec::new(),
                                 measures: chunk.to_vec(),
@@ -827,6 +872,7 @@ impl Reports {
                     scope,
                     &report.record_type,
                     &SummarySpec {
+                        bounds,
                         filters,
                         groupings,
                         measures,

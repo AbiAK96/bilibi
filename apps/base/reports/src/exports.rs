@@ -356,7 +356,7 @@ impl Reports {
                 ..crate::RunInput::default()
             };
             let file = self
-                .export_within(scope, report, &input, format, cap)
+                .export_within(scope, report, &input, format, cap, true)
                 .await?;
             Ok::<_, ReportError>((access, file))
         }

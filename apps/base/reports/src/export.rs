@@ -81,7 +81,8 @@ impl Reports {
         format: Format,
     ) -> Outcome<File> {
         let cap = self.export_rows(scope).await?;
-        self.export_within(scope, id, input, format, cap).await
+        self.export_within(scope, id, input, format, cap, false)
+            .await
     }
 
     /// Whether the file can be made for this reader now, without making
@@ -100,12 +101,12 @@ impl Reports {
             crate::authorize(&**client, scope, EXPORT).await?;
         }
         let cap = self.export_rows(scope).await?;
-        let table = self.tabulate(scope, id, input, cap).await?;
+        let table = self.tabulate(scope, id, input, cap, false).await?;
         render(&table, format).map(|_| ())
     }
 
     /// The same file within `cap` rows; the queued export and a scheduled
-    /// delivery pass their own. A delivered file is an export too, so its
+    /// delivery pass their own, and run under the `background` bounds. A delivered file is an export too, so its
     /// recipient needs `reports.export` like anyone downloading one.
     pub(crate) async fn export_within(
         &self,
@@ -114,12 +115,13 @@ impl Reports {
         input: &RunInput,
         format: Format,
         cap: usize,
+        background: bool,
     ) -> Outcome<File> {
         {
             let client = self.db.get().await.map_err(Error::from)?;
             crate::authorize(&**client, scope, EXPORT).await?;
         }
-        let table = self.tabulate(scope, id, input, cap).await?;
+        let table = self.tabulate(scope, id, input, cap, background).await?;
         let bytes = render(&table, format)?;
         let client = self.db.get().await.map_err(Error::from)?;
         record_action(
@@ -147,10 +149,12 @@ impl Reports {
         id: i64,
         input: &RunInput,
         cap: usize,
+        background: bool,
     ) -> Outcome<Tabled> {
         // The page's answers, drill-downs and records view; every page.
         let mut input = RunInput {
             page: 0,
+            background,
             ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
