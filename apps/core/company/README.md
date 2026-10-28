@@ -155,9 +155,7 @@ Company accepts build-time `CompanyFieldContribution` entries on
 `core/company.company_fields`. An Extension depends on Company and contributes
 stable, globally unique lowercase field IDs and labels; Company never depends
 on the Extension. Discovery rejects duplicate IDs, built-in collisions and
-unsupported lengths before the app starts. This first slice supports optional
-text fields up to 10,000 characters so JSON-escaped values fit in a Company
-live-form event frame.
+unsupported lengths before the app starts. The contract supports optional text fields up to 10,000 characters so JSON-escaped values fit in a Company live-form event frame, and optional calendar dates stored by the contributing Extension as PostgreSQL `DATE` values and passed as canonical `YYYY-MM-DD` strings.
 
 The Extension owns its field table and migration. Its Grid contribution declares
 the tenant-scoped source and a `One` link from `companies`; its
@@ -180,13 +178,16 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema and are
-accepted by its preview and commit handlers. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage, reference fields and
 governed choices are not part of this static contract.
 
 ### Upgrade notes for field contributors
+
+`CompanyFieldKind` now includes `Date`; update exhaustive matches and declare
+date values as canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL
+`DATE` columns.
 
 Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map
@@ -197,7 +198,9 @@ paths, resolve the path instead of treating its first segment as a table ID.
 Write callbacks must return exactly the values supplied by Company; callbacks
 that normalize a reviewed value are refused and rolled back. Callers of Grid's
 `PageColumns::with_record_slots` must handle its `Result` and propagate or map
-invalid and duplicate slot errors. Contributed field IDs must not use Company
+invalid and duplicate slot errors. Callers that construct `InlineField` with a
+struct literal must initialize `display_value` and `input_type`; prefer
+`InlineField::new` with its builder methods. Contributed field IDs must not use Company
 form transport keys or Company agent request/response envelope keys; discovery
 rejects those names before the app starts.
 
