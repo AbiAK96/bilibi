@@ -11,6 +11,8 @@ use tokio_postgres::{types::ToSql, Client, GenericClient};
 
 pub const MAX_FILTERS: usize = 10;
 pub const MAX_FILTER_BYTES: usize = 8_192;
+/// Keeps invalid text drafts visible while bounding their serialized URL state.
+pub const MAX_FILTER_DRAFT_BYTES: usize = 512;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -158,6 +160,11 @@ async fn read(
     let mut errors = Vec::new();
     let mut notice = String::new();
     for filter in &params.field_filters {
+        // A newly added row is an editable draft, not a missing-field query.
+        if filter.field.is_empty() {
+            errors.push(None);
+            continue;
+        }
         let Some(field) = fields
             .iter()
             .find(|field| field.definition.id == filter.field)

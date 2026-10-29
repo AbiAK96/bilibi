@@ -9,7 +9,7 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::*;
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 use tokio_postgres::{Client, GenericClient};
@@ -233,6 +233,7 @@ pub(super) async fn list(
     ))?;
     toolbar.push(&field_filter_controls(&extension_fields, data)?);
     let ids: Vec<i64> = data.rows.iter().map(|row| row.id).collect();
+    let choice_labels = extension_choice_labels(client, scope, &extension_fields).await?;
     let facts=client.query("SELECT c.id,p.name,(t.company_id IS NOT NULL) FROM companies c LEFT JOIN companies p ON p.id=c.parent_id AND p.tenant_id=c.tenant_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE c.tenant_id=$1 AND c.id=ANY($2)",&[&scope.tenant(),&ids]).await?;
     let mut rows = columns.rows.clone();
     for row in &mut rows {
@@ -329,21 +330,15 @@ pub(super) async fn list(
                             })?
                         },
                     );
-                    if !extension_fields.masked.contains(definition.id) {
-                        if let (crate::CompanyFieldKind::Choice { picklist }, Some(code)) =
-                            (definition.kind, value)
-                        {
-                            if let Some(label) = extension_fields
-                                .picklists
-                                .label(client, scope, picklist, code)
-                                .await?
+                    if !extension_fields.masked.contains(definition.id)
+                        && matches!(definition.kind, crate::CompanyFieldKind::Choice { .. })
+                    {
+                        if let Some(code) = value {
+                            if let Some(label) = choice_labels
+                                .get(definition.id)
+                                .and_then(|labels| labels.get(code))
                             {
-                                let text = if label.retired {
-                                    format!("{} (Retired)", label.text)
-                                } else {
-                                    label.text
-                                };
-                                row.slots.insert(slot, Html::text(&text));
+                                row.slots.insert(slot, Html::text(label));
                             }
                         }
                     }
@@ -428,6 +423,50 @@ pub(super) struct ExtensionListFields<'a> {
     pub available: &'a [crate::list_fields::AvailableField],
     pub filter_notice: &'a str,
 }
+
+async fn extension_choice_labels(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    fields: &ExtensionListFields<'_>,
+) -> Result<HashMap<&'static str, HashMap<String, String>>> {
+    let mut labels = HashMap::new();
+    for available in fields.available {
+        let crate::CompanyFieldKind::Choice { picklist } = available.definition.kind else {
+            continue;
+        };
+        let codes = fields
+            .values
+            .values()
+            .filter_map(|values| values.get(available.definition.id))
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        for code in codes {
+            if let Some(choice) = available.choices.iter().find(|choice| choice.value == code) {
+                labels
+                    .entry(available.definition.id)
+                    .or_insert_with(HashMap::new)
+                    .insert(code, choice.label.clone());
+            } else if let Some(label) = fields
+                .picklists
+                .label(client, scope, picklist, &code)
+                .await?
+            {
+                let text = if label.retired {
+                    format!("{} (Retired)", label.text)
+                } else {
+                    label.text
+                };
+                labels
+                    .entry(available.definition.id)
+                    .or_insert_with(HashMap::new)
+                    .insert(code, text);
+            }
+        }
+    }
+    Ok(labels)
+}
+
 #[derive(Template)]
 #[template(
     source = "<code class=\"text-xs font-medium tabular-nums\">{{ text }}</code>",
@@ -1854,7 +1893,17 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
                 .errors(errors);
             value = match field.definition.kind {
                 crate::CompanyFieldKind::Text { .. } => value.attr("maxlength", "256"),
-                crate::CompanyFieldKind::Date => value.kind(InputKind::Date),
+                crate::CompanyFieldKind::Date => {
+                    if filter.value.is_empty()
+                        || crate::field_contributions::valid_date(&filter.value)
+                    {
+                        value.kind(InputKind::Date)
+                    } else {
+                        // Native date controls erase malformed URL drafts; keep
+                        // those editable until the person corrects the value.
+                        value.kind(InputKind::Text)
+                    }
+                }
                 crate::CompanyFieldKind::Choice { .. } => {
                     let mut choices = vec![Choice::new("Choose a value", "")];
                     choices.extend(field.choices.clone());

@@ -86,7 +86,7 @@ use bilibi_security::{guard, restrictions, Scope, Sessions};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
-use tokio_postgres::{GenericClient, Row};
+use tokio_postgres::Row;
 
 /// Frozen original migration; `004` is K1's additive organisation schema.
 pub const MIGRATION: (&str, &str) = ("003-company", include_str!("../migrations/003.sql"));

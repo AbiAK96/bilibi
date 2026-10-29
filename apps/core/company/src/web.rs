@@ -327,9 +327,11 @@ fn parse_filters(values: &HashMap<String, String>) -> Option<Vec<crate::FieldFil
     }
     let filters: Vec<crate::FieldFilter> = serde_json::from_str(raw).ok()?;
     if filters.len() > crate::list_fields::MAX_FILTERS
-        || filters
-            .iter()
-            .any(|f| f.field.len() > 160 || f.operator.len() > 20 || f.value.len() > 256)
+        || filters.iter().any(|f| {
+            f.field.len() > 160
+                || f.operator.len() > 20
+                || f.value.len() > crate::list_fields::MAX_FILTER_DRAFT_BYTES
+        })
     {
         return None;
     }
@@ -679,14 +681,10 @@ impl CompanyPage {
                 let index = get("condition[index]")
                     .parse::<usize>()
                     .map_err(|_| Error::Invalid)?;
-                if get("condition[value]").len() > 256
+                let too_long = get("condition[value]").len()
+                    > crate::list_fields::MAX_FILTER_DRAFT_BYTES
                     || get("condition[field]").len() > 160
-                    || get("condition[operator]").len() > 20
-                {
-                    self.filter_notice =
-                        "This filter exceeds the supported length and was not applied.".into();
-                    return Ok(None);
-                }
+                    || get("condition[operator]").len() > 20;
                 if let Some(filter) = self.field_filters.get_mut(index) {
                     let field = bounded_filter(get("condition[field]"), 160);
                     if field != filter.field {
@@ -694,11 +692,18 @@ impl CompanyPage {
                         filter.operator = "eq".into();
                     } else {
                         filter.operator = bounded_filter(get("condition[operator]"), 20);
-                        filter.value = bounded_filter(get("condition[value]"), 256);
+                        filter.value = bounded_filter(
+                            get("condition[value]"),
+                            crate::list_fields::MAX_FILTER_DRAFT_BYTES,
+                        );
                     }
                     filter.field = field;
                 }
-                self.filter_notice.clear();
+                self.filter_notice = if too_long {
+                    "This filter draft is too long and was shortened; it was not applied.".into()
+                } else {
+                    String::new()
+                };
                 self.params.page = 1;
             }
             "clear_filters" if self.operation == "list" => {
