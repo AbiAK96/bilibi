@@ -193,7 +193,7 @@ the tenant-scoped source and a direct `One` link with an `On` join from
 uses the static field declaration for create and detail controls, and calls the
 owner's scoped read callback for Company pages and agent reads. The owner must
 bind the sealed scope's tenant in every read and write. Direct links let Company
-join each contributor source once for list sorting and filtering.
+join each contributor source once for list sorting and filtering. Each contributor table must enforce a unique Company key (for example, `UNIQUE (tenant_id, company_id)`); otherwise the join can duplicate Company rows and inflate counts.
 
 Create and update callbacks run inside Company's mutation transaction through a
 borrowed SQL transaction and return field values before and after their write. Company
