@@ -188,7 +188,9 @@ impl Params {
             || self.sort.len() > 160
             || self.field_filters.len() > list_fields::MAX_FILTERS
             || self.field_filters.iter().any(|filter| {
-                filter.field.len() > 160 || filter.operator.len() > 20 || filter.value.len() > 256
+                filter.field.len() > 160
+                    || filter.operator.len() > 20
+                    || filter.value.len() > list_fields::MAX_FILTER_DRAFT_BYTES
             })
             || !["asc", "desc"].contains(&self.dir.as_str())
             || self.q.chars().count() > 255
@@ -283,7 +285,7 @@ impl Page {
             rows: Vec::new(),
             total: 0,
             filter_errors: Vec::new(),
-            notice: "This query exceeds the list query limit. Narrow the filters and try again."
+            notice: "This list query exceeds its cost or time limit. Try a simpler sort or filter."
                 .into(),
             sort: String::new(),
             limited: true,

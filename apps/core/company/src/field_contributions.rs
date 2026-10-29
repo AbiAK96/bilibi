@@ -228,6 +228,15 @@ fn resolved_grid_alias(
             "Company Extension field Grid path {path:?} must resolve to a scalar field"
         ));
     }
+    if column.hops.len() != 1
+        || !column.tail.is_empty()
+        || column.hops[0].kind() != bilibi_grid::LinkKind::One
+        || !matches!(column.hops[0].decl.join, bilibi_grid::Join::On { .. })
+    {
+        return Err(format!(
+            "Company Extension field Grid path {path:?} must use one direct One link so Company can join its table once"
+        ));
+    }
     let field = column
         .field
         .ok_or_else(|| format!("Company Extension field Grid path {path:?} has no field"))?;

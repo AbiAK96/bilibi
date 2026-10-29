@@ -6,13 +6,13 @@ use bilibi_grid::Catalog;
 use bilibi_tenancy::Scope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio_postgres::{types::ToSql, Client, GenericClient};
 
 pub const MAX_FILTERS: usize = 10;
-pub const MAX_FILTER_BYTES: usize = 8_192;
+pub const MAX_FILTER_BYTES: usize = 16_384;
 /// Keeps invalid text drafts visible while bounding their serialized URL state.
-pub const MAX_FILTER_DRAFT_BYTES: usize = 512;
+pub const MAX_FILTER_DRAFT_BYTES: usize = 1_024;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,7 +36,7 @@ pub(crate) async fn available(
     let mut result = Vec::new();
     for (_, definition) in field_contributions::definitions()? {
         if masked.contains(definition.id)
-            || bilibi_grid::scalar_expression(catalog, "companies", definition.grid_column).is_err()
+            || bilibi_grid::scalar_join(catalog, "companies", definition.grid_column).is_err()
         {
             continue;
         }
@@ -78,7 +78,9 @@ fn filter_error(filter: &FieldFilter, field: &AvailableField) -> Option<String> 
         return Some("Choose an operator supported by this field.".into());
     }
     let valid = match field.definition.kind {
-        CompanyFieldKind::Text { .. } => !filter.value.is_empty() && filter.value.len() <= 256,
+        CompanyFieldKind::Text { .. } => {
+            !filter.value.is_empty() && filter.value.chars().count() <= 256
+        }
         CompanyFieldKind::Date => field_contributions::valid_date(&filter.value),
         CompanyFieldKind::Choice { .. } => field
             .choices
@@ -87,7 +89,7 @@ fn filter_error(filter: &FieldFilter, field: &AvailableField) -> Option<String> 
     };
     (!valid).then(|| {
         match field.definition.kind {
-            CompanyFieldKind::Text { .. } => "Enter text up to 256 bytes.",
+            CompanyFieldKind::Text { .. } => "Enter text up to 256 characters.",
             CompanyFieldKind::Date => "Enter a valid date from 0001-01-01 to 9999-12-31.",
             CompanyFieldKind::Choice { .. } => "Choose an active value from this list.",
         }
@@ -132,6 +134,54 @@ async fn read(
     let masked = field_contributions::effective_restrictions(tx, scope).await?;
     let catalog = Catalog::for_scope(tx, scope).await.map_err(Error::from)?;
     let fields = available(tx, scope, &catalog, &masked).await?;
+    let mut errors = Vec::with_capacity(params.field_filters.len());
+    let mut notice = String::new();
+    let mut used_fields = HashSet::new();
+    for filter in &params.field_filters {
+        if filter.field.is_empty() {
+            errors.push(None);
+            continue;
+        }
+        let Some(field) = fields
+            .iter()
+            .find(|field| field.definition.id == filter.field)
+        else {
+            errors.push(Some(
+                "This filter is unavailable and was not applied.".into(),
+            ));
+            notice = "An unavailable field was removed from the query.".into();
+            continue;
+        };
+        let error = filter_error(filter, field);
+        if error.is_none() {
+            used_fields.insert(field.definition.id);
+        }
+        errors.push(error);
+    }
+
+    let mut sort = params.sort.clone();
+    let sort_field = fields.iter().find(|field| field.definition.id == sort);
+    if let Some(field) = sort_field {
+        used_fields.insert(field.definition.id);
+    } else if !["name", "status", "jurisdiction", "created_at"].contains(&sort.as_str())
+        || masked.contains(&sort)
+    {
+        sort = "name".into();
+        notice = "An unavailable field was removed from the query.".into();
+    }
+
+    let mut expressions = HashMap::new();
+    let mut joins = BTreeMap::new();
+    for field in fields
+        .iter()
+        .filter(|field| used_fields.contains(field.definition.id))
+    {
+        let join = bilibi_grid::scalar_join(&catalog, "companies", field.definition.grid_column)
+            .map_err(Error::from)?;
+        joins.entry(join.alias).or_insert(join.clause);
+        expressions.insert(field.definition.id, join.expression);
+    }
+
     let mut args: Vec<Box<dyn ToSql + Sync + Send>> = vec![
         Box::new(scope.tenant()),
         Box::new(scope.user()),
@@ -157,32 +207,24 @@ async fn read(
         "($3='' OR r.status=$3)".into(),
         format!("({search})"),
     ];
-    let mut errors = Vec::new();
-    let mut notice = String::new();
     for filter in &params.field_filters {
         // A newly added row is an editable draft, not a missing-field query.
         if filter.field.is_empty() {
-            errors.push(None);
             continue;
         }
         let Some(field) = fields
             .iter()
             .find(|field| field.definition.id == filter.field)
         else {
-            errors.push(Some(
-                "This filter is unavailable and was not applied.".into(),
-            ));
             notice = "An unavailable field was removed from the query.".into();
             continue;
         };
-        let error = filter_error(filter, field);
-        errors.push(error.clone());
-        if error.is_some() {
+        if filter_error(filter, field).is_some() {
             continue;
         }
-        let expression =
-            bilibi_grid::scalar_expression(&catalog, "companies", field.definition.grid_column)
-                .map_err(Error::from)?;
+        let expression = expressions
+            .get(field.definition.id)
+            .ok_or(Error::Internal)?;
         let operator = match filter.operator.as_str() {
             "contains" => "ILIKE",
             "eq" => "=",
@@ -205,25 +247,28 @@ async fn read(
         };
         predicates.push(format!("{expression} {operator} ${}{cast}", args.len()));
     }
-    let mut sort = params.sort.clone();
     let expression = if let Some(field) = fields.iter().find(|field| field.definition.id == sort) {
-        bilibi_grid::scalar_expression(&catalog, "companies", field.definition.grid_column)
-            .map_err(Error::from)?
+        expressions
+            .get(field.definition.id)
+            .ok_or(Error::Internal)?
+            .clone()
     } else if ["name", "status", "jurisdiction", "created_at"].contains(&sort.as_str())
         && !masked.contains(&sort)
     {
         format!("r.{sort}")
     } else {
-        sort = "name".into();
-        notice = "An unavailable field was removed from the query.".into();
-        "r.name".into()
+        return Err(Error::Internal.into());
     };
     let dir = if sort != params.sort {
         "asc"
     } else {
         &params.dir
     };
-    let tail = format!("FROM companies r WHERE {}", predicates.join(" AND "));
+    let from = format!(
+        "companies r {}",
+        joins.values().cloned().collect::<Vec<_>>().join(" ")
+    );
+    let tail = format!("FROM {from} WHERE {}", predicates.join(" AND "));
     // Reserve $2 even when no contributed path uses a user-scoped source.
     let head = "WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr)";
     let count = format!("{head} SELECT count(*) {tail}");
@@ -235,7 +280,12 @@ async fn read(
     args.push(Box::new(params.size));
     let limit = args.len();
     args.push(Box::new((params.page - 1) * params.size));
-    let sql = format!("{head} SELECT {} {tail} ORDER BY {expression} {dir} NULLS LAST, r.id ASC LIMIT ${limit} OFFSET ${}", crate::organisation::COLUMNS, args.len());
+    let columns = crate::organisation::COLUMNS
+        .split(',')
+        .map(|column| format!("r.{}", column.trim()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!("{head} SELECT {columns} {tail} ORDER BY {expression} {dir} NULLS LAST, r.id ASC LIMIT ${limit} OFFSET ${}", args.len());
     let binds = refs(&args);
     if !admit(tx, &sql, &binds).await? {
         return Ok(Page::limited());

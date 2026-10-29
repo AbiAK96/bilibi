@@ -359,7 +359,9 @@ pub(super) async fn list(
     table.actions = true;
     let filtered =
         !params.q.is_empty() || !params.status.is_empty() || !params.field_filters.is_empty();
-    let title = if filtered {
+    let title = if data.limited {
+        "Company list limited".into()
+    } else if filtered {
         format!(
             "No {}companies{}",
             if params.status.is_empty() {
@@ -389,7 +391,9 @@ pub(super) async fn list(
     table.empty = Some(TableEmpty::State(
         EmptyState::missing(
             &title,
-            if filtered {
+            if data.limited {
+                &data.notice
+            } else if filtered {
                 "Clear the search and filter to see every company."
             } else {
                 "Create your first company."
