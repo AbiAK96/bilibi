@@ -174,7 +174,13 @@ current company](#the-current-company)), `core.company.duplicates` and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
 (a reviewed safe write: preview shares
 create's validation and code check without reserving it, commit writes
-through the plan's transaction) plus the `core.company` guide. A restricted
+through the plan's transaction), plus `core.company.update` (a reviewed
+custom-field-only write using the supplied Company version, a nonempty `fields`
+patch, null to clear an optional field, and commit-time reach, restriction,
+version and value checks). Preview requires Company view permission before it
+shows before/after values;
+the result returns the Company ID, new version and path for Get readback. The
+`core.company` guide documents both. A restricted
 field arrives as `{"restricted": true}`. The handlers read through a pool
 bound once by the service factory.
 
@@ -208,7 +214,12 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are described below. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` and
+`core.company.update` schemas (`format: date` for dates) and are accepted by
+their preview and commit handlers. The update schema nests only installed
+field IDs under `fields`, declares optional fields nullable for explicit
+clearing, and never allows built-in Company facts in that patch. Unknown keys,
+empty patches and invalid values are refused. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create, inline updates and reviewed agent updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are described below. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage and reference fields are
 not part of this static contract.

@@ -602,7 +602,7 @@ pub(crate) async fn update(
     company_id: i64,
     version: i64,
     values: &CompanyFieldValues,
-) -> Result<()> {
+) -> Result<i64> {
     let mut writes = Vec::new();
     for (_, contribution) in contributions()? {
         let fields = only_fields(values, contribution.fields);
@@ -611,11 +611,11 @@ pub(crate) async fn update(
         }
     }
     if writes.is_empty() {
-        return Ok(());
+        return Ok(version);
     }
     let picklists = PICKLISTS.get().cloned().ok_or(Error::Internal)?;
     let scope = scope.clone();
-    tx.mutate(move |sql| {
+    let updated = tx.mutate(move |sql| {
         Box::pin(async move {
             let row = sql.query_opt(
                 "SELECT version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
@@ -655,10 +655,10 @@ pub(crate) async fn update(
             }
             old.insert("version".into(), Value::from(version));
             new.insert("version".into(), Value::from(updated));
-            Ok(((), vec![Change { kind: "company".into(), id: company_id, old: Value::Object(old), new: Value::Object(new) }]))
+            Ok((updated, vec![Change { kind: "company".into(), id: company_id, old: Value::Object(old), new: Value::Object(new) }]))
         })
     }).await?;
-    Ok(())
+    Ok(updated)
 }
 
 fn change_matches_values(change: &Value, fields: &CompanyFieldValues) -> bool {
