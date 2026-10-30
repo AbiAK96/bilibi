@@ -7,6 +7,24 @@ cron/zone arithmetic are Q3; occurrence claiming, the Queue insertion, overlap
 leases and run history are Q4; the operator board at `/system/schedule` and
 history retention are Q5. Work itself runs on the Queue, never inline.
 
+## Proposed per-tenant reach (issue #138)
+
+**Status: proposed; this section defines the intended contract, not behavior available in the current build.** The full decision is [ADR 17](../../../docs/architecture/decisions/17-per-tenant-scheduled-work.md).
+
+A definition will declare its reach as either `Reach::Installation` or `Reach::EachTenant`. Existing installation-wide behavior remains the default. Reach is material to the definition fingerprint, so changing it makes the operator's review stale and stops queued work until the new fingerprint is reviewed and enabled.
+
+An `EachTenant` occurrence is claimed once by the scheduler in the operator tenant. A Platform-owned fan-out then creates one durable outcome per tenant considered and queues one job in each eligible tenant. It processes active, undeleted tenants in ID order, in batches of 200 per transaction; suspended tenants are recorded as `skipped`, and tenants without an explicit `scheduler` `EXECUTE` grant as `not_granted`. Provisioning and declarations grant nothing. Tenant enumeration is a Tenancy responsibility; Schedule and Domains do not query the tenants table directly.
+
+Fan-out is resumable and idempotent by `(occurrence, tenant)`. Each child job and its durable run state commit together in that tenant's audited transaction. Queue re-proves the live tenant, principal declaration and durable grant for each attempt. The scheduled worker rechecks the current global definition and review before calling the owner's existing `worker::validate` and `Schedule::run` contract with that tenant's sealed system scope. The owner remains responsible for making its business effect idempotent across Queue retries.
+
+For `Reach::EachTenant`, forbid-overlap is per `(definition key, tenant)`: a slow tenant is skipped for the next occurrence while other tenants proceed. The global operator review, enable, disable, pause and resume apply to every tenant. Disabling, pausing or materially changing a definition prevents unstarted work from beginning. A tenant created after fan-out joins on the next occurrence; missed occurrences continue to coalesce once, with no backfill.
+
+Operator Run now fans out the definition once. Tenant Run now, gated by `admin.schedule.tenant.execute`, is a separate user-authorized path for one tenant and queues work as the requesting person; it does not confer or create the system principal's scheduled-work grant. Tenant run history, behind `admin.schedule.tenant.view`, is scoped to that tenant. The operator board reports queued, succeeded, failed, skipped and not-granted counts per occurrence and allows authorized tenant filtering.
+
+Tenant-local wall-clock schedules, per-tenant cron or pause settings, and per-company fan-out are out of scope. A worker that needs business-day arithmetic uses the work-calendar contract when available; the scheduler does not add tenant-local time semantics.
+
+The public `Definition` shape change is source-breaking for struct-literal callers: every in-repository caller must select `Installation` or `EachTenant`, and affected official Domains require companion PRs. Do not add a compatibility field, alias or shim. The schedule migration identifier must be the next unused ID: `base-schedule-003-schedule-timing` already exists, so the issue's proposed `base-schedule-003-tenant-runs` cannot be used.
+
 Owners contribute a `Definition` to `base/schedule.definitions` with
 `Contribution::new`; the contribution id is the durable key
 (`^[a-z0-9][a-z0-9._/-]{0,254}$`) and the provenance module is the owner. A
