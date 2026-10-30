@@ -20,6 +20,16 @@ Professional, compact, warm, trustworthy. Dense enough for operations, calm enou
 - The interface is the brand. It is not a marketing site and not generic enterprise gray.
 - Less, but better. Every surface, label and control must earn its place.
 
+## Principles
+
+**One thing, one door.** Each kind of record has exactly one list and one record page, reached from one menu item. Its stages (draft, waiting for approval, posted, rejected, archived) and its sources (typed in, imported, created by another module) are columns and filters on that list, never separate pages or menu items. One action creates it ("+ Journal"), wherever it is started. Approvals may also surface in a shared queue such as "Waiting for my approval", but that queue links back to the record's one home.
+
+*Example:* journals. Posted entries and manual journals waiting for approval are one Journals list with a status filter, not "Journal entries" and "Manual journals".
+
+**Many keys, one action.** Inside that door, people can reach the same action in several ways: the button on the list, a row action from another list ("Add as customer" on Contacts or Companies), multi-select, drag and drop between tiles, the keyboard, or their AI assistant. Every way runs the same operation, with the same permission checks, preview, rules and history, so no way is more powerful or less safe than another.
+
+*Example:* adding customers. "+ Customer" with the multi-select, "Add as customer" on a contact or company, dragging rows onto the Customers tile, or asking the AI assistant all end in the one add-customer operation.
+
 ## Character
 
 *Ledger geometry:* compact scale, hairline rules, tabular numerals, warm stone base.
