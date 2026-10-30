@@ -94,7 +94,7 @@ impl ReadHandler for List {
                 .iter()
                 .map(|entry| entry.company.id)
                 .collect::<Vec<_>>();
-            let extension_values = crate::field_contributions::read(&client, scope, &ids).await?;
+            let extension_values = crate::field_contributions::read(&**client, scope, &ids).await?;
             let restricted =
                 crate::field_contributions::effective_restrictions(&**client, scope).await?;
             let entries = page
@@ -185,7 +185,8 @@ impl ReadHandler for Get {
                         other => other.into(),
                     })?;
             let primary = crate::primary::is_primary(&**client, scope, id).await?;
-            let extension_values = crate::field_contributions::read(&client, scope, &[id]).await?;
+            let extension_values =
+                crate::field_contributions::read(&**client, scope, &[id]).await?;
             let mut value = company.to_json();
             if let Some(fields) = extension_values.get(&id) {
                 for (field, field_value) in fields {
@@ -356,21 +357,20 @@ impl WriteHandler for Update {
             if !errors.is_empty() {
                 return Err(invalid(errors));
             }
-            let choice_errors =
-                crate::field_contributions::validate_choice_snapshot(client, scope, &fields).await;
-            if !choice_errors.is_empty() {
-                return Err(invalid(choice_errors));
-            }
-
-            // Extension read callbacks own their storage and currently accept a
-            // concrete pooled Client. Read only after access and restrictions
-            // are proven; the Company version fence rejects a concurrent write
-            // before this reviewed snapshot can be committed.
-            let read_client = db()?.get().await.map_err(bilibi_database::Error::from)?;
-            let before = crate::field_contributions::read(&read_client, scope, &[company_id])
+            // The plan service gives preview a read adapter backed by its own
+            // transaction. Keep contributor reads on that connection rather
+            // than checking out another pool connection while holding it.
+            let before = crate::field_contributions::read(client, scope, &[company_id])
                 .await?
                 .remove(&company_id)
                 .unwrap_or_default();
+            let choice_errors = crate::field_contributions::validate_choice_snapshot(
+                client, scope, &fields, &before,
+            )
+            .await;
+            if !choice_errors.is_empty() {
+                return Err(invalid(choice_errors));
+            }
             let changes = fields
                 .iter()
                 .map(|(field, to)| {
@@ -413,11 +413,6 @@ impl WriteHandler for Update {
             if !errors.is_empty() {
                 return Err(invalid(errors));
             }
-            let choice_errors =
-                crate::field_contributions::validate_choices(tx, scope, &fields).await;
-            if !choice_errors.is_empty() {
-                return Err(invalid(choice_errors));
-            }
             let version =
                 crate::field_contributions::update(tx, scope, company_id, version, &fields).await?;
             Ok(json!({
@@ -456,7 +451,17 @@ fn parse_update(input: &Value) -> bilibi_agent_api::Result<(i64, i64, crate::Com
         version,
         values
             .iter()
-            .map(|(field, value)| (field.clone(), value.clone()))
+            // The shared inline editor posts an empty string to clear a
+            // nullable field. Give agent callers the same semantics; explicit
+            // null remains the clearer schema form.
+            .map(|(field, value)| {
+                let value = if value.as_str().is_some_and(str::is_empty) {
+                    Value::Null
+                } else {
+                    value.clone()
+                };
+                (field.clone(), value)
+            })
             .collect(),
     ))
 }
